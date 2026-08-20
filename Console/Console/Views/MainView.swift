@@ -166,14 +166,16 @@ struct MainView: View {
         switch sidebarSelection {
         case .home:
             placeholderView(title: "Home")
+        case .jira:
+            JiraView()
+        case .mergeRequests:
+            MergeRequestsView()
         case .triggers:
             TriggersView()
         case .commands:
             CommandListView()
         case .aiProvider:
             AIProviderView()
-        case .jira:
-            JiraView()
         case .terminal:
             // Remapped on appear; keep a safe fallback if selection briefly lands here.
             placeholderView(title: "Home")

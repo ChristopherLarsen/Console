@@ -336,7 +336,7 @@ final class MenuBarManager: NSObject {
                 self.spinnerAngle += 30
                 if self.spinnerAngle >= 360 { self.spinnerAngle = 0 }
 
-                guard let image = NSImage(named: "fish_listening") else { return }
+                guard let image = NSImage(named: "buddy_listening") else { return }
                 image.isTemplate = true
                 image.size = NSSize(width: 18, height: 18)
                 button.image = image

@@ -32,6 +32,22 @@ struct SidebarView: View {
                         }
 
                         SidebarRow(
+                            label: SidebarSelection.jira.label,
+                            icon: SidebarSelection.jira.icon,
+                            isSelected: selection == .jira
+                        ) {
+                            selection = .jira
+                        }
+
+                        SidebarRow(
+                            label: SidebarSelection.mergeRequests.label,
+                            icon: SidebarSelection.mergeRequests.icon,
+                            isSelected: selection == .mergeRequests
+                        ) {
+                            selection = .mergeRequests
+                        }
+
+                        SidebarRow(
                             label: SidebarSelection.triggers.label,
                             icon: SidebarSelection.triggers.icon,
                             isSelected: selection == .triggers
@@ -53,14 +69,6 @@ struct SidebarView: View {
                             isSelected: selection == .aiProvider
                         ) {
                             selection = .aiProvider
-                        }
-
-                        SidebarRow(
-                            label: SidebarSelection.jira.label,
-                            icon: SidebarSelection.jira.icon,
-                            isSelected: selection == .jira
-                        ) {
-                            selection = .jira
                         }
 
                         SidebarSeparator()

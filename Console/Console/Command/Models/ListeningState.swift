@@ -10,11 +10,11 @@ enum ListeningState: String, CaseIterable {
     var menuBarIcon: String {
         switch self {
         case .off:
-            return "fish_disabled"
+            return "buddy_disabled"
         case .passive:
-            return "fish_enabled"
+            return "buddy_enabled"
         case .commandListening, .executing, .awaitingAuthorization:
-            return "fish_listening"
+            return "buddy_listening"
         }
     }
 

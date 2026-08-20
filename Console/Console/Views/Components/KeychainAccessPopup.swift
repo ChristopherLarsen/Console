@@ -21,7 +21,7 @@ struct KeychainAccessPopup: View {
             .padding(.trailing, 16)
             .padding(.top, 12)
 
-            Image("yellow_fish")
+            Image("yellow_buddy")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 80, height: 80)

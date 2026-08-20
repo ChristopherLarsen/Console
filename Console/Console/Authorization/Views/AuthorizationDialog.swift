@@ -30,7 +30,7 @@ struct AuthorizationDialog: View {
 
     private var headerSection: some View {
         HStack(alignment: .top) {
-            Image("fish_red")
+            Image("buddy_red")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 44, height: 44)

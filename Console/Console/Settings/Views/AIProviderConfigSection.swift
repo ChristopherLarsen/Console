@@ -123,7 +123,12 @@ struct AIProviderConfigSection: View {
                         }
                         .buttonStyle(.plain)
 
-                        TextField(provider == .lmStudio ? LMStudioAPI.defaultOrigin : "", text: $endpointURL)
+                        TextField(
+                            "",
+                            text: $endpointURL,
+                            prompt: Text(provider == .lmStudio ? LMStudioAPI.defaultOrigin : "Endpoint URL")
+                        )
+                            .labelsHidden()
                             .textFieldStyle(.plain)
                             .padding(6)
                             .background(

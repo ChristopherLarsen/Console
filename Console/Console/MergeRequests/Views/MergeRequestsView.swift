@@ -1,10 +1,10 @@
 import SwiftUI
 import WebKit
 
-/// Process-scoped WebPage so navigating away from JIRA and back keeps the live session.
+/// Process-scoped WebPage so navigating away from Merge Requests and back keeps the live session.
 @MainActor
-final class JiraWebSession {
-    static let shared = JiraWebSession()
+final class MergeRequestsWebSession {
+    static let shared = MergeRequestsWebSession()
 
     let page = WebPage()
     /// Normalized URL string last loaded into `page`, if any.
@@ -13,14 +13,14 @@ final class JiraWebSession {
     private init() {}
 }
 
-/// Dedicated embedded WebView for the user's configured JIRA URL.
-struct JiraView: View {
-    @AppStorage("webViewJiraURL") private var webViewJiraURL: String = ""
-    @State private var page = JiraWebSession.shared.page
+/// Dedicated embedded WebView for the user's configured Merge Requests URL.
+struct MergeRequestsView: View {
+    @AppStorage("webViewMergeRequestsURL") private var webViewMergeRequestsURL: String = ""
+    @State private var page = MergeRequestsWebSession.shared.page
 
     var body: some View {
         Group {
-            if let url = Self.normalizedURL(from: webViewJiraURL) {
+            if let url = Self.normalizedURL(from: webViewMergeRequestsURL) {
                 VStack(spacing: 0) {
                     navigationControls
 
@@ -33,12 +33,12 @@ struct JiraView: View {
                         .webViewBackForwardNavigationGestures(.enabled)
                         .webViewMagnificationGestures(.enabled)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .accessibilityIdentifier("JiraWebView")
+                        .accessibilityIdentifier("MergeRequestsWebView")
                 }
                 .onAppear {
                     loadIfNeeded(url: url, force: false)
                 }
-                .onChange(of: webViewJiraURL) { _, newValue in
+                .onChange(of: webViewMergeRequestsURL) { _, newValue in
                     guard let updated = Self.normalizedURL(from: newValue) else { return }
                     loadIfNeeded(url: updated, force: true)
                 }
@@ -97,30 +97,30 @@ struct JiraView: View {
         .overlay(alignment: .bottom) {
             Divider()
         }
-        .accessibilityIdentifier("JiraWebViewControls")
+        .accessibilityIdentifier("MergeRequestsWebViewControls")
     }
 
     private var emptyState: some View {
         VStack(spacing: 12) {
-            Image(systemName: "j.square")
+            Image(systemName: "arrow.triangle.merge")
                 .font(.system(size: 40))
                 .foregroundStyle(.secondary)
 
-            Text("Set Web View JIRA URL in Settings")
+            Text("Set Web View Merge Requests URL in Settings")
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityIdentifier("JiraEmptyState")
+        .accessibilityIdentifier("MergeRequestsEmptyState")
     }
 
     private func loadIfNeeded(url: URL, force: Bool) {
         let normalized = url.absoluteString
-        if !force, JiraWebSession.shared.lastLoadedURLString == normalized {
+        if !force, MergeRequestsWebSession.shared.lastLoadedURLString == normalized {
             return
         }
-        JiraWebSession.shared.lastLoadedURLString = normalized
+        MergeRequestsWebSession.shared.lastLoadedURLString = normalized
         page.load(URLRequest(url: url))
     }
 
@@ -148,5 +148,5 @@ struct JiraView: View {
 }
 
 #Preview {
-    JiraView()
+    MergeRequestsView()
 }

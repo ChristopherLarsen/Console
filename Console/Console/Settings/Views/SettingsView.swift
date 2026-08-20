@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage("listenOnStartup") private var listenOnStartup: Bool = true
     @AppStorage("soundFeedbackEnabled") private var soundFeedbackEnabled: Bool = true
     @AppStorage("webViewJiraURL") private var webViewJiraURL: String = ""
+    @AppStorage("webViewMergeRequestsURL") private var webViewMergeRequestsURL: String = ""
 
     @AppStorage("cueTriggerRecognized") private var cueTriggerRecognized: String = AppSettings.CueSound.fishListening.rawValue
     @AppStorage("cueCommandRecognized") private var cueCommandRecognized: String = AppSettings.CueSound.happyFish.rawValue
@@ -35,6 +36,7 @@ struct SettingsView: View {
     @State private var showAvailableCommands = false
     @FocusState private var isAuthWordsFocused: Bool
     @FocusState private var isJiraURLFocused: Bool
+    @FocusState private var isMergeRequestsURLFocused: Bool
     @State private var importExportMessage: String?
     @State private var importExportSucceeded = false
     @State private var showImportExportAlert = false
@@ -43,6 +45,7 @@ struct SettingsView: View {
         ZStack {
             Form {
                 generalSection
+                urlsSection
                 popupsSection
                 permissionsSection
                 soundFeedbackSection
@@ -231,32 +234,72 @@ struct SettingsView: View {
                     showHotkeyRecorder = true
                 }
             }
+        }
+    }
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 20) {
-                    Text("Web View JIRA URL")
+    // MARK: - URL's
 
-                    TextField("https://your-domain.atlassian.net", text: $webViewJiraURL)
-                        .textFieldStyle(.plain)
-                        .padding(6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(isJiraURLFocused ? Color.white : Color(nsColor: .controlBackgroundColor).opacity(0.5))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 5)
-                                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
-                        )
-                        .foregroundStyle(isJiraURLFocused ? .black : .gray)
-                        .focused($isJiraURLFocused)
-                        .frame(maxWidth: .infinity)
-                        .accessibilityIdentifier("WebViewJiraURLField")
-                }
+    private var urlsSection: some View {
+        Section("URL's") {
+            defaultURLField(
+                title: "Web View JIRA URL",
+                prompt: "https://your-domain.atlassian.net",
+                caption: "The JIRA sidebar WebView opens this URL",
+                text: $webViewJiraURL,
+                isFocused: $isJiraURLFocused,
+                accessibilityIdentifier: "WebViewJiraURLField"
+            )
 
-                Text("The JIRA sidebar WebView opens this URL")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+            defaultURLField(
+                title: "Web View Merge Requests URL",
+                prompt: "https://github.com/pulls",
+                caption: "The Merge Requests sidebar WebView opens this URL",
+                text: $webViewMergeRequestsURL,
+                isFocused: $isMergeRequestsURLFocused,
+                accessibilityIdentifier: "WebViewMergeRequestsURLField"
+            )
+        }
+    }
+
+    private func defaultURLField(
+        title: String,
+        prompt: String,
+        caption: String,
+        text: Binding<String>,
+        isFocused: FocusState<Bool>.Binding,
+        accessibilityIdentifier: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 20) {
+                Text(title)
+
+                TextField(
+                    "",
+                    text: text,
+                    prompt: Text(prompt)
+                        .foregroundStyle(Color(nsColor: .placeholderTextColor))
+                )
+                    .textFieldStyle(.plain)
+                    .multilineTextAlignment(.trailing)
+                    .padding(6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(isFocused.wrappedValue ? Color.white : Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                    )
+                    .foregroundStyle(isFocused.wrappedValue ? Color.primary : Color.secondary)
+                    .tint(Color.secondary)
+                    .focused(isFocused)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier(accessibilityIdentifier)
             }
+
+            Text(caption)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
     }
 

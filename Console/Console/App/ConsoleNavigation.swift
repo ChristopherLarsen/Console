@@ -26,7 +26,7 @@ enum ConsoleNavigation {
             UserDefaults.standard.set(TabSelection.settings.rawValue, forKey: tabKey)
         case .terminal:
             break
-        case .home, .aiProvider, .jira:
+        case .home, .aiProvider, .jira, .mergeRequests:
             break
         }
         UserDefaults.standard.synchronize()

@@ -7,6 +7,9 @@ class AppSettings {
     /// Start URL for the embedded JIRA WebView sidebar page.
     @AppStorage("webViewJiraURL") var webViewJiraURL: String = ""
 
+    /// Start URL for the embedded Merge Requests WebView sidebar page.
+    @AppStorage("webViewMergeRequestsURL") var webViewMergeRequestsURL: String = ""
+
     // Automation settings (Phase 0.3)
     @AppStorage("launchAtLogin") var launchAtLogin: Bool = false
     @AppStorage("listenOnStartup") var listenOnStartup: Bool = true

@@ -26,6 +26,7 @@ struct ModelSelectionView: View {
         }
         .onAppear { syncSelectionState() }
         .onChange(of: selectedModel) { _, _ in syncSelectionState() }
+        .onChange(of: fetchStatus) { _, _ in syncSelectionState() }
         .onChange(of: autoFocusPicker) { _, shouldFocus in
             if shouldFocus {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -53,7 +54,7 @@ struct ModelSelectionView: View {
 
             Divider()
 
-            Text("Enter model name")
+            Text(customPickerTitle)
                 .tag("__custom__")
                 .accessibilityIdentifier("Enter model name")
         }
@@ -91,11 +92,6 @@ struct ModelSelectionView: View {
                 .focused($isModelNameFocused)
                 .accessibilityIdentifier("Model name")
                 .help("Enter the exact model name from the provider's documentation")
-                .onAppear {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        isModelNameFocused = true
-                    }
-                }
                 .onChange(of: selectedModel) { _, newValue in
                     let sanitized = InputSanitizer.modelName(newValue)
                     if sanitized != newValue { selectedModel = sanitized }
@@ -109,14 +105,7 @@ struct ModelSelectionView: View {
     private var validationRow: some View {
         if showCustomField && !selectedModel.isEmpty {
             let result = ModelValidator.validate(selectedModel, for: provider)
-            switch result {
-            case .valid:
-                EmptyView()
-            case .warning(let msg):
-                Label(msg, systemImage: "exclamationmark.triangle")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.blue)
-            case .invalid(let msg):
+            if case .invalid(let msg) = result {
                 Label(msg, systemImage: "xmark.circle")
                     .font(.subheadline)
                     .foregroundStyle(.red)
@@ -154,6 +143,13 @@ struct ModelSelectionView: View {
 
     // MARK: - Selection Logic
 
+    private var customPickerTitle: String {
+        if showCustomField && !selectedModel.isEmpty {
+            return selectedModel
+        }
+        return "Enter model name"
+    }
+
     private func handleModelSelection(_ value: String) {
         switch value {
         case "__select__":
@@ -169,14 +165,17 @@ struct ModelSelectionView: View {
 
     // Keeps the picker in sync when selectedModel is set externally
     private func syncSelectionState() {
-        if showCustomField {
-            modelSelection = "__custom__"
-        } else if !selectedModel.isEmpty {
-            let knownIDs = availableModels.map(\.id)
-            modelSelection = knownIDs.contains(selectedModel) ? selectedModel : "__custom__"
-            if modelSelection == "__custom__" && !selectedModel.isEmpty {
+        if !selectedModel.isEmpty {
+            let isKnown = availableModels.contains { $0.id == selectedModel }
+            if isKnown {
+                modelSelection = selectedModel
+                showCustomField = false
+            } else {
+                modelSelection = "__custom__"
                 showCustomField = true
             }
+        } else if showCustomField {
+            modelSelection = "__custom__"
         } else {
             modelSelection = "__select__"
         }

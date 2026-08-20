@@ -258,7 +258,7 @@ struct CommandListView: View {
         VStack(spacing: 16) {
             Spacer()
 
-            Image("yellow_fish")
+            Image("yellow_buddy")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 100, height: 100)

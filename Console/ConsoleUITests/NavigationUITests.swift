@@ -22,9 +22,10 @@ final class NavigationUITests: XCTestCase {
         XCTAssertTrue(mainWindow.waitForExistence(timeout: 5), "Main window should appear")
 
         XCTAssertTrue(app.buttons["Home"].firstMatch.waitForExistence(timeout: 5), "Home sidebar item should be visible")
+        XCTAssertTrue(app.buttons["JIRA"].firstMatch.exists, "JIRA sidebar item should be visible")
+        XCTAssertTrue(app.buttons["Merge Requests"].firstMatch.exists, "Merge Requests sidebar item should be visible")
         XCTAssertTrue(app.buttons["Triggers"].firstMatch.exists, "Triggers sidebar item should be visible")
         XCTAssertTrue(app.buttons["Commands"].firstMatch.exists, "Commands sidebar item should be visible")
-        XCTAssertTrue(app.buttons["JIRA"].firstMatch.exists, "JIRA sidebar item should be visible")
         XCTAssertTrue(app.buttons["Terminal"].firstMatch.exists, "Terminal sidebar item should be visible")
         XCTAssertTrue(app.buttons["Settings"].firstMatch.exists, "Settings sidebar item should be visible")
 
@@ -66,6 +67,33 @@ final class NavigationUITests: XCTestCase {
 
         let jiraURLLabel = app.staticTexts["Web View JIRA URL"].firstMatch
         XCTAssertTrue(jiraURLLabel.waitForExistence(timeout: 5), "Settings should show Web View JIRA URL field")
+
+        let urlsSection = app.staticTexts["URL's"].firstMatch
+        XCTAssertTrue(urlsSection.waitForExistence(timeout: 5), "Settings should show URL's section")
+    }
+
+    func testMergeRequestsSidebarAndSettingsURLField() throws {
+        app.launch()
+
+        let mainWindow = app.windows.firstMatch
+        XCTAssertTrue(mainWindow.waitForExistence(timeout: 5), "Main window should appear")
+
+        let mergeRequestsItem = app.buttons["Merge Requests"].firstMatch
+        XCTAssertTrue(mergeRequestsItem.waitForExistence(timeout: 5), "Merge Requests sidebar item should be visible")
+        mergeRequestsItem.tap()
+
+        let emptyState = app.staticTexts["Set Web View Merge Requests URL in Settings"].firstMatch
+        XCTAssertTrue(
+            emptyState.waitForExistence(timeout: 5) || app.otherElements["MergeRequestsWebView"].exists || app.otherElements["MergeRequestsEmptyState"].exists,
+            "Merge Requests destination should show empty state or web view"
+        )
+
+        let settingsItem = app.buttons["Settings"].firstMatch
+        XCTAssertTrue(settingsItem.waitForExistence(timeout: 5), "Settings sidebar item should be visible")
+        settingsItem.tap()
+
+        let mergeRequestsURLLabel = app.staticTexts["Web View Merge Requests URL"].firstMatch
+        XCTAssertTrue(mergeRequestsURLLabel.waitForExistence(timeout: 5), "Settings should show Web View Merge Requests URL field")
     }
 
     func testSettingsSidebarShowsSettings() throws {
