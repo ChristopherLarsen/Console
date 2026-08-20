@@ -1,0 +1,25 @@
+{
+  "configurations" : [
+    {
+      "id" : "D88C5877-73D9-4D3A-9089-0663979BA994",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:Console.xcodeproj",
+        "identifier" : "93FE24412F2FFA7A00042752",
+        "name" : "ConsoleUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

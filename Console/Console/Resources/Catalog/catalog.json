@@ -1,0 +1,632 @@
+{
+  "version": "1.0.0",
+  "generatedDate": "2026-02-10",
+  "entries": [
+    {
+      "appName": "Calendar",
+      "bundleID": "com.apple.iCal",
+      "category": "productivity",
+      "isSystemApp": true,
+      "actions": [
+        {
+          "name": "createEvent",
+          "description": "Create a new calendar event",
+          "actionType": "appleScript",
+          "payload": "tell application \"Calendar\"\n    set newEvent to make new event at end of events of calendar \"Home\" with properties {summary:\"$TITLE\", start date:date \"$START_DATE\", end date:date \"$END_DATE\"}\nend tell",
+          "parameters": [
+            {"name": "TITLE", "type": "string", "required": true, "description": "Event title"},
+            {"name": "START_DATE", "type": "date", "required": true, "description": "Start date and time"},
+            {"name": "END_DATE", "type": "date", "required": true, "description": "End date and time"}
+          ],
+          "reliabilityScore": 0.85,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "openCalendar",
+          "description": "Open Calendar app and bring to front",
+          "actionType": "appIntent",
+          "payload": "openApplication:Calendar",
+          "parameters": [],
+          "reliabilityScore": 0.99,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "showTodayView",
+          "description": "Switch Calendar to today's view",
+          "actionType": "appleScript",
+          "payload": "tell application \"Calendar\"\n    activate\n    tell application \"System Events\" to keystroke \"t\" using command down\nend tell",
+          "parameters": [],
+          "reliabilityScore": 0.90,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "deleteEvent",
+          "description": "Delete a calendar event by title",
+          "actionType": "appleScript",
+          "payload": "tell application \"Calendar\"\n    repeat with c in calendars\n        set matchingEvents to (events of c whose summary is \"$TITLE\")\n        repeat with e in matchingEvents\n            delete e\n        end repeat\n    end repeat\nend tell",
+          "parameters": [
+            {"name": "TITLE", "type": "string", "required": true, "description": "Title of event to delete"}
+          ],
+          "reliabilityScore": 0.80,
+          "requiresConfirmation": true,
+          "safetyWarning": "This will permanently delete matching events"
+        },
+        {
+          "name": "listTodayEvents",
+          "description": "List all events scheduled for today",
+          "actionType": "appleScript",
+          "payload": "tell application \"Calendar\"\n    set today to current date\n    set time of today to 0\n    set tomorrow to today + (1 * days)\n    set output to \"\"\n    repeat with c in calendars\n        set todayEvents to (events of c whose start date >= today and start date < tomorrow)\n        repeat with e in todayEvents\n            set output to output & summary of e & return\n        end repeat\n    end repeat\n    return output\nend tell",
+          "parameters": [],
+          "reliabilityScore": 0.85,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        }
+      ],
+      "timingHeuristics": {"launchMs": 2000, "actionMs": 500, "delayBetweenActionsMs": 300},
+      "examples": [
+        {"userIntent": "Create a meeting tomorrow at 2pm", "actionSequence": ["createEvent"]},
+        {"userIntent": "Open my calendar", "actionSequence": ["openCalendar"]},
+        {"userIntent": "What do I have today?", "actionSequence": ["listTodayEvents"]}
+      ],
+      "knownIssues": [
+        {"description": "Calendar names vary by user; 'Home' may not exist", "workaround": "Query available calendars first", "severity": "medium"},
+        {"description": "Date parsing in AppleScript depends on system locale", "workaround": "Use ISO date format when possible", "severity": "medium"}
+      ],
+      "reliabilityScore": 0.88,
+      "catalogVersion": "1.0.0",
+      "lastValidated": null
+    },
+    {
+      "appName": "Reminders",
+      "bundleID": "com.apple.reminders",
+      "category": "productivity",
+      "isSystemApp": true,
+      "actions": [
+        {
+          "name": "createReminder",
+          "description": "Create a new reminder",
+          "actionType": "appleScript",
+          "payload": "tell application \"Reminders\"\n    set newReminder to make new reminder with properties {name:\"$TITLE\"}\nend tell",
+          "parameters": [
+            {"name": "TITLE", "type": "string", "required": true, "description": "Reminder title"}
+          ],
+          "reliabilityScore": 0.92,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "completeReminder",
+          "description": "Mark a reminder as completed",
+          "actionType": "appleScript",
+          "payload": "tell application \"Reminders\"\n    set targetReminder to first reminder whose name is \"$TITLE\"\n    set completed of targetReminder to true\nend tell",
+          "parameters": [
+            {"name": "TITLE", "type": "string", "required": true, "description": "Reminder title to complete"}
+          ],
+          "reliabilityScore": 0.85,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "deleteReminder",
+          "description": "Delete a reminder by title",
+          "actionType": "appleScript",
+          "payload": "tell application \"Reminders\"\n    delete (first reminder whose name is \"$TITLE\")\nend tell",
+          "parameters": [
+            {"name": "TITLE", "type": "string", "required": true, "description": "Reminder title to delete"}
+          ],
+          "reliabilityScore": 0.82,
+          "requiresConfirmation": true,
+          "safetyWarning": "This will permanently delete the reminder"
+        },
+        {
+          "name": "listReminders",
+          "description": "List all incomplete reminders",
+          "actionType": "appleScript",
+          "payload": "tell application \"Reminders\"\n    set output to \"\"\n    set incompleteReminders to (reminders whose completed is false)\n    repeat with r in incompleteReminders\n        set output to output & name of r & return\n    end repeat\n    return output\nend tell",
+          "parameters": [],
+          "reliabilityScore": 0.90,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        }
+      ],
+      "timingHeuristics": {"launchMs": 1500, "actionMs": 400, "delayBetweenActionsMs": 200},
+      "examples": [
+        {"userIntent": "Remind me to buy groceries", "actionSequence": ["createReminder"]},
+        {"userIntent": "Mark buy groceries as done", "actionSequence": ["completeReminder"]},
+        {"userIntent": "What are my reminders?", "actionSequence": ["listReminders"]}
+      ],
+      "knownIssues": [
+        {"description": "Accessing reminders from specific lists requires knowing list names", "workaround": "Operate on default list or query lists first", "severity": "low"}
+      ],
+      "reliabilityScore": 0.90,
+      "catalogVersion": "1.0.0",
+      "lastValidated": null
+    },
+    {
+      "appName": "Notes",
+      "bundleID": "com.apple.Notes",
+      "category": "productivity",
+      "isSystemApp": true,
+      "actions": [
+        {
+          "name": "createNote",
+          "description": "Create a new note with body text",
+          "actionType": "appleScript",
+          "payload": "tell application \"Notes\"\n    make new note at folder \"Notes\" with properties {name:\"$TITLE\", body:\"$BODY\"}\nend tell",
+          "parameters": [
+            {"name": "TITLE", "type": "string", "required": true, "description": "Note title"},
+            {"name": "BODY", "type": "string", "required": false, "description": "Note body content", "defaultValue": ""}
+          ],
+          "reliabilityScore": 0.90,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "appendToNote",
+          "description": "Append text to an existing note",
+          "actionType": "appleScript",
+          "payload": "tell application \"Notes\"\n    set targetNote to first note whose name is \"$TITLE\"\n    set body of targetNote to (body of targetNote) & \"<br>\" & \"$TEXT\"\nend tell",
+          "parameters": [
+            {"name": "TITLE", "type": "string", "required": true, "description": "Note title to append to"},
+            {"name": "TEXT", "type": "string", "required": true, "description": "Text to append"}
+          ],
+          "reliabilityScore": 0.82,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "searchNotes",
+          "description": "Search notes by name",
+          "actionType": "appleScript",
+          "payload": "tell application \"Notes\"\n    set output to \"\"\n    set matchingNotes to (notes whose name contains \"$QUERY\")\n    repeat with n in matchingNotes\n        set output to output & name of n & return\n    end repeat\n    return output\nend tell",
+          "parameters": [
+            {"name": "QUERY", "type": "string", "required": true, "description": "Search query"}
+          ],
+          "reliabilityScore": 0.85,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        }
+      ],
+      "timingHeuristics": {"launchMs": 2000, "actionMs": 600, "delayBetweenActionsMs": 300},
+      "examples": [
+        {"userIntent": "Create a note called Meeting Notes", "actionSequence": ["createNote"]},
+        {"userIntent": "Add to my shopping list", "actionSequence": ["appendToNote"]},
+        {"userIntent": "Find notes about project", "actionSequence": ["searchNotes"]}
+      ],
+      "knownIssues": [
+        {"description": "Notes body uses HTML formatting internally", "workaround": "Use HTML tags for formatting in body text", "severity": "low"},
+        {"description": "Folder names may differ from defaults", "workaround": "Use default 'Notes' folder", "severity": "low"}
+      ],
+      "reliabilityScore": 0.86,
+      "catalogVersion": "1.0.0",
+      "lastValidated": null
+    },
+    {
+      "appName": "Mail",
+      "bundleID": "com.apple.mail",
+      "category": "communication",
+      "isSystemApp": true,
+      "actions": [
+        {
+          "name": "composeEmail",
+          "description": "Open a new email composition window",
+          "actionType": "appleScript",
+          "payload": "tell application \"Mail\"\n    activate\n    set newMessage to make new outgoing message with properties {subject:\"$SUBJECT\", content:\"$BODY\", visible:true}\n    tell newMessage\n        make new to recipient at end of to recipients with properties {address:\"$TO\"}\n    end tell\nend tell",
+          "parameters": [
+            {"name": "TO", "type": "string", "required": true, "description": "Recipient email address"},
+            {"name": "SUBJECT", "type": "string", "required": true, "description": "Email subject"},
+            {"name": "BODY", "type": "string", "required": false, "description": "Email body text", "defaultValue": ""}
+          ],
+          "reliabilityScore": 0.90,
+          "requiresConfirmation": false,
+          "safetyWarning": "Email will not be sent until user clicks Send"
+        },
+        {
+          "name": "sendEmail",
+          "description": "Compose and immediately send an email",
+          "actionType": "appleScript",
+          "payload": "tell application \"Mail\"\n    set newMessage to make new outgoing message with properties {subject:\"$SUBJECT\", content:\"$BODY\", visible:false}\n    tell newMessage\n        make new to recipient at end of to recipients with properties {address:\"$TO\"}\n    end tell\n    send newMessage\nend tell",
+          "parameters": [
+            {"name": "TO", "type": "string", "required": true, "description": "Recipient email address"},
+            {"name": "SUBJECT", "type": "string", "required": true, "description": "Email subject"},
+            {"name": "BODY", "type": "string", "required": true, "description": "Email body text"}
+          ],
+          "reliabilityScore": 0.85,
+          "requiresConfirmation": true,
+          "safetyWarning": "This will send the email immediately without review"
+        },
+        {
+          "name": "checkMail",
+          "description": "Check for new mail",
+          "actionType": "appleScript",
+          "payload": "tell application \"Mail\"\n    activate\n    check for new mail\nend tell",
+          "parameters": [],
+          "reliabilityScore": 0.95,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        }
+      ],
+      "timingHeuristics": {"launchMs": 3000, "actionMs": 800, "delayBetweenActionsMs": 500},
+      "examples": [
+        {"userIntent": "Send an email to John about the meeting", "actionSequence": ["composeEmail"]},
+        {"userIntent": "Check my email", "actionSequence": ["checkMail"]},
+        {"userIntent": "Email the report to team@company.com", "actionSequence": ["sendEmail"]}
+      ],
+      "knownIssues": [
+        {"description": "Sending email requires configured mail accounts", "workaround": "Verify Mail is configured before using send actions", "severity": "high"},
+        {"description": "HTML body content may not render correctly via AppleScript", "workaround": "Use plain text for body content", "severity": "low"}
+      ],
+      "reliabilityScore": 0.88,
+      "catalogVersion": "1.0.0",
+      "lastValidated": null
+    },
+    {
+      "appName": "Finder",
+      "bundleID": "com.apple.finder",
+      "category": "system",
+      "isSystemApp": true,
+      "actions": [
+        {
+          "name": "openFolder",
+          "description": "Open a specific folder in Finder",
+          "actionType": "appleScript",
+          "payload": "tell application \"Finder\"\n    open folder \"$PATH\" of startup disk\n    activate\nend tell",
+          "parameters": [
+            {"name": "PATH", "type": "string", "required": true, "description": "Folder path relative to startup disk (e.g., 'Users/username/Documents')"}
+          ],
+          "reliabilityScore": 0.92,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "revealFile",
+          "description": "Reveal a file in Finder",
+          "actionType": "appleScript",
+          "payload": "tell application \"Finder\"\n    reveal POSIX file \"$PATH\"\n    activate\nend tell",
+          "parameters": [
+            {"name": "PATH", "type": "string", "required": true, "description": "Full POSIX file path"}
+          ],
+          "reliabilityScore": 0.90,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "newFolder",
+          "description": "Create a new folder",
+          "actionType": "appleScript",
+          "payload": "tell application \"Finder\"\n    make new folder at desktop with properties {name:\"$NAME\"}\n    activate\nend tell",
+          "parameters": [
+            {"name": "NAME", "type": "string", "required": true, "description": "New folder name"}
+          ],
+          "reliabilityScore": 0.92,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "emptyTrash",
+          "description": "Empty the Trash",
+          "actionType": "appIntent",
+          "payload": "emptyTrash",
+          "parameters": [],
+          "reliabilityScore": 0.95,
+          "requiresConfirmation": true,
+          "safetyWarning": "This permanently deletes all items in the Trash"
+        },
+        {
+          "name": "getInfo",
+          "description": "Show Get Info window for a file or folder",
+          "actionType": "appleScript",
+          "payload": "tell application \"Finder\"\n    open information window of (POSIX file \"$PATH\" as alias)\n    activate\nend tell",
+          "parameters": [
+            {"name": "PATH", "type": "string", "required": true, "description": "Full POSIX file path"}
+          ],
+          "reliabilityScore": 0.88,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        }
+      ],
+      "timingHeuristics": {"launchMs": 500, "actionMs": 300, "delayBetweenActionsMs": 200},
+      "examples": [
+        {"userIntent": "Open my Documents folder", "actionSequence": ["openFolder"]},
+        {"userIntent": "Show me where this file is", "actionSequence": ["revealFile"]},
+        {"userIntent": "Create a new folder on the desktop called Projects", "actionSequence": ["newFolder"]},
+        {"userIntent": "Empty the trash", "actionSequence": ["emptyTrash"]},
+        {"userIntent": "Get info on this file", "actionSequence": ["getInfo"]}
+      ],
+      "knownIssues": [
+        {"description": "Finder is always running; launch time is negligible", "workaround": null, "severity": "low"}
+      ],
+      "reliabilityScore": 0.93,
+      "catalogVersion": "1.0.0",
+      "lastValidated": null
+    },
+    {
+      "appName": "Safari",
+      "bundleID": "com.apple.Safari",
+      "category": "browser",
+      "isSystemApp": true,
+      "actions": [
+        {
+          "name": "openURL",
+          "description": "Open a URL in Safari",
+          "actionType": "appIntent",
+          "payload": "openURL:$URL",
+          "parameters": [
+            {"name": "URL", "type": "string", "required": true, "description": "URL to open"}
+          ],
+          "reliabilityScore": 0.95,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "newTab",
+          "description": "Open a new empty tab",
+          "actionType": "appleScript",
+          "payload": "tell application \"Safari\"\n    activate\n    tell window 1\n        set current tab to (make new tab)\n    end tell\nend tell",
+          "parameters": [],
+          "reliabilityScore": 0.92,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "newWindow",
+          "description": "Open a new Safari window",
+          "actionType": "appleScript",
+          "payload": "tell application \"Safari\"\n    make new document\n    activate\nend tell",
+          "parameters": [],
+          "reliabilityScore": 0.95,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "closeTab",
+          "description": "Close the current tab",
+          "actionType": "appleScript",
+          "payload": "tell application \"Safari\"\n    tell window 1\n        close current tab\n    end tell\nend tell",
+          "parameters": [],
+          "reliabilityScore": 0.90,
+          "requiresConfirmation": false,
+          "safetyWarning": "Will close the active tab without confirmation"
+        }
+      ],
+      "timingHeuristics": {"launchMs": 2000, "actionMs": 500, "delayBetweenActionsMs": 300},
+      "examples": [
+        {"userIntent": "Open google.com", "actionSequence": ["openURL"]},
+        {"userIntent": "Open a new tab", "actionSequence": ["newTab"]},
+        {"userIntent": "Open a new window", "actionSequence": ["newWindow"]},
+        {"userIntent": "Close this tab", "actionSequence": ["closeTab"]}
+      ],
+      "knownIssues": [
+        {"description": "URL loading time varies by network conditions", "workaround": "Account for variable load times in timing estimates", "severity": "low"},
+        {"description": "Safari requires at least one window to be open for tab operations", "workaround": "Create a new window first if none exist", "severity": "medium"}
+      ],
+      "reliabilityScore": 0.93,
+      "catalogVersion": "1.0.0",
+      "lastValidated": null
+    },
+    {
+      "appName": "Terminal",
+      "bundleID": "com.apple.Terminal",
+      "category": "developer",
+      "isSystemApp": true,
+      "actions": [
+        {
+          "name": "launchTerminal",
+          "description": "Open Terminal app",
+          "actionType": "appIntent",
+          "payload": "openApplication:Terminal",
+          "parameters": [],
+          "reliabilityScore": 0.99,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "runCommand",
+          "description": "Execute a shell command in Terminal",
+          "actionType": "appleScript",
+          "payload": "tell application \"Terminal\"\n    activate\n    do script \"$COMMAND\"\nend tell",
+          "parameters": [
+            {"name": "COMMAND", "type": "string", "required": true, "description": "Shell command to execute"}
+          ],
+          "reliabilityScore": 0.90,
+          "requiresConfirmation": true,
+          "safetyWarning": "Shell commands can modify files and system state. Review commands carefully before execution."
+        }
+      ],
+      "timingHeuristics": {"launchMs": 1000, "actionMs": 300, "delayBetweenActionsMs": 200},
+      "examples": [
+        {"userIntent": "Open Terminal", "actionSequence": ["launchTerminal"]},
+        {"userIntent": "Run ls in Terminal", "actionSequence": ["runCommand"]}
+      ],
+      "knownIssues": [
+        {"description": "Shell commands execute with user's full permissions", "workaround": "Always require confirmation for shell commands", "severity": "high"},
+        {"description": "Long-running commands will block the Terminal tab", "workaround": "Append & to run in background if appropriate", "severity": "low"}
+      ],
+      "reliabilityScore": 0.92,
+      "catalogVersion": "1.0.0",
+      "lastValidated": null
+    },
+    {
+      "appName": "System Controls",
+      "bundleID": null,
+      "category": "system",
+      "isSystemApp": true,
+      "actions": [
+        {
+          "name": "lockScreen",
+          "description": "Lock the screen",
+          "actionType": "appIntent",
+          "payload": "lockScreen",
+          "parameters": [],
+          "reliabilityScore": 0.95,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "showDesktop",
+          "description": "Show the desktop by hiding all windows",
+          "actionType": "appIntent",
+          "payload": "showDesktop",
+          "parameters": [],
+          "reliabilityScore": 0.92,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "toggleDarkMode",
+          "description": "Toggle between light and dark appearance",
+          "actionType": "appIntent",
+          "payload": "toggleDarkMode",
+          "parameters": [],
+          "reliabilityScore": 0.95,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "setVolume",
+          "description": "Set system volume to a specific level",
+          "actionType": "appIntent",
+          "payload": "setVolume:$LEVEL",
+          "parameters": [
+            {"name": "LEVEL", "type": "integer", "required": true, "description": "Volume level 0-100"}
+          ],
+          "reliabilityScore": 0.95,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "toggleMute",
+          "description": "Toggle system audio mute",
+          "actionType": "appIntent",
+          "payload": "toggleMute",
+          "parameters": [],
+          "reliabilityScore": 0.95,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "sleep",
+          "description": "Put the Mac to sleep",
+          "actionType": "appleScript",
+          "payload": "tell application \"System Events\" to sleep",
+          "parameters": [],
+          "reliabilityScore": 0.90,
+          "requiresConfirmation": true,
+          "safetyWarning": "This will immediately put your Mac to sleep"
+        }
+      ],
+      "timingHeuristics": {"launchMs": 0, "actionMs": 200, "delayBetweenActionsMs": 100},
+      "examples": [
+        {"userIntent": "Lock my screen", "actionSequence": ["lockScreen"]},
+        {"userIntent": "Show the desktop", "actionSequence": ["showDesktop"]},
+        {"userIntent": "Turn on dark mode", "actionSequence": ["toggleDarkMode"]},
+        {"userIntent": "Set volume to 75", "actionSequence": ["setVolume"]},
+        {"userIntent": "Mute", "actionSequence": ["toggleMute"]},
+        {"userIntent": "Put the computer to sleep", "actionSequence": ["sleep"]}
+      ],
+      "knownIssues": [
+        {"description": "Sleep and shutdown actions terminate active processes", "workaround": "Always require confirmation for destructive system actions", "severity": "high"},
+        {"description": "Dark mode toggle requires Automation permission for System Events", "workaround": "Ensure Automation permission is granted in Settings", "severity": "medium"}
+      ],
+      "reliabilityScore": 0.94,
+      "catalogVersion": "1.0.0",
+      "lastValidated": null
+    },
+    {
+      "appName": "Mission Control",
+      "bundleID": null,
+      "category": "system",
+      "isSystemApp": true,
+      "actions": [
+        {
+          "name": "showDesktopF11",
+          "description": "Show the desktop using F11 key",
+          "actionType": "appleScript",
+          "payload": "tell application \"System Events\" to key code 103",
+          "parameters": [],
+          "reliabilityScore": 0.90,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "missionControl",
+          "description": "Activate Mission Control overview",
+          "actionType": "appleScript",
+          "payload": "tell application \"System Events\" to key code 160",
+          "parameters": [],
+          "reliabilityScore": 0.85,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "applicationWindows",
+          "description": "Show all windows of the current application (App Exposé)",
+          "actionType": "appleScript",
+          "payload": "tell application \"System Events\" to key code 160 using control down",
+          "parameters": [],
+          "reliabilityScore": 0.82,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        }
+      ],
+      "timingHeuristics": {"launchMs": 0, "actionMs": 300, "delayBetweenActionsMs": 500},
+      "examples": [
+        {"userIntent": "Show the desktop", "actionSequence": ["showDesktopF11"]},
+        {"userIntent": "Open Mission Control", "actionSequence": ["missionControl"]},
+        {"userIntent": "Show all windows of this app", "actionSequence": ["applicationWindows"]}
+      ],
+      "knownIssues": [
+        {"description": "Key codes for Mission Control may vary if user has remapped keys", "workaround": "Use standard key codes; document that custom key bindings may interfere", "severity": "medium"},
+        {"description": "Mission Control key code 160 may not work on all Mac models", "workaround": "Fall back to 'open -a \"Mission Control\"' if key code fails", "severity": "medium"}
+      ],
+      "reliabilityScore": 0.86,
+      "catalogVersion": "1.0.0",
+      "lastValidated": null
+    },
+    {
+      "appName": "Spotlight",
+      "bundleID": null,
+      "category": "system",
+      "isSystemApp": true,
+      "actions": [
+        {
+          "name": "openSpotlight",
+          "description": "Open Spotlight search",
+          "actionType": "appleScript",
+          "payload": "tell application \"System Events\" to keystroke space using command down",
+          "parameters": [],
+          "reliabilityScore": 0.95,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        },
+        {
+          "name": "searchSpotlight",
+          "description": "Open Spotlight and type a search query",
+          "actionType": "appleScript",
+          "payload": "tell application \"System Events\"\n    keystroke space using command down\n    delay 0.3\n    keystroke \"$QUERY\"\nend tell",
+          "parameters": [
+            {"name": "QUERY", "type": "string", "required": true, "description": "Search query to type"}
+          ],
+          "reliabilityScore": 0.88,
+          "requiresConfirmation": false,
+          "safetyWarning": null
+        }
+      ],
+      "timingHeuristics": {"launchMs": 300, "actionMs": 200, "delayBetweenActionsMs": 300},
+      "examples": [
+        {"userIntent": "Open Spotlight", "actionSequence": ["openSpotlight"]},
+        {"userIntent": "Search for Calculator", "actionSequence": ["searchSpotlight"]}
+      ],
+      "knownIssues": [
+        {"description": "Spotlight shortcut can be remapped by user", "workaround": "Use Cmd+Space as default; document that custom shortcuts may differ", "severity": "low"},
+        {"description": "Search typing requires a small delay after opening Spotlight", "workaround": "300ms delay between opening and typing is usually sufficient", "severity": "low"}
+      ],
+      "reliabilityScore": 0.92,
+      "catalogVersion": "1.0.0",
+      "lastValidated": null
+    }
+  ]
+}

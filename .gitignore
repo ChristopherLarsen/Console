@@ -1,0 +1,54 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xccheckout
+*.moved-aside
+*.xcscmblueprint
+*.xcworkspace/xcuserdata/
+
+# Xcode user data (keep shared schemes)
+xcuserdata/
+
+# Swift Package Manager
+.build/
+Packages/
+Package.resolved
+.swiftpm/
+
+# CocoaPods
+Pods/
+
+# Carthage
+Carthage/Build/
+
+# IDE / Editor
+*.swp
+*.swo
+*~
+
+# Claude / Cursor local settings
+.claude/
+.cursor/debug.log
+
+# Catalog Generator (dev tool)
+CatalogGenerator/.build/
+CatalogGenerator/discovered-apps.json
+CatalogGenerator/discovered-system-apps.json
+CatalogGenerator/filtered-apps.json
+CatalogGenerator/*.backup
+
+# Local developer commands (may contain secrets)
+DeveloperCommands/
+
+# Backup artifacts
+*.backup
