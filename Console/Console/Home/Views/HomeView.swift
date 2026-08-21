@@ -1,0 +1,127 @@
+import SwiftUI
+
+/// The four Home dashboard quadrants in fixed reading order.
+enum HomePanel: Int, CaseIterable, Identifiable {
+    case jiraTickets
+    case sessions
+    case gitLabReviews
+    case gitLabAuthored
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .jiraTickets: return "My Tickets"
+        case .sessions: return "Sessions"
+        case .gitLabReviews: return "MRs to Review"
+        case .gitLabAuthored: return "My MRs"
+        }
+    }
+
+    /// Service label rendered next to the panel title, if any.
+    var serviceLabel: String? {
+        switch self {
+        case .jiraTickets: return "JIRA"
+        case .sessions: return nil
+        case .gitLabReviews, .gitLabAuthored: return "GitLab"
+        }
+    }
+
+    /// What this placeholder panel will eventually contain.
+    var futurePurpose: String {
+        switch self {
+        case .jiraTickets: return "Your JIRA tickets will appear here."
+        case .sessions: return "Agent sessions will appear here."
+        case .gitLabReviews: return "Merge requests awaiting your review will appear here."
+        case .gitLabAuthored: return "Merge requests you authored will appear here."
+        }
+    }
+
+    var accessibilityIdentifier: String {
+        switch self {
+        case .jiraTickets: return "HomePanelJiraTickets"
+        case .sessions: return "HomePanelSessions"
+        case .gitLabReviews: return "HomePanelGitLabMRsToReview"
+        case .gitLabAuthored: return "HomePanelGitLabMyMRs"
+        }
+    }
+
+    /// One-based panel number used by the placeholder empty state.
+    var number: Int { rawValue + 1 }
+}
+
+/// Four-panel Home dashboard frame: JIRA tickets, sessions, and both GitLab lists.
+struct HomeView: View {
+    private enum Layout {
+        static let edgePadding: CGFloat = 12
+        static let gridSpacing: CGFloat = 12
+        static let minimumPanelWidth: CGFloat = 160
+        static let minimumPanelHeight: CGFloat = 160
+    }
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// Accessibility text sizes need taller rows so placeholder text never clips.
+    private var minimumPanelHeight: CGFloat {
+        dynamicTypeSize.isAccessibilitySize
+            ? Layout.minimumPanelHeight * 1.6
+            : Layout.minimumPanelHeight
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            // Equal rows that fill the available height, clamped to a minimum so
+            // both rows survive short windows by scrolling instead of collapsing.
+            let rowHeight = max(
+                minimumPanelHeight,
+                (geometry.size.height - 2 * Layout.edgePadding - Layout.gridSpacing) / 2
+            )
+
+            ScrollView(.vertical) {
+                Grid(
+                    alignment: .center,
+                    horizontalSpacing: Layout.gridSpacing,
+                    verticalSpacing: Layout.gridSpacing
+                ) {
+                    GridRow {
+                        panel(.jiraTickets)
+                            .frame(height: rowHeight)
+                        panel(.sessions)
+                            .frame(height: rowHeight)
+                    }
+                    GridRow {
+                        panel(.gitLabReviews)
+                            .frame(height: rowHeight)
+                        panel(.gitLabAuthored)
+                            .frame(height: rowHeight)
+                    }
+                }
+                .padding(Layout.edgePadding)
+                .frame(minWidth: geometry.size.width)
+            }
+        }
+        .accessibilityIdentifier("HomeDashboard")
+    }
+
+    private func panel(_ panel: HomePanel) -> some View {
+        HomePanelContainer(
+            title: panel.title,
+            subtitle: panel.serviceLabel,
+            accessibilityIdentifier: panel.accessibilityIdentifier
+        ) {
+            HomePanelPlaceholder(
+                panelNumber: panel.number,
+                purpose: panel.futurePurpose
+            )
+        }
+        .frame(
+            minWidth: Layout.minimumPanelWidth,
+            maxWidth: .infinity
+        )
+    }
+}
+
+#Preview("Home Dashboard") {
+    HomeView()
+        .frame(width: 900, height: 560)
+}

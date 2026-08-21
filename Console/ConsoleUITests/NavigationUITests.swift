@@ -40,8 +40,8 @@ final class NavigationUITests: XCTestCase {
         let mainWindow = app.windows.firstMatch
         XCTAssertTrue(mainWindow.waitForExistence(timeout: 5), "Main window should appear")
 
-        let homeTitle = app.staticTexts["Home"].firstMatch
-        XCTAssertTrue(homeTitle.waitForExistence(timeout: 5), "App should start on Home without tapping sidebar")
+        let homeDashboard = app.descendants(matching: .any)["HomeDashboard"].firstMatch
+        XCTAssertTrue(homeDashboard.waitForExistence(timeout: 5), "App should start on Home without tapping sidebar")
     }
 
     func testJiraSidebarAndSettingsURLField() throws {
@@ -138,8 +138,8 @@ final class NavigationUITests: XCTestCase {
         XCTAssertTrue(homeItem.waitForExistence(timeout: 5))
         homeItem.tap()
 
-        let homeTitle = app.staticTexts["Home"].firstMatch
-        XCTAssertTrue(homeTitle.waitForExistence(timeout: 5), "Home center content should be visible")
+        let homeDashboard = app.descendants(matching: .any)["HomeDashboard"].firstMatch
+        XCTAssertTrue(homeDashboard.waitForExistence(timeout: 5), "Home center content should be visible")
 
         let collapseButton = app.buttons["ToggleTerminalCollapse"].firstMatch
         XCTAssertTrue(collapseButton.waitForExistence(timeout: 5), "Terminal chevron should be visible when expanded")
@@ -149,12 +149,12 @@ final class NavigationUITests: XCTestCase {
         terminalSidebar.tap()
 
         // Center page stays Home; Terminal row toggles the bottom panel only.
-        XCTAssertTrue(homeTitle.exists, "Sidebar Terminal should not replace center content")
+        XCTAssertTrue(homeDashboard.exists, "Sidebar Terminal should not replace center content")
         XCTAssertTrue(collapseButton.waitForExistence(timeout: 5), "Collapsed Terminal bar should remain pinned")
 
         terminalSidebar.tap()
         XCTAssertTrue(collapseButton.waitForExistence(timeout: 5), "Terminal chevron should remain after expand")
-        XCTAssertTrue(homeTitle.exists, "Center content should still be Home after expand")
+        XCTAssertTrue(homeDashboard.exists, "Center content should still be Home after expand")
     }
 
     func testTerminalChevronCollapsesAndExpands() throws {

@@ -165,7 +165,7 @@ struct MainView: View {
     private var centerContent: some View {
         switch sidebarSelection {
         case .home:
-            placeholderView(title: "Home")
+            HomeView()
         case .jira:
             JiraView()
         case .mergeRequests:
