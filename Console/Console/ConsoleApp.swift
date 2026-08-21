@@ -59,6 +59,7 @@ struct ConsoleApp: App {
     @State private var aiProviderManager = AIProviderManager()
     @State private var localCommandExecutor = LocalCommandExecutor()
     @State private var wakeWordManager: WakeWordManager?
+    @State private var updateManager: UpdateManager
     private var syntheticTranscriptSource: SyntheticTranscriptSource?
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("tabSelection") private var tabSelection: TabSelection = .triggers
@@ -176,8 +177,22 @@ struct ConsoleApp: App {
         _menuBarViewModel = State(initialValue: vm)
         MenuBarViewModel.shared = vm
 
+        let updates = UpdateManager()
+        _updateManager = State(initialValue: updates)
+
         if !Self.isRunningUnitTests {
             MenuBarManager.shared.installStatusItem()
+
+            // Cancel any in-flight update check or clone when the app terminates.
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.willTerminateNotification,
+                object: nil,
+                queue: .main
+            ) { [weak updates] _ in
+                MainActor.assumeIsolated {
+                    updates?.cancelAll()
+                }
+            }
         }
     }
 
@@ -238,6 +253,19 @@ struct ConsoleApp: App {
                     .shadow(color: .black.opacity(0.15), radius: 24, y: 8)
                 }
 
+                if updateManager.shouldShowPrompt, let release = updateManager.offeredRelease {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+                    UpdatePromptView(
+                        currentVersion: updateManager.currentVersion,
+                        release: release,
+                        onLater: { withAnimation(.easeOut(duration: 0.2)) { updateManager.dismissOffer() } },
+                        onUpdate: { withAnimation(.easeOut(duration: 0.2)) { updateManager.prepareOfferedUpdate() } }
+                    )
+                    .transition(.scale(scale: 0.95).combined(with: .opacity))
+                }
+
                 }
             }
             }
@@ -249,6 +277,7 @@ struct ConsoleApp: App {
             .environment(aiProviderManager)
             .environment(wakeWordManager)
             .environment(menuBarViewModel)
+            .environment(updateManager)
             #if DEBUG
             .environment(developerModeManager)
             #endif
@@ -367,6 +396,16 @@ struct ConsoleApp: App {
         StarterCommandsProvider.syncBuiltInPhrases(in: modelContainer.mainContext)
         handleListenOnStartup()
         pingLocalProviderIfNeeded()
+        runStartupUpdateCheckIfNeeded()
+    }
+
+    /// One automatic check per process, only in non-test Release builds.
+    /// Debug builds and unit tests never auto-check and never see a startup prompt.
+    private func runStartupUpdateCheckIfNeeded() {
+        #if !DEBUG
+        guard !Self.isRunningUnitTests else { return }
+        Task { await updateManager.performAutomaticCheckIfNeeded() }
+        #endif
     }
 
     private func pingLocalProviderIfNeeded() {

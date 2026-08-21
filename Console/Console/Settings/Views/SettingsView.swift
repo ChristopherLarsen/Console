@@ -31,6 +31,7 @@ struct SettingsView: View {
     
     @Environment(InfoManager.self) private var infoManager
     @Environment(PermissionBackgroundObserver.self) private var permissionObserver: PermissionBackgroundObserver?
+    @Environment(UpdateManager.self) private var updateManager
     @State private var showHotkeyRecorder = false
     @State private var showPermissions = false
     @State private var showAvailableCommands = false
@@ -764,9 +765,92 @@ struct SettingsView: View {
                     Text(appVersion)
                         .foregroundStyle(.secondary)
                 }
+                .accessibilityIdentifier("Updates.VersionText")
+            }
+
+            HStack(spacing: 12) {
+                Text(updatesStatusText)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("Updates.StatusText")
+
+                Spacer()
+
+                if updateManager.isBusy {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityIdentifier("Updates.ProgressSpinner")
+                }
+
+                if updateManager.phase == .available, updateManager.offeredRelease != nil {
+                    Button("Update") {
+                        updateManager.prepareOfferedUpdate()
+                    }
+                    .accessibilityIdentifier("Updates.UpdateButton")
+                }
+
+                Button("Check for Updates") {
+                    updateManager.checkForUpdates()
+                }
+                .disabled(updateManager.isBusy)
+                .accessibilityIdentifier("Updates.CheckButton")
+            }
+
+            if let errorMessage = updateManager.errorMessage, updateManager.phase == .failed {
+                Text(errorMessage)
+                    .font(.subheadline)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("Updates.ErrorText")
+            }
+
+            if updateManager.phase == .prepared, let source = updateManager.preparedSource {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(source.directoryPath)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("Updates.PreparedSourceText")
+
+                    HStack(spacing: 8) {
+                        if let projectPath = source.xcodeProjectPath {
+                            Button("Open in Xcode") {
+                                NSWorkspace.shared.open(URL(fileURLWithPath: projectPath))
+                            }
+                        }
+                        Text("Then build the Release configuration yourself — Console does not install anything.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
         } header: {
             Text("Updates")
+        } footer: {
+            Text("Checks public GitHub Releases of ChristopherLarsen/Console. A qualifying release downloads its source to ~/Developer/ConsoleUpdates for a manual Release build in Xcode.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var updatesStatusText: String {
+        switch updateManager.phase {
+        case .idle:
+            return "Not checked yet"
+        case .checking:
+            return "Checking…"
+        case .current:
+            return "You're up to date"
+        case .available:
+            if let release = updateManager.offeredRelease,
+               let version = release.semanticVersion {
+                return "Version \(version.displayString) is available"
+            }
+            return "An update is available"
+        case .preparing:
+            return "Downloading source…"
+        case .prepared:
+            return "Source downloaded"
+        case .failed:
+            return "Update failed"
         }
     }
 
