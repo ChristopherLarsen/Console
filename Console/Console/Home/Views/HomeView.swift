@@ -117,7 +117,9 @@ struct HomeView: View {
                 JiraPanelView()
             case .sessions:
                 HomeSessionsPanelView()
-            case .gitLabReviews, .gitLabAuthored:
+            case .gitLabReviews:
+                GitLabReviewsPanelView()
+            default:
                 HomePanelPlaceholder(
                     panelNumber: panel.number,
                     purpose: panel.futurePurpose

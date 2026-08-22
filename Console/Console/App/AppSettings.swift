@@ -8,7 +8,16 @@ class AppSettings {
     @AppStorage("webViewJiraURL") var webViewJiraURL: String = ""
 
     /// Start URL for the embedded Merge Requests WebView sidebar page.
+    /// Legacy key; preserved so existing configurations keep working.
     @AppStorage("webViewMergeRequestsURL") var webViewMergeRequestsURL: String = ""
+
+    // GitLab panel list URLs (Panel 3 reviews / Panel 4 authored).
+    static let webViewGitLabReviewsURLKey = "webViewGitLabReviewsURL"
+    static let webViewGitLabMyMergeRequestsURLKey = "webViewGitLabMyMergeRequestsURL"
+    static let webViewMergeRequestsURLLegacyKey = "webViewMergeRequestsURL"
+
+    @AppStorage(AppSettings.webViewGitLabReviewsURLKey) var webViewGitLabReviewsURL: String = ""
+    @AppStorage(AppSettings.webViewGitLabMyMergeRequestsURLKey) var webViewGitLabMyMergeRequestsURL: String = ""
 
     // Automation settings (Phase 0.3)
     @AppStorage("launchAtLogin") var launchAtLogin: Bool = false

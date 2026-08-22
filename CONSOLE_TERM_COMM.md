@@ -142,7 +142,7 @@ Resolution order:
 
 Settings shows the detected path, **Choose…**, and **Reset to Automatic**. Only
 the override path persists — never session content. If Claude cannot be found,
-the creation sheet stays open with an actionable local error.
+the launch surfaces an actionable local error and no session is created.
 
 ## 5. Helper: `ConsoleTermBridge`
 
@@ -384,8 +384,11 @@ Coverage:
 - MCP initialization, tool listing, valid calls, invalid calls, clean stdout
   framing (`HelperMCPTests`).
 - Plugin/helper embedding and executable signing (`SessionsPackagingTests`).
-- Zero-session UI, creation sheet, concurrent rows, switching, stop
-  confirmation, exited retention (`SessionsUITests`).
+- Zero-session UI, intent launcher rows, inline ticket context step,
+  concurrent rows, switching, stop confirmation, exited retention
+  (`SessionsUITests`).
+- Home radar presence, previewed cards, Home → Sessions hop, and the intent
+  launcher entry from Home (`HomeSessionsUITests`).
 
 Manual real-Claude verification checklist lives in the delivery report:
 two named sessions in different folders survive switching; Idle, Working,
