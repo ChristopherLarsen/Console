@@ -18,15 +18,6 @@ enum HomePanel: Int, CaseIterable, Identifiable {
         }
     }
 
-    /// Service label rendered next to the panel title, if any.
-    var serviceLabel: String? {
-        switch self {
-        case .jiraTickets: return "JIRA"
-        case .sessions: return nil
-        case .gitLabReviews, .gitLabAuthored: return "GitLab"
-        }
-    }
-
     /// What this placeholder panel will eventually contain.
     var futurePurpose: String {
         switch self {
@@ -50,7 +41,8 @@ enum HomePanel: Int, CaseIterable, Identifiable {
     var number: Int { rawValue + 1 }
 }
 
-/// Four-panel Home dashboard frame: JIRA tickets, sessions, and both GitLab lists.
+/// Four-panel Home dashboard frame: JIRA tickets, sessions, and both hosted
+/// merge-request lists for whichever code host Console currently targets.
 struct HomeView: View {
     private enum Layout {
         static let edgePadding: CGFloat = 12
@@ -60,6 +52,13 @@ struct HomeView: View {
     }
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AppStorage(AppSettings.codeHostProviderKey) private var codeHostProviderRaw: String = CodeHostProvider.gitlab.rawValue
+
+    /// The code host whose panels Home renders right now. Switching hosts in
+    /// Settings re-renders these quadrants immediately.
+    private var activeProvider: CodeHostProvider {
+        CodeHostProvider(rawValue: codeHostProviderRaw) ?? .gitlab
+    }
 
     /// Accessibility text sizes need taller rows so placeholder text never clips.
     private var minimumPanelHeight: CGFloat {
@@ -103,10 +102,18 @@ struct HomeView: View {
         .accessibilityIdentifier("HomeDashboard")
     }
 
+    private func serviceLabel(for panel: HomePanel) -> String? {
+        switch panel {
+        case .jiraTickets: return "JIRA"
+        case .sessions: return nil
+        case .gitLabReviews, .gitLabAuthored: return activeProvider.displayName
+        }
+    }
+
     private func panel(_ panel: HomePanel) -> some View {
         HomePanelContainer(
             title: panel.title,
-            subtitle: panel.serviceLabel,
+            subtitle: serviceLabel(for: panel),
             // JIRA and Sessions own custom headers with actions; the container
             // supplies only the card chrome and accessibility identifier.
             showsHeader: panel != .jiraTickets && panel != .sessions,
@@ -118,7 +125,7 @@ struct HomeView: View {
             case .sessions:
                 HomeSessionsPanelView()
             case .gitLabReviews:
-                GitLabReviewsPanelView()
+                MergeRequestsPanelView(provider: activeProvider, kind: .reviewsRequested)
             default:
                 HomePanelPlaceholder(
                     panelNumber: panel.number,

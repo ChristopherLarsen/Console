@@ -1,10 +1,10 @@
 import SwiftUI
 import WebKit
 
-/// Navigation bar around a shared GitLab page: back/forward/reload controls,
+/// Navigation bar around a shared hosted page: back/forward/reload controls,
 /// Start Session when the page displays a merge request, plus Show Cards when
 /// the panel has extracted content to present.
-struct GitLabBrowserNavigationBar: View {
+struct MergeRequestsNavigationBar: View {
     let page: WebPage
     var showCardsAction: (() -> Void)?
     var showCardsAvailable: Bool = true
@@ -14,11 +14,8 @@ struct GitLabBrowserNavigationBar: View {
     /// Memory-only context parsed from the URL the retained WebView is
     /// currently showing. Nothing here is fetched or persisted.
     private var currentMergeRequestContext: SessionLaunchSource? {
-        guard !page.isLoading, let url = page.url,
-              let info = GitLabSourceContext.parseMergeRequest(fromURL: url) else {
-            return nil
-        }
-        return .gitLabMergeRequest(iid: info.iid, title: page.title, url: url)
+        guard !page.isLoading, let url = page.url else { return nil }
+        return MergeRequestSourceContext.launchSource(forURL: url, pageTitle: page.title)
     }
 
     var body: some View {
@@ -55,9 +52,9 @@ struct GitLabBrowserNavigationBar: View {
             .help(page.isLoading ? "Stop" : "Reload")
 
             // One-click review launch when the retained page displays an MR.
-            if case let .gitLabMergeRequest(iid, title, url) = currentMergeRequestContext {
+            if case let .mergeRequest(host, iid, title, url) = currentMergeRequestContext {
                 Button {
-                    launchCoordinator.beginMergeRequestReview(iid: iid, title: title, url: url)
+                    launchCoordinator.beginMergeRequestReview(host: host, iid: iid, title: title, url: url)
                 } label: {
                     Label("Start Session", systemImage: "terminal")
                         .labelStyle(.titleAndIcon)
@@ -88,11 +85,11 @@ struct GitLabBrowserNavigationBar: View {
     }
 }
 
-/// Full browser experience for one shared GitLab page: the navigation bar
+/// Full browser experience for one shared hosted page: the navigation bar
 /// above an interactive WebView. Used by the Merge Requests sidebar
-/// destination with its To Review / My MRs selector; each page keeps its own
+/// destination with its To Review / My list selector; each page keeps its own
 /// navigation history.
-struct GitLabMergeRequestsBrowserView: View {
+struct MergeRequestsBrowserView: View {
     let page: WebPage
     var showCardsAction: (() -> Void)?
     var showCardsAvailable: Bool = true
@@ -101,7 +98,7 @@ struct GitLabMergeRequestsBrowserView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            GitLabBrowserNavigationBar(
+            MergeRequestsNavigationBar(
                 page: page,
                 showCardsAction: showCardsAction,
                 showCardsAvailable: showCardsAvailable

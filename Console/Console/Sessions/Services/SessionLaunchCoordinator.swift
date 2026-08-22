@@ -30,7 +30,7 @@ struct PendingWorkspaceChoice: Identifiable {
 /// Resolution order:
 /// 1. Explicit workspace override (Customize).
 /// 2. Remembered source-to-workspace association.
-/// 3. For GitLab reviews, a unique remote match for the MR project.
+/// 3. For merge-request reviews, a unique remote match for the MR project.
 /// 4. For New Ticket / General, the selected session's containing workspace.
 /// 5. Last workspace used for that purpose.
 /// 6. Global default workspace.
@@ -99,19 +99,16 @@ final class SessionLaunchCoordinator {
         return .jira(key: key, title: JiraWebSession.shared.page.title, url: url)
     }
 
-    /// Source parsed from whichever retained GitLab page (To Review or My MRs)
-    /// is currently displaying a merge request. Memory-only; nothing is fetched.
+    /// Source parsed from whichever retained page (To Review or My list) of
+    /// the active code host is currently displaying a merge request.
+    /// Memory-only; nothing is fetched.
     func retainedMergeRequestSource() -> SessionLaunchSource? {
-        let pages = [
-            GitLabWebSessionStore.shared.reviewsPage,
-            GitLabWebSessionStore.shared.authoredPage,
-        ]
-        for page in pages {
-            guard let url = page.url,
-                  let info = GitLabSourceContext.parseMergeRequest(fromURL: url) else {
-                continue
+        let store = CodeHostWebSessionStore.active
+        for page in [store.reviewsPage, store.authoredPage] {
+            guard !page.isLoading, let url = page.url else { continue }
+            if let source = MergeRequestSourceContext.launchSource(forURL: url, pageTitle: page.title) {
+                return source
             }
-            return .gitLabMergeRequest(iid: info.iid, title: page.title, url: url)
         }
         return nil
     }
@@ -123,8 +120,8 @@ final class SessionLaunchCoordinator {
         startContextualLaunch(draft(purpose: .existingTicket, source: source))
     }
 
-    func beginMergeRequestReview(iid: String, title: String?, url: URL) {
-        let source = SessionLaunchSource.gitLabMergeRequest(iid: iid, title: title, url: url)
+    func beginMergeRequestReview(host: CodeHostProvider, iid: String, title: String?, url: URL) {
+        let source = SessionLaunchSource.mergeRequest(host: host, iid: iid, title: title, url: url)
         startContextualLaunch(draft(purpose: .review, source: source))
     }
 
@@ -233,9 +230,9 @@ final class SessionLaunchCoordinator {
             return remembered
         }
 
-        // 3. Unique GitLab remote match for review sources.
-        if case let .gitLabMergeRequest(_, _, url) = source,
-           let identity = GitLabSourceContext.projectIdentity(fromMergeRequestURL: url) {
+        // 3. Unique code-host remote match for review sources.
+        if case let .mergeRequest(_, _, _, url) = source,
+           let identity = MergeRequestSourceContext.projectIdentity(inURL: url) {
             switch resolver.match(projectIdentity: identity, in: workspaceStore.resolvableWorkspaces(purpose: purpose)) {
             case let .unique(workspace):
                 return workspace

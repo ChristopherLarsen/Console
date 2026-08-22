@@ -1,28 +1,50 @@
 import SwiftUI
 import WebKit
 
-/// Home Panel 3 (bottom-left): native "MRs to Review" cards over the live,
-/// authenticated GitLab review list.
+/// Shared Home merge-request panel (reviews bottom-left / authored placeholder
+/// successor): native cards over the live, authenticated list page of one
+/// specific code host.
 ///
-/// A `ZStack` keeps the shared reviews `WebView` permanently attached while an
+/// A `ZStack` keeps the shared list `WebView` permanently attached while an
 /// opaque native card surface covers it. In card mode the covered WebView has
 /// hit testing disabled and is hidden from accessibility, but the page stays
-/// alive so Show GitLab / Show Cards never loses authentication or history.
-struct GitLabReviewsPanelView: View {
+/// alive so Show <Host> / Show Cards never loses authentication or history.
+///
+/// The panel is instantiated per concrete host; switching hosts swaps to the
+/// other host's retained pages and configuration without touching them.
+struct MergeRequestsPanelView: View {
+    let provider: CodeHostProvider
+    let kind: CodeHostListKind
+
     @AppStorage(AppSettings.webViewGitLabReviewsURLKey) private var webViewGitLabReviewsURL: String = ""
+    @AppStorage(AppSettings.webViewGitLabMyMergeRequestsURLKey) private var webViewGitLabMyMRsURL: String = ""
     @AppStorage(AppSettings.webViewMergeRequestsURLLegacyKey) private var legacyWebViewMergeRequestsURL: String = ""
+    @AppStorage(AppSettings.webViewGitHubReviewsURLKey) private var webViewGitHubReviewsURL: String = ""
+    @AppStorage(AppSettings.webViewGitHubMyPullRequestsURLKey) private var webViewGitHubMyPRsURL: String = ""
     @AppStorage("sidebarSelection") private var sidebarSelection: SidebarSelection = .home
 
-    @State private var controller = GitLabListPanelController(
-        kind: .reviewsRequested,
-        page: GitLabWebSessionStore.shared.reviewsPage,
-        configuredURLStringProvider: { GitLabConfiguration.effectiveReviewsURLString() }
-    )
-
-    private let kind = GitLabListKind.reviewsRequested
+    @State private var controller: CodeHostListPanelController
 
     private var effectiveConfiguredURLString: String {
-        GitLabConfiguration.effectiveReviewsURLString()
+        CodeHostConfiguration.effectiveURLString(for: kind, provider: provider)
+    }
+
+    private var sessionStore: CodeHostWebSessionStore {
+        CodeHostWebSessionStore.shared(for: provider)
+    }
+
+    private var idPrefix: String {
+        provider == .gitlab ? "GitLabPanel" : "GitHubPanel"
+    }
+
+    init(provider: CodeHostProvider, kind: CodeHostListKind) {
+        self.provider = provider
+        self.kind = kind
+        _controller = State(initialValue: CodeHostListPanelController(
+            kind: kind,
+            page: CodeHostWebSessionStore.shared(for: provider).page(for: kind),
+            configuredURLStringProvider: { CodeHostConfiguration.effectiveURLString(for: kind, provider: provider) }
+        ))
     }
 
     var body: some View {
@@ -30,8 +52,8 @@ struct GitLabReviewsPanelView: View {
             webViewLayer
 
             if controller.presentation == .browser {
-                GitLabBrowserNavigationBar(
-                    page: GitLabWebSessionStore.shared.reviewsPage,
+                MergeRequestsNavigationBar(
+                    page: sessionStore.page(for: kind),
                     showCardsAction: { controller.showCardsIfAvailable() },
                     showCardsAvailable: controller.state.hasPresentableCards
                 )
@@ -55,15 +77,31 @@ struct GitLabReviewsPanelView: View {
         .onChange(of: effectiveConfiguredURLString) {
             controller.configurationChanged()
         }
+        .onChange(of: allConfiguredURLs) { _ in
+            controller.configurationChanged()
+        }
+    }
+
+    /// Every hosted URL preference; observing them all lets a change to any
+    /// one re-evaluate this panel's own effective configuration safely.
+    private var allConfiguredURLs: String {
+        [
+            webViewGitLabReviewsURL,
+            webViewGitLabMyMRsURL,
+            legacyWebViewMergeRequestsURL,
+            webViewGitHubReviewsURL,
+            webViewGitHubMyPRsURL,
+        ]
+        .joined(separator: "\n")
     }
 
     // MARK: - WebView layer (always attached)
 
-    /// The shared reviews page. Covered in card mode: hit testing off and
-    /// hidden from accessibility, but attached so state is never lost.
+    /// The shared list page. Covered in card mode: hit testing off and hidden
+    /// from accessibility, but attached so state is never lost.
     private var webViewLayer: some View {
         let isCovered = controller.presentation == .cards
-        return WebView(GitLabWebSessionStore.shared.reviewsPage)
+        return WebView(sessionStore.page(for: kind))
             .webViewBackForwardNavigationGestures(.enabled)
             .webViewMagnificationGestures(.enabled)
             .allowsHitTesting(!isCovered)
@@ -103,7 +141,7 @@ struct GitLabReviewsPanelView: View {
 
     private var chromeHeader: some View {
         HStack(spacing: 8) {
-            Text("Reviews Requested · \(controller.itemCount)")
+            Text("\(kind.displayTitle) · \(controller.itemCount)")
                 .font(.subheadline)
                 .fontWeight(.medium)
                 .foregroundStyle(.secondary)
@@ -125,17 +163,17 @@ struct GitLabReviewsPanelView: View {
             .buttonStyle(.borderless)
             .controlSize(.small)
             .disabled(!hasConfiguredURL)
-            .help("Refresh from GitLab")
-            .accessibilityIdentifier("GitLabPanelRefreshButton")
+            .help("Refresh from \(provider.displayName)")
+            .accessibilityIdentifier("\(idPrefix)RefreshButton")
 
             if controller.presentation == .cards {
-                Button("Show GitLab") {
+                Button("Show \(provider.displayName)") {
                     controller.showBrowser()
                 }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
-                .help("Show the live GitLab page")
-                .accessibilityIdentifier("GitLabPanelShowGitLabButton")
+                .help("Show the live \(provider.displayName) page")
+                .accessibilityIdentifier("\(idPrefix)Show\(provider == .gitlab ? "GitLab" : "GitHub")Button")
             }
         }
         .padding(.horizontal, 10)
@@ -143,7 +181,7 @@ struct GitLabReviewsPanelView: View {
     }
 
     @ViewBuilder
-    private func cardsList(_ items: [GitLabMergeRequestSummary], staleNotice: String? = nil) -> some View {
+    private func cardsList(_ items: [MergeRequestSummary], staleNotice: String? = nil) -> some View {
         VStack(spacing: 0) {
             if let staleNotice {
                 Label(staleNotice, systemImage: "clock.arrow.circlepath")
@@ -153,14 +191,14 @@ struct GitLabReviewsPanelView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(Color(nsColor: .windowBackgroundColor))
-                    .accessibilityIdentifier("GitLabPanelStaleNotice")
+                    .accessibilityIdentifier("\(idPrefix)StaleNotice")
                 Divider()
             }
 
             ScrollView(.vertical) {
                 LazyVStack(spacing: 6) {
                     ForEach(items) { item in
-                        GitLabMergeRequestCardView(item: item) {
+                        MergeRequestCardView(item: item) {
                             controller.open(item)
                         }
                     }
@@ -175,11 +213,11 @@ struct GitLabReviewsPanelView: View {
     private var unconfiguredState: some View {
         panelMessage(
             systemImage: "link.badge.plus",
-            title: "Set your GitLab review list URL in Settings.",
+            title: "Set your \(provider.displayName) review list URL in Settings.",
             detail: kind.listExpectationText,
             actionTitle: "Open Settings",
             action: { sidebarSelection = .settings },
-            accessibilityIdentifier: "GitLabPanelUnconfiguredState"
+            accessibilityIdentifier: "\(idPrefix)UnconfiguredState"
         )
     }
 
@@ -187,22 +225,22 @@ struct GitLabReviewsPanelView: View {
         VStack(spacing: 8) {
             ProgressView()
                 .controlSize(.small)
-            Text("Loading GitLab…")
+            Text("Loading \(provider.displayName)…")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityIdentifier("GitLabPanelLoadingState")
+        .accessibilityIdentifier("\(idPrefix)LoadingState")
     }
 
     private var authenticationState: some View {
         panelMessage(
             systemImage: "lock.shield",
-            title: "Sign in to GitLab to load your review list.",
-            detail: "Use Show GitLab to sign in; Console never sees your credentials.",
-            actionTitle: "Show GitLab",
+            title: "Sign in to \(provider.displayName) to load your review list.",
+            detail: "Use Show \(provider.displayName) to sign in; Console never sees your credentials.",
+            actionTitle: "Show \(provider.displayName)",
             action: { controller.showBrowser() },
-            accessibilityIdentifier: "GitLabPanelAuthenticationState"
+            accessibilityIdentifier: "\(idPrefix)AuthenticationState"
         )
     }
 
@@ -213,7 +251,7 @@ struct GitLabReviewsPanelView: View {
             detail: nil,
             actionTitle: nil,
             action: nil,
-            accessibilityIdentifier: "GitLabPanelEmptyState"
+            accessibilityIdentifier: "\(idPrefix)EmptyState"
         )
     }
 
@@ -222,9 +260,9 @@ struct GitLabReviewsPanelView: View {
             systemImage: "questionmark.square.dashed",
             title: "This page is not a merge-request list.",
             detail: kind.listExpectationText,
-            actionTitle: "Show GitLab",
+            actionTitle: "Show \(provider.displayName)",
             action: { controller.showBrowser() },
-            accessibilityIdentifier: "GitLabPanelUnsupportedState"
+            accessibilityIdentifier: "\(idPrefix)UnsupportedState"
         )
     }
 
@@ -232,10 +270,10 @@ struct GitLabReviewsPanelView: View {
         panelMessage(
             systemImage: "exclamationmark.triangle",
             title: "Console could not read the rendered list.",
-            detail: "Try Refresh, or use Show GitLab for the raw page.",
+            detail: "Try Refresh, or use Show \(provider.displayName) for the raw page.",
             actionTitle: "Refresh",
             action: { controller.refresh() },
-            accessibilityIdentifier: "GitLabPanelExtractionFailedState"
+            accessibilityIdentifier: "\(idPrefix)ExtractionFailedState"
         )
     }
 
@@ -284,7 +322,7 @@ struct GitLabReviewsPanelView: View {
     }
 }
 
-extension GitLabListPanelState {
+extension MergeRequestListPanelState {
     /// Whether Show Cards may restore the opaque card surface right now.
     var hasPresentableCards: Bool {
         switch self {
@@ -294,9 +332,4 @@ extension GitLabListPanelState {
             return false
         }
     }
-}
-
-#Preview("Panel 3") {
-    GitLabReviewsPanelView()
-        .frame(width: 420, height: 300)
 }

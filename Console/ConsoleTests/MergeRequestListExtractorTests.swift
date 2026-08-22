@@ -9,7 +9,7 @@ import WebKit
 /// Where practical the real JavaScript extractor runs inside a nonpersistent
 /// `WebPage`; the Swift decode layer is exercised directly as well.
 @MainActor
-final class GitLabMergeRequestListExtractorTests: XCTestCase {
+final class MergeRequestListExtractorTests: XCTestCase {
 
     // MARK: - Synthetic fixtures (invented data)
 
@@ -128,7 +128,7 @@ final class GitLabMergeRequestListExtractorTests: XCTestCase {
     // MARK: - WebPage harness
 
     private func makePage() -> WebPage {
-        GitLabWebSessionStore.makePage(dataStore: WKWebsiteDataStore.nonPersistent())
+        CodeHostWebSessionStore.makePage(dataStore: WKWebsiteDataStore.nonPersistent())
     }
 
     @discardableResult
@@ -144,12 +144,12 @@ final class GitLabMergeRequestListExtractorTests: XCTestCase {
     }
 
     /// Runs the production JavaScript over `html` and decodes the result.
-    private func extract(from html: String) async throws -> GitLabListExtractionResult {
+    private func extract(from html: String) async throws -> MergeRequestListExtractionResult {
         let page = makePage()
         _ = try await loadHTML(html, into: page)
         let raw = try await page.callJavaScript(GitLabListExtractorJavaScript.source)
         let json = try XCTUnwrap(raw as? String, "Extractor must return a JSON string")
-        return try GitLabMergeRequestListExtractor.decode(json)
+        return try MergeRequestListExtractor.decode(json)
     }
 
     // MARK: - Real-JS extraction outcomes
@@ -237,10 +237,10 @@ final class GitLabMergeRequestListExtractorTests: XCTestCase {
     }
 
     func testFragmentOnlyDifferencesNormalizeToSameIdentity() {
-        let first = GitLabMergeRequestListExtractor.normalizedMRURL(
+        let first = MergeRequestListExtractor.normalizedMRURL(
             from: "https://gitlab.example.test/g/p/-/merge_requests/11"
         )
-        let second = GitLabMergeRequestListExtractor.normalizedMRURL(
+        let second = MergeRequestListExtractor.normalizedMRURL(
             from: "https://gitlab.example.test/g/p/-/merge_requests/11#discussion"
         )
         XCTAssertEqual(first, second)
@@ -249,46 +249,46 @@ final class GitLabMergeRequestListExtractorTests: XCTestCase {
     // MARK: - Swift decode layer
 
     func testDecodeRejectsInvalidPayload() {
-        XCTAssertThrowsError(try GitLabMergeRequestListExtractor.decode("not json"))
-        XCTAssertThrowsError(try GitLabMergeRequestListExtractor.decode("{\"outcome\": 12}"))
+        XCTAssertThrowsError(try MergeRequestListExtractor.decode("not json"))
+        XCTAssertThrowsError(try MergeRequestListExtractor.decode("{\"outcome\": 12}"))
     }
 
     func testDecodeMapsOutcomeStrings() throws {
-        XCTAssertEqual(try GitLabMergeRequestListExtractor.decode(#"{"outcome":"authenticationRequired","items":[]}"#), .authenticationRequired)
-        XCTAssertEqual(try GitLabMergeRequestListExtractor.decode(#"{"outcome":"empty","items":[]}"#), .empty)
-        XCTAssertEqual(try GitLabMergeRequestListExtractor.decode(#"{"outcome":"unsupported","items":[]}"#), .unsupportedPage)
+        XCTAssertEqual(try MergeRequestListExtractor.decode(#"{"outcome":"authenticationRequired","items":[]}"#), .authenticationRequired)
+        XCTAssertEqual(try MergeRequestListExtractor.decode(#"{"outcome":"empty","items":[]}"#), .empty)
+        XCTAssertEqual(try MergeRequestListExtractor.decode(#"{"outcome":"unsupported","items":[]}"#), .unsupportedPage)
     }
 
     func testRowsWithoutURLorTitleAreDropped() {
-        let rows: [GitLabMergeRequestListExtractor.Row] = [
-            GitLabMergeRequestListExtractor.Row(url: nil, title: "No link row"),
-            GitLabMergeRequestListExtractor.Row(url: "ftp://gitlab.example.test/p/-/merge_requests/1", title: "Bad scheme"),
-            GitLabMergeRequestListExtractor.Row(url: "https://gitlab.example.test/p/-/merge_requests/2", title: nil),
-            GitLabMergeRequestListExtractor.Row(url: "https://gitlab.example.test/p/-/merge_requests/3", iid: "3", title: "Keep me"),
+        let rows: [MergeRequestListExtractor.Row] = [
+            MergeRequestListExtractor.Row(url: nil, title: "No link row"),
+            MergeRequestListExtractor.Row(url: "ftp://gitlab.example.test/p/-/merge_requests/1", title: "Bad scheme"),
+            MergeRequestListExtractor.Row(url: "https://gitlab.example.test/p/-/merge_requests/2", title: nil),
+            MergeRequestListExtractor.Row(url: "https://gitlab.example.test/p/-/merge_requests/3", iid: "3", title: "Keep me"),
         ]
-        let items = GitLabMergeRequestListExtractor.summaries(from: rows)
+        let items = MergeRequestListExtractor.summaries(from: rows)
         XCTAssertEqual(items.count, 1)
         XCTAssertEqual(items[0].iidText, "3")
         XCTAssertEqual(items[0].sourceOrder, 0, "Order index is compacted after filtering")
     }
 
     func testSummariesDeduplicateByNormalizedURLKeepingFirstOccurrence() {
-        let rows: [GitLabMergeRequestListExtractor.Row] = [
-            GitLabMergeRequestListExtractor.Row(url: "https://gitlab.example.test/a/-/merge_requests/1#x", iid: "1", title: "First"),
-            GitLabMergeRequestListExtractor.Row(url: "https://gitlab.example.test/b/-/merge_requests/2", iid: "2", title: "Second"),
-            GitLabMergeRequestListExtractor.Row(url: "https://gitlab.example.test/a/-/merge_requests/1", iid: "1", title: "Duplicate of first"),
+        let rows: [MergeRequestListExtractor.Row] = [
+            MergeRequestListExtractor.Row(url: "https://gitlab.example.test/a/-/merge_requests/1#x", iid: "1", title: "First"),
+            MergeRequestListExtractor.Row(url: "https://gitlab.example.test/b/-/merge_requests/2", iid: "2", title: "Second"),
+            MergeRequestListExtractor.Row(url: "https://gitlab.example.test/a/-/merge_requests/1", iid: "1", title: "Duplicate of first"),
         ]
-        let items = GitLabMergeRequestListExtractor.summaries(from: rows)
+        let items = MergeRequestListExtractor.summaries(from: rows)
         XCTAssertEqual(items.count, 2)
         XCTAssertEqual(items[0].title, "First")
         XCTAssertEqual(items.map(\.sourceOrder), [0, 1], "GitLab order preserved after dedupe")
     }
 
     func testOptionalFieldsOmittedWhenMissingNeverUnknown() {
-        let rows: [GitLabMergeRequestListExtractor.Row] = [
-            GitLabMergeRequestListExtractor.Row(url: "https://gitlab.example.test/a/-/merge_requests/8", title: "Minimal")
+        let rows: [MergeRequestListExtractor.Row] = [
+            MergeRequestListExtractor.Row(url: "https://gitlab.example.test/a/-/merge_requests/8", title: "Minimal")
         ]
-        let items = GitLabMergeRequestListExtractor.summaries(from: rows)
+        let items = MergeRequestListExtractor.summaries(from: rows)
         XCTAssertEqual(items.count, 1)
         let item = items[0]
         XCTAssertNil(item.projectDisplayName)
@@ -305,7 +305,7 @@ final class GitLabMergeRequestListExtractorTests: XCTestCase {
         let json = """
         {"outcome":"items","items":[{"url":"https://gitlab.example.test/private/widget/-/merge_requests/99","iid":"99","title":"SECRET TITLE VALUE","project":"SECRET PROJECT","author":"SECRET AUTHOR"}]}
         """
-        let result = try GitLabMergeRequestListExtractor.decode(json)
+        let result = try MergeRequestListExtractor.decode(json)
 
         for representation in ["\(result)", String(describing: result), String(reflecting: result)] {
             XCTAssertFalse(representation.contains("SECRET"), "Description leaked extracted values: \(representation)")
@@ -314,6 +314,6 @@ final class GitLabMergeRequestListExtractorTests: XCTestCase {
     }
 }
 
-extension Array where Element == GitLabMergeRequestSummary {
+extension Array where Element == MergeRequestSummary {
     var only: Element? { count == 1 ? first : nil }
 }

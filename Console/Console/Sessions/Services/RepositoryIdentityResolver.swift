@@ -1,7 +1,7 @@
 import Foundation
 
 /// Inspects local Git repositories' configured remotes (`.git/config`) to
-/// match a GitLab merge request's project against saved workspaces. No
+/// match a code-host merge request's project against saved workspaces. No
 /// network access ever happens: only local config files are read.
 @MainActor
 final class RepositoryIdentityResolver {
@@ -26,7 +26,7 @@ final class RepositoryIdentityResolver {
         }
         return Set(
             Self.remoteURLs(inConfig: contents)
-                .compactMap(GitLabSourceContext.normalizeRemoteURL)
+                .compactMap(MergeRequestSourceContext.normalizeRemoteURL)
         )
     }
 

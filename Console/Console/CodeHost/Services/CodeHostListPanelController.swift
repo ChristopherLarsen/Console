@@ -1,25 +1,30 @@
 import SwiftUI
 import WebKit
 
-/// One observable controller per GitLab list kind. Owns the panel state,
-/// card/browser presentation, loading/readiness/extraction orchestration,
+/// One observable controller per merge-request list kind. Owns the panel
+/// state, card/browser presentation, loading/readiness/extraction orchestration,
 /// manual reload with stale-result protection, and card navigation.
 ///
 /// No polling timer: extraction runs once after an explicit load or refresh.
 @MainActor
 @Observable
-final class GitLabListPanelController {
+final class CodeHostListPanelController {
 
     enum Presentation: Equatable {
         case cards
         case browser
     }
 
+    /// Decodes one extractor JSON payload. Production uses the shared
+    /// `MergeRequestListExtractor`; tests substitute deterministic decoders.
+    typealias PayloadDecoder = (String) throws -> MergeRequestListExtractionResult
+
     // MARK: - Configuration
 
-    private let kind: GitLabListKind
+    private let kind: CodeHostListKind
     private let page: WebPage
     private let configuredURLStringProvider: () -> String?
+    private let payloadDecoder: PayloadDecoder
     private let now: () -> Date
 
     /// Bounded local readiness loop parameters. DOM checks only.
@@ -33,7 +38,7 @@ final class GitLabListPanelController {
 
     // MARK: - Observable state
 
-    private(set) var state: GitLabListPanelState = .unconfigured
+    private(set) var state: MergeRequestListPanelState = .unconfigured
     private(set) var presentation: Presentation = .cards
     private(set) var isRefreshing = false
 
@@ -43,23 +48,25 @@ final class GitLabListPanelController {
     private var hasStarted = false
 
     init(
-        kind: GitLabListKind,
+        kind: CodeHostListKind,
         page: WebPage,
         configuredURLStringProvider: @escaping () -> String?,
         now: @escaping () -> Date = { Date() },
         readinessAttempts: Int = 12,
         readinessIntervalNanoseconds: UInt64 = 250_000_000,
         pageLoader: (@MainActor (WebPage, URLRequest) async -> Bool)? = nil,
-        extractionExecutor: (@MainActor (WebPage) async throws -> String?)? = nil
+        extractionExecutor: (@MainActor (WebPage) async throws -> String?)? = nil,
+        payloadDecoder: PayloadDecoder? = nil
     ) {
         self.kind = kind
         self.page = page
         self.configuredURLStringProvider = configuredURLStringProvider
+        self.payloadDecoder = payloadDecoder ?? MergeRequestListExtractor.decode
         self.now = now
         self.readinessAttempts = max(1, readinessAttempts)
         self.readinessIntervalNanoseconds = readinessIntervalNanoseconds
-        self.pageLoader = pageLoader ?? GitLabListPanelController.defaultLoadPage
-        self.extractionExecutor = extractionExecutor ?? GitLabListPanelController.defaultExecuteExtraction
+        self.pageLoader = pageLoader ?? CodeHostListPanelController.defaultLoadPage
+        self.extractionExecutor = extractionExecutor ?? CodeHostListPanelController.defaultExecuteExtraction
     }
 
     // MARK: - Lifecycle
@@ -81,14 +88,14 @@ final class GitLabListPanelController {
             reevaluateConfiguration()
             return
         }
-        let urlString = configuredURLStringProvider().flatMap(GitLabListURLNormalization.normalized)
+        let urlString = configuredURLStringProvider().flatMap(ListURLNormalization.normalized)
         if urlString != lastConfiguredURLString {
             refresh(forceReload: true)
         }
     }
 
-    /// Manual reload of the ordinary configured GitLab list page. Prior cards
-    /// are retained until a complete successful extraction replaces them; a
+    /// Manual reload of the ordinary configured list page. Prior cards are
+    /// retained until a complete successful extraction replaces them; a
     /// failed refresh marks them stale instead of showing a false zero.
     func refresh(forceReload: Bool = true) {
         extractionTask?.cancel()
@@ -103,7 +110,7 @@ final class GitLabListPanelController {
             return
         }
 
-        guard let url = GitLabListURLNormalization.url(from: raw) else {
+        guard let url = ListURLNormalization.url(from: raw) else {
             lastConfiguredURLString = nil
             state = .unconfigured
             return
@@ -124,7 +131,7 @@ final class GitLabListPanelController {
     }
 
     /// Cancels pending extraction when the view is torn down. The retained
-    /// page itself stays alive in the shared session store.
+    /// page itself stays alive in the session store.
     func cancelPendingWork() {
         extractionTask?.cancel()
         extractionTask = nil
@@ -149,7 +156,7 @@ final class GitLabListPanelController {
     }
 
     /// Reveals the same retained page and navigates it to the captured MR URL.
-    func open(_ item: GitLabMergeRequestSummary) {
+    func open(_ item: MergeRequestSummary) {
         presentation = .browser
         page.load(URLRequest(url: item.mergeRequestURL))
     }
@@ -175,11 +182,11 @@ final class GitLabListPanelController {
             return
         }
 
-        var outcome: GitLabListExtractionResult?
+        var outcome: MergeRequestListExtractionResult?
         for attempt in 0..<readinessAttempts where !Task.isCancelled {
             if let result = await extractOnce() {
                 // A decisive answer ends the readiness loop; `unsupported`
-                // keeps waiting briefly because GitLab may still be rendering.
+                // keeps waiting briefly because the host may still be rendering.
                 outcome = result
                 if !isIndeterminate(result) { break }
             }
@@ -221,20 +228,20 @@ final class GitLabListPanelController {
         return false
     }
 
-    /// Production extraction: run the DOM inspector via callJavaScript and
-    /// return the JSON payload string.
+    /// Production extraction: run the active code host's DOM inspector via
+    /// callJavaScript and return the JSON payload string.
     private static func defaultExecuteExtraction(_ page: WebPage) async throws -> String? {
-        try await page.callJavaScript(GitLabListExtractorJavaScript.source) as? String
+        try await page.callJavaScript(AppSettings().codeHostProvider.extractorJavaScriptSource) as? String
     }
 
-    private func extractOnce() async -> GitLabListExtractionResult? {
+    private func extractOnce() async -> MergeRequestListExtractionResult? {
         guard let json = try? await extractionExecutor(page),
-              let decoded = try? GitLabMergeRequestListExtractor.decode(json)
+              let decoded = try? payloadDecoder(json)
         else { return nil }
         return decoded
     }
 
-    private func isIndeterminate(_ result: GitLabListExtractionResult) -> Bool {
+    private func isIndeterminate(_ result: MergeRequestListExtractionResult) -> Bool {
         switch result {
         case .unsupportedPage: return true
         case .authenticationRequired: return false
@@ -245,13 +252,13 @@ final class GitLabListPanelController {
 
     /// Atomically applies one extraction outcome. Internal (not private) so
     /// tests can drive generation-rejection deterministically.
-    func apply(_ outcome: GitLabListExtractionResult, generation appliedGeneration: Int) {
+    func apply(_ outcome: MergeRequestListExtractionResult, generation appliedGeneration: Int) {
         guard appliedGeneration == self.generation else { return }
         apply(outcome)
         isRefreshing = false
     }
 
-    private func apply(_ outcome: GitLabListExtractionResult) {
+    private func apply(_ outcome: MergeRequestListExtractionResult) {
         let timestamp = now()
 
         switch outcome {
@@ -271,7 +278,7 @@ final class GitLabListPanelController {
 
     /// On failure states, keep prior cards as stale rather than presenting a
     /// false zero. Without prior cards, surface the specific failure state.
-    private func retainOr(_ failureState: GitLabListPanelState, reason: GitLabRefreshFailureReason) {
+    private func retainOr(_ failureState: MergeRequestListPanelState, reason: MergeRequestRefreshFailureReason) {
         switch state {
         case .loaded(let items, let refreshedAt):
             state = .stale(items: items, refreshedAt: refreshedAt, reason: reason)
@@ -295,7 +302,7 @@ final class GitLabListPanelController {
 /// URL handling shared by the panel controllers and sidebar views. Values are
 /// user-configured exact list URLs; Console never builds query parameters and
 /// never logs them.
-enum GitLabListURLNormalization {
+enum ListURLNormalization {
     static func normalized(_ raw: String?) -> String? {
         url(from: raw).map { $0.absoluteString }
     }

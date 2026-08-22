@@ -19,6 +19,24 @@ class AppSettings {
     @AppStorage(AppSettings.webViewGitLabReviewsURLKey) var webViewGitLabReviewsURL: String = ""
     @AppStorage(AppSettings.webViewGitLabMyMergeRequestsURLKey) var webViewGitLabMyMergeRequestsURL: String = ""
 
+    // GitHub panel list URLs (Panel 3 reviews / Panel 4 authored).
+    static let webViewGitHubReviewsURLKey = "webViewGitHubReviewsURL"
+    static let webViewGitHubMyPullRequestsURLKey = "webViewGitHubMyPullRequestsURL"
+
+    @AppStorage(AppSettings.webViewGitHubReviewsURLKey) var webViewGitHubReviewsURL: String = ""
+    @AppStorage(AppSettings.webViewGitHubMyPullRequestsURLKey) var webViewGitHubMyPullRequestsURL: String = ""
+
+    /// Which code host Console targets. Only one host is active at a time;
+    /// switching never touches the inactive host's configuration.
+    static let codeHostProviderKey = "codeHostProvider"
+
+    @AppStorage(AppSettings.codeHostProviderKey) var codeHostProviderRaw: String = CodeHostProvider.gitlab.rawValue
+
+    var codeHostProvider: CodeHostProvider {
+        get { CodeHostProvider(rawValue: codeHostProviderRaw) ?? .gitlab }
+        set { codeHostProviderRaw = newValue.rawValue }
+    }
+
     // Automation settings (Phase 0.3)
     @AppStorage("launchAtLogin") var launchAtLogin: Bool = false
     @AppStorage("listenOnStartup") var listenOnStartup: Bool = true

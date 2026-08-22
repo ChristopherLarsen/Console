@@ -1,10 +1,10 @@
 import Foundation
 
-/// The two retained GitLab merge-request lists Console keeps open.
+/// The two retained merge-request lists Console keeps open per code host.
 ///
 /// Both panels share one authenticated WebKit website data store but own
 /// independent pages and navigation histories.
-enum GitLabListKind: String, CaseIterable, Sendable {
+enum CodeHostListKind: String, CaseIterable, Sendable {
     case reviewsRequested
     case authored
 
@@ -25,9 +25,10 @@ enum GitLabListKind: String, CaseIterable, Sendable {
     }
 }
 
-/// Memory-only summary of one merge-request row GitLab rendered in a list.
-/// Identity is the normalized absolute MR URL; IIDs are only unique per project.
-struct GitLabMergeRequestSummary: Identifiable, Equatable, Sendable {
+/// Memory-only summary of one merge-request row the active code host rendered
+/// in a list. Identity is the normalized absolute URL; IIDs are only unique
+/// per project.
+struct MergeRequestSummary: Identifiable, Equatable, Sendable {
     let id: URL
     let iidText: String?
     let title: String
@@ -43,7 +44,7 @@ struct GitLabMergeRequestSummary: Identifiable, Equatable, Sendable {
 
 /// Why a manual refresh did not produce fresh cards. Values are fixed,
 /// data-free strings safe for state descriptions.
-enum GitLabRefreshFailureReason: String, Equatable, Sendable {
+enum MergeRequestRefreshFailureReason: String, Equatable, Sendable {
     case signInRequired
     case pageWasNotAList
     case extractionFailed
@@ -59,19 +60,19 @@ enum GitLabRefreshFailureReason: String, Equatable, Sendable {
 
 /// Explicit panel states. Descriptions intentionally never include extracted
 /// MR content such as titles, URLs, projects, or author names.
-enum GitLabListPanelState: Equatable {
+enum MergeRequestListPanelState: Equatable {
     case unconfigured
     case loadingPage
     case authenticationRequired
     case extracting
-    case loaded(items: [GitLabMergeRequestSummary], refreshedAt: Date)
+    case loaded(items: [MergeRequestSummary], refreshedAt: Date)
     case empty(refreshedAt: Date)
-    case stale(items: [GitLabMergeRequestSummary], refreshedAt: Date, reason: GitLabRefreshFailureReason)
+    case stale(items: [MergeRequestSummary], refreshedAt: Date, reason: MergeRequestRefreshFailureReason)
     case unsupportedPage
     case extractionFailed
 
     /// Cards from the last successful extraction, if any should stay visible.
-    var retainedItems: [GitLabMergeRequestSummary] {
+    var retainedItems: [MergeRequestSummary] {
         switch self {
         case .loaded(let items, _), .stale(let items, _, _):
             return items
@@ -90,7 +91,7 @@ enum GitLabListPanelState: Equatable {
     }
 }
 
-extension GitLabListPanelState: CustomStringConvertible, CustomDebugStringConvertible {
+extension MergeRequestListPanelState: CustomStringConvertible, CustomDebugStringConvertible {
     private var redactedName: String {
         switch self {
         case .unconfigured: return "unconfigured"
