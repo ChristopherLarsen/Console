@@ -1,12 +1,25 @@
 import SwiftUI
 import WebKit
 
-/// Navigation bar around a shared GitLab page: back/forward/reload controls
-/// plus Show Cards when the panel has extracted content to present.
+/// Navigation bar around a shared GitLab page: back/forward/reload controls,
+/// Start Session when the page displays a merge request, plus Show Cards when
+/// the panel has extracted content to present.
 struct GitLabBrowserNavigationBar: View {
     let page: WebPage
     var showCardsAction: (() -> Void)?
     var showCardsAvailable: Bool = true
+
+    @Environment(SessionLaunchCoordinator.self) private var launchCoordinator
+
+    /// Memory-only context parsed from the URL the retained WebView is
+    /// currently showing. Nothing here is fetched or persisted.
+    private var currentMergeRequestContext: SessionLaunchSource? {
+        guard !page.isLoading, let url = page.url,
+              let info = GitLabSourceContext.parseMergeRequest(fromURL: url) else {
+            return nil
+        }
+        return .gitLabMergeRequest(iid: info.iid, title: page.title, url: url)
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -40,6 +53,19 @@ struct GitLabBrowserNavigationBar: View {
                 Image(systemName: page.isLoading ? "xmark" : "arrow.clockwise")
             }
             .help(page.isLoading ? "Stop" : "Reload")
+
+            // One-click review launch when the retained page displays an MR.
+            if case let .gitLabMergeRequest(iid, title, url) = currentMergeRequestContext {
+                Button {
+                    launchCoordinator.beginMergeRequestReview(iid: iid, title: title, url: url)
+                } label: {
+                    Label("Start Session", systemImage: "terminal")
+                        .labelStyle(.titleAndIcon)
+                }
+                .controlSize(.small)
+                .help("Start a Claude review session for this merge request")
+                .accessibilityIdentifier("MergeRequests.StartSessionButton")
+            }
 
             if let showCardsAction {
                 Button("Show Cards") {
