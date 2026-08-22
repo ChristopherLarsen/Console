@@ -3,7 +3,6 @@ import SwiftUI
 /// Left sidebar with ConsoleBuddy card and primary navigation.
 struct SidebarView: View {
     @Binding var selection: SidebarSelection
-    @Binding var isTerminalExpanded: Bool
     @Environment(ThemeManager.self) private var themeManager
 
     var body: some View {
@@ -74,13 +73,11 @@ struct SidebarView: View {
                         SidebarSeparator()
 
                         SidebarRow(
-                            label: SidebarSelection.terminal.label,
-                            icon: SidebarSelection.terminal.icon,
-                            isSelected: isTerminalExpanded
+                            label: SidebarSelection.sessions.label,
+                            icon: SidebarSelection.sessions.icon,
+                            isSelected: selection == .sessions
                         ) {
-                            withAnimation(TerminalPanelView.collapseAnimation) {
-                                isTerminalExpanded.toggle()
-                            }
+                            selection = .sessions
                         }
                     }
                 }
@@ -106,8 +103,7 @@ struct SidebarView: View {
 
 #Preview {
     @Previewable @State var selection: SidebarSelection = .home
-    @Previewable @State var isTerminalExpanded = true
-    SidebarView(selection: $selection, isTerminalExpanded: $isTerminalExpanded)
+    SidebarView(selection: $selection)
         .environment(ThemeManager())
         .frame(width: 220, height: 500)
 }

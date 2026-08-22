@@ -1,0 +1,9 @@
+{
+  "mcpServers" : {
+    "console" : {
+      "type" : "stdio",
+      "command" : "${CONSOLE_TERM_BRIDGE_HELPER}",
+      "args" : [ "mcp" ]
+    }
+  }
+}

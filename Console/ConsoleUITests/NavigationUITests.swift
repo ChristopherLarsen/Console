@@ -26,7 +26,7 @@ final class NavigationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Merge Requests"].firstMatch.exists, "Merge Requests sidebar item should be visible")
         XCTAssertTrue(app.buttons["Triggers"].firstMatch.exists, "Triggers sidebar item should be visible")
         XCTAssertTrue(app.buttons["Commands"].firstMatch.exists, "Commands sidebar item should be visible")
-        XCTAssertTrue(app.buttons["Terminal"].firstMatch.exists, "Terminal sidebar item should be visible")
+        XCTAssertTrue(app.buttons["Sessions"].firstMatch.exists, "Sessions sidebar item should be visible")
         XCTAssertTrue(app.buttons["Settings"].firstMatch.exists, "Settings sidebar item should be visible")
 
         // Carapace-only items should not appear
@@ -126,36 +126,25 @@ final class NavigationUITests: XCTestCase {
         commandsItem.tap()
     }
 
-    // MARK: - Terminal Panel
+    // MARK: - Sessions Destination
 
-    func testSidebarTerminalTogglesPanelWithoutChangingCenter() throws {
+    func testSidebarSessionsShowsZeroSessionState() throws {
+        // Synthesized clicks on custom sidebar rows race window settling under
+        // automation (pre-existing: the JIRA content test shows the same), so
+        // navigate via launch argument and assert the destination renders.
+        app.launchArguments.append("-uiTestSelectSessions")
         app.launch()
 
         let mainWindow = app.windows.firstMatch
         XCTAssertTrue(mainWindow.waitForExistence(timeout: 5), "Main window should appear")
+        XCTAssertTrue(app.buttons["Sessions"].firstMatch.exists, "Sessions sidebar item should be visible")
 
-        let homeItem = app.buttons["Home"].firstMatch
-        XCTAssertTrue(homeItem.waitForExistence(timeout: 5))
-        homeItem.tap()
-
-        let homeDashboard = app.descendants(matching: .any)["HomeDashboard"].firstMatch
-        XCTAssertTrue(homeDashboard.waitForExistence(timeout: 5), "Home center content should be visible")
-
-        let collapseButton = app.buttons["ToggleTerminalCollapse"].firstMatch
-        XCTAssertTrue(collapseButton.waitForExistence(timeout: 5), "Terminal chevron should be visible when expanded")
-
-        let terminalSidebar = app.buttons["Terminal"].firstMatch
-        XCTAssertTrue(terminalSidebar.exists)
-        terminalSidebar.tap()
-
-        // Center page stays Home; Terminal row toggles the bottom panel only.
-        XCTAssertTrue(homeDashboard.exists, "Sidebar Terminal should not replace center content")
-        XCTAssertTrue(collapseButton.waitForExistence(timeout: 5), "Collapsed Terminal bar should remain pinned")
-
-        terminalSidebar.tap()
-        XCTAssertTrue(collapseButton.waitForExistence(timeout: 5), "Terminal chevron should remain after expand")
-        XCTAssertTrue(homeDashboard.exists, "Center content should still be Home after expand")
+        let emptyState = app.descendants(matching: .any).matching(identifier: "Sessions.EmptyState").firstMatch
+        XCTAssertTrue(emptyState.waitForExistence(timeout: 5), "Sessions should start with zero sessions")
+        XCTAssertTrue(app.buttons["NewSessionButton"].firstMatch.exists, "New session button should be available")
     }
+
+    // MARK: - Bottom Terminal Drawer
 
     func testTerminalChevronCollapsesAndExpands() throws {
         app.launch()

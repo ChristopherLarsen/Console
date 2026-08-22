@@ -60,6 +60,7 @@ struct ConsoleApp: App {
     @State private var localCommandExecutor = LocalCommandExecutor()
     @State private var wakeWordManager: WakeWordManager?
     @State private var updateManager: UpdateManager
+    @State private var sessionStore = SessionStore()
     private var syntheticTranscriptSource: SyntheticTranscriptSource?
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("tabSelection") private var tabSelection: TabSelection = .triggers
@@ -87,6 +88,8 @@ struct ConsoleApp: App {
 
         // Always open on Home for each process launch (do not restore last sidebar page).
         UserDefaults.standard.set(SidebarSelection.home.rawValue, forKey: ConsoleNavigation.sidebarKey)
+        // Conservative migration from the removed bottom-terminal era.
+        ConsoleNavigation.migrateLegacyTerminalNavigation()
 
         NSWindow.allowsAutomaticWindowTabbing = false
 
@@ -183,6 +186,7 @@ struct ConsoleApp: App {
         if !Self.isRunningUnitTests {
             MenuBarManager.shared.installStatusItem()
 
+            let activeSessionStore = sessionStore
             // Cancel any in-flight update check or clone when the app terminates.
             NotificationCenter.default.addObserver(
                 forName: NSApplication.willTerminateNotification,
@@ -191,9 +195,23 @@ struct ConsoleApp: App {
             ) { [weak updates] _ in
                 MainActor.assumeIsolated {
                     updates?.cancelAll()
+                    // Real termination stops all session processes; hiding the
+                    // window never reaches this path.
+                    activeSessionStore.terminateAll()
+                    activeSessionStore.stopBridge()
                 }
             }
         }
+
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-uiTestSelectSessions")
+            || ProcessInfo.processInfo.arguments.contains("-uiTestSessionsPreview") {
+            UserDefaults.standard.set(SidebarSelection.sessions.rawValue, forKey: ConsoleNavigation.sidebarKey)
+        }
+        if ProcessInfo.processInfo.arguments.contains("-uiTestSessionsPreview") {
+            sessionStore.injectUITestPreviewSessions()
+        }
+        #endif
     }
 
     var body: some Scene {
@@ -278,6 +296,7 @@ struct ConsoleApp: App {
             .environment(wakeWordManager)
             .environment(menuBarViewModel)
             .environment(updateManager)
+            .environment(sessionStore)
             #if DEBUG
             .environment(developerModeManager)
             #endif
@@ -397,6 +416,7 @@ struct ConsoleApp: App {
         handleListenOnStartup()
         pingLocalProviderIfNeeded()
         runStartupUpdateCheckIfNeeded()
+        sessionStore.startBridgeIfNeeded()
     }
 
     /// One automatic check per process, only in non-test Release builds.

@@ -35,6 +35,8 @@ struct SettingsView: View {
     @State private var showHotkeyRecorder = false
     @State private var showPermissions = false
     @State private var showAvailableCommands = false
+    @State private var detectedClaudePath: String?
+    private let locator = ClaudeExecutableLocator()
     @FocusState private var isAuthWordsFocused: Bool
     @FocusState private var isJiraURLFocused: Bool
     @FocusState private var isMergeRequestsURLFocused: Bool
@@ -46,6 +48,7 @@ struct SettingsView: View {
         ZStack {
             Form {
                 generalSection
+                claudeSection
                 urlsSection
                 popupsSection
                 permissionsSection
@@ -80,6 +83,7 @@ struct SettingsView: View {
             DispatchQueue.main.async {
                 NSApp.keyWindow?.makeFirstResponder(nil)
             }
+            detectedClaudePath = locator.locate()
         }
         .sheet(isPresented: $showPermissions) {
             PermissionsView(onDismiss: { showPermissions = false })
@@ -235,6 +239,65 @@ struct SettingsView: View {
                     showHotkeyRecorder = true
                 }
             }
+        }
+    }
+
+    // MARK: - Claude Executable
+
+    private var claudeSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    Text("Claude Executable")
+
+                    Spacer()
+
+                    Button("Reset to Automatic") {
+                        locator.storeOverride(nil)
+                        detectedClaudePath = locator.locate()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    .accessibilityIdentifier("Settings.Claude.ResetButton")
+                    .disabled(locator.storedOverride == nil)
+
+                    Button("Choose…") { chooseClaudeExecutable() }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityIdentifier("Settings.Claude.ChooseButton")
+                }
+
+                Text(detectedClaudePath ?? "Not found — install Claude Code or choose its executable.")
+                    .font(.caption.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(detectedClaudePath == nil ? Color.orange : .secondary)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("Settings.Claude.PathText")
+            }
+        } header: {
+            Text("Claude")
+        } footer: {
+            Text("Console launches Claude sessions with this executable. Automatic resolution checks common install locations and your login shell.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func chooseClaudeExecutable() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory())
+
+        panel.beginSheetModal(for: NSApp.keyWindow ?? NSApp.mainWindow!) { response in
+            guard response == .OK, let url = panel.url else { return }
+            let path = url.path
+            guard locator.isValidExecutable(path) else { return }
+            locator.storeOverride(path)
+            detectedClaudePath = path
         }
     }
 

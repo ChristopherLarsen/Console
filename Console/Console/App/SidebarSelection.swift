@@ -8,7 +8,7 @@ enum SidebarSelection: String, CaseIterable, Identifiable {
     case triggers
     case commands
     case aiProvider
-    case terminal
+    case sessions
     case settings
 
     var id: String { rawValue }
@@ -21,7 +21,7 @@ enum SidebarSelection: String, CaseIterable, Identifiable {
         case .triggers: return "Triggers"
         case .commands: return "Commands"
         case .aiProvider: return "AI Provider"
-        case .terminal: return "Terminal"
+        case .sessions: return "Sessions"
         case .settings: return "Settings"
         }
     }
@@ -34,7 +34,7 @@ enum SidebarSelection: String, CaseIterable, Identifiable {
         case .triggers: return "waveform"
         case .commands: return "list.bullet.rectangle"
         case .aiProvider: return "brain"
-        case .terminal: return "terminal"
+        case .sessions: return "terminal"
         case .settings: return "gear"
         }
     }

@@ -4,17 +4,22 @@ import Foundation
 enum ConsoleNavigation {
     static let sidebarKey = "sidebarSelection"
     static let tabKey = "tabSelection"
+    /// Expansion preference for the global bottom zsh Terminal drawer.
+    /// Unrelated to the Sessions destination, which owns Claude PTYs.
     static let terminalExpandedKey = "isTerminalExpanded"
 
-    /// Show a primary sidebar destination.
-    /// `.terminal` expands the bottom Terminal panel instead of changing the center page.
-    static func show(_ selection: SidebarSelection) {
-        if selection == .terminal {
-            UserDefaults.standard.set(true, forKey: terminalExpandedKey)
-            UserDefaults.standard.synchronize()
-            return
+    /// Conservative migration from the pre-Sessions era: a stored sidebar
+    /// `"terminal"` was never a real page, so map it to Home and expand the
+    /// global bottom Terminal drawer. The drawer preference is preserved.
+    static func migrateLegacyTerminalNavigation() {
+        if UserDefaults.standard.string(forKey: sidebarKey) == "terminal" {
+            UserDefaults.standard.set(SidebarSelection.home.rawValue, forKey: sidebarKey)
+            setTerminalExpanded(true)
         }
+    }
 
+    /// Show a primary sidebar destination.
+    static func show(_ selection: SidebarSelection) {
         UserDefaults.standard.set(selection.rawValue, forKey: sidebarKey)
         // Keep legacy tabSelection in sync for callers that still observe it.
         switch selection {
@@ -24,9 +29,7 @@ enum ConsoleNavigation {
             UserDefaults.standard.set(TabSelection.myCommands.rawValue, forKey: tabKey)
         case .settings:
             UserDefaults.standard.set(TabSelection.settings.rawValue, forKey: tabKey)
-        case .terminal:
-            break
-        case .home, .aiProvider, .jira, .mergeRequests:
+        case .sessions, .home, .aiProvider, .jira, .mergeRequests:
             break
         }
         UserDefaults.standard.synchronize()
@@ -40,10 +43,26 @@ enum ConsoleNavigation {
         case .myCommands:
             show(.commands)
         case .live:
-            show(.terminal)
+            expandTerminal()
         case .settings:
             show(.settings)
         }
+    }
+
+    /// Expand the global bottom zsh Terminal drawer without changing pages.
+    /// Sessions remains reachable through `showSessions()`.
+    static func expandTerminal() {
+        setTerminalExpanded(true)
+    }
+
+    private static func setTerminalExpanded(_ expanded: Bool) {
+        UserDefaults.standard.set(expanded, forKey: terminalExpandedKey)
+        UserDefaults.standard.synchronize()
+    }
+
+    /// Show the Sessions sidebar item.
+    static func showSessions() {
+        show(.sessions)
     }
 
     /// Show the Settings sidebar item.

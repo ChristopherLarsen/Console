@@ -6,7 +6,7 @@ struct AvailableCommandsView: View {
     @AppStorage("tabSelection") private var tabSelection: TabSelection = .triggers
     @AppStorage("sidebarSelection") private var sidebarSelection: SidebarSelection = .home
     @State private var initialTab: TabSelection = .triggers
-    @State private var initialSidebar: SidebarSelection = .terminal
+    @State private var initialSidebar: SidebarSelection = .home
 
     private let apps = CuratedAppShowcase.sortedByPopularity
     @State private var searchText: String = ""

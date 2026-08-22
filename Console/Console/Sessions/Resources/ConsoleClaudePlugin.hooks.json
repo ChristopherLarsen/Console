@@ -1,0 +1,105 @@
+{
+  "hooks" : {
+    "CwdChanged" : [
+      {
+        "hooks" : [
+          {
+            "type" : "command",
+            "async" : true,
+            "command" : "\"$CONSOLE_TERM_BRIDGE_HELPER\" hook CwdChanged"
+          }
+        ]
+      }
+    ],
+    "Notification" : [
+      {
+        "matcher" : "idle_prompt",
+        "hooks" : [
+          {
+            "type" : "command",
+            "async" : true,
+            "command" : "\"$CONSOLE_TERM_BRIDGE_HELPER\" hook NotificationIdlePrompt"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest" : [
+      {
+        "hooks" : [
+          {
+            "type" : "command",
+            "async" : true,
+            "command" : "\"$CONSOLE_TERM_BRIDGE_HELPER\" hook PermissionRequest"
+          }
+        ]
+      }
+    ],
+    "PreToolUse" : [
+      {
+        "matcher" : "AskUserQuestion",
+        "hooks" : [
+          {
+            "type" : "command",
+            "async" : true,
+            "command" : "\"$CONSOLE_TERM_BRIDGE_HELPER\" hook AskUserQuestion"
+          }
+        ]
+      }
+    ],
+    "SessionEnd" : [
+      {
+        "hooks" : [
+          {
+            "type" : "command",
+            "async" : true,
+            "command" : "\"$CONSOLE_TERM_BRIDGE_HELPER\" hook SessionEnd"
+          }
+        ]
+      }
+    ],
+    "SessionStart" : [
+      {
+        "hooks" : [
+          {
+            "type" : "command",
+            "async" : true,
+            "command" : "\"$CONSOLE_TERM_BRIDGE_HELPER\" hook SessionStart"
+          }
+        ]
+      }
+    ],
+    "Stop" : [
+      {
+        "hooks" : [
+          {
+            "type" : "command",
+            "async" : true,
+            "command" : "\"$CONSOLE_TERM_BRIDGE_HELPER\" hook Stop"
+          }
+        ]
+      }
+    ],
+    "StopFailure" : [
+      {
+        "hooks" : [
+          {
+            "type" : "command",
+            "async" : true,
+            "command" : "\"$CONSOLE_TERM_BRIDGE_HELPER\" hook StopFailure"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit" : [
+      {
+        "hooks" : [
+          {
+            "type" : "command",
+            "async" : true,
+            "command" : "\"$CONSOLE_TERM_BRIDGE_HELPER\" hook UserPromptSubmit"
+          }
+        ]
+      }
+    ]
+  }
+}

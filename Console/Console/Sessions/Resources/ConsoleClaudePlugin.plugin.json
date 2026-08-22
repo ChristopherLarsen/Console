@@ -1,0 +1,5 @@
+{
+  "description" : "Console lifecycle instrumentation and agent-to-Console messaging bridge. Reports session state to Console and exposes three Console tools.",
+  "name" : "console-bridge",
+  "version" : "1.0.0"
+}

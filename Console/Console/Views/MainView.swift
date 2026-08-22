@@ -19,7 +19,7 @@ struct MainView: View {
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(selection: $sidebarSelection, isTerminalExpanded: $isTerminalExpanded)
+            SidebarView(selection: $sidebarSelection)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 300)
         } detail: {
             detailColumn
@@ -30,13 +30,10 @@ struct MainView: View {
         .tint(Color.accentColor)
         .preferredColorScheme(themeManager.colorScheme)
         .onAppear {
+            // Conservative migration from the removed bottom-terminal era.
+            ConsoleNavigation.migrateLegacyTerminalNavigation()
+            // Start the persistent login shell even while the drawer is collapsed.
             _ = terminalSessionManager.getOrCreateTerminalView()
-            remapLegacyTerminalSelectionIfNeeded()
-        }
-        .onChange(of: sidebarSelection) { _, newValue in
-            if newValue == .terminal {
-                remapLegacyTerminalSelectionIfNeeded()
-            }
         }
         .onChange(of: tabSelection) { _, newValue in
             // Legacy callers may still set tabSelection; map to sidebar.
@@ -48,7 +45,8 @@ struct MainView: View {
             case .myCommands:
                 sidebarSelection = .commands
             case .live:
-                // Terminal is a bottom panel toggle, not a center page.
+                // "Live" means the global bottom zsh Terminal drawer,
+                // not the Sessions destination.
                 withAnimation(TerminalPanelView.collapseAnimation) {
                     isTerminalExpanded = true
                 }
@@ -176,32 +174,16 @@ struct MainView: View {
             CommandListView()
         case .aiProvider:
             AIProviderView()
-        case .terminal:
-            // Remapped on appear; keep a safe fallback if selection briefly lands here.
-            placeholderView(title: "Home")
+        case .sessions:
+            SessionsView()
         case .settings:
             SettingsView(modelContext: modelContext)
         }
-    }
-
-    private func remapLegacyTerminalSelectionIfNeeded() {
-        guard sidebarSelection == .terminal else { return }
-        sidebarSelection = .home
-        withAnimation(TerminalPanelView.collapseAnimation) {
-            isTerminalExpanded = true
-        }
-    }
-
-    private func placeholderView(title: String) -> some View {
-        Text(title)
-            .font(.largeTitle)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityIdentifier(title)
     }
 }
 
 #Preview {
     MainView()
+        .environment(SessionStore())
         .modelContainer(for: [Command.self, WakeWord.self], inMemory: true)
 }

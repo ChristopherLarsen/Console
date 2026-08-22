@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		A11B22C33D44E55F6677880A /* libSwiftTerm.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A11B22C33D44E55F66778801 /* libSwiftTerm.a */; };
+		CCB00000000000000000000C /* ConsoleTermBridge in Embed Helper Tools */ = {isa = PBXBuildFile; fileRef = CCB000000000000000000001 /* ConsoleTermBridge */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -32,13 +33,35 @@
 			remoteGlobalIDString = A11B22C33D44E55F66778802;
 			remoteInfo = SwiftTerm;
 		};
+		CCB000000000000000000009 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 93FE241F2F2FFA7800042752 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CCB000000000000000000003;
+			remoteInfo = ConsoleTermBridge;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		CCB00000000000000000000B /* Embed Helper Tools */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Helpers;
+			dstSubfolderSpec = 1;
+			files = (
+				CCB00000000000000000000C /* ConsoleTermBridge in Embed Helper Tools */,
+			);
+			name = "Embed Helper Tools";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		93FE24382F2FFA7A00042752 /* ConsoleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ConsoleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		93FE24422F2FFA7A00042752 /* ConsoleUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ConsoleUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A11B22C33D44E55F66778801 /* libSwiftTerm.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libSwiftTerm.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		BF8FB3DCED2F49BBA2B990C7 /* Console.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Console.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CCB000000000000000000001 /* ConsoleTermBridge */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ConsoleTermBridge; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -86,6 +109,11 @@
 			path = SwiftTerm;
 			sourceTree = "<group>";
 		};
+		CCB000000000000000000002 /* ConsoleTermBridge */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ConsoleTermBridge;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -118,6 +146,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CCB000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -125,6 +160,7 @@
 			isa = PBXGroup;
 			children = (
 				93FE24292F2FFA7800042752 /* Console */,
+				CCB000000000000000000002 /* ConsoleTermBridge */,
 				A11B22C33D44E55F66778803 /* SwiftTerm */,
 				93FE243B2F2FFA7A00042752 /* ConsoleTests */,
 				93FE24452F2FFA7A00042752 /* ConsoleUITests */,
@@ -136,6 +172,7 @@
 			isa = PBXGroup;
 			children = (
 				BF8FB3DCED2F49BBA2B990C7 /* Console.app */,
+				CCB000000000000000000001 /* ConsoleTermBridge */,
 				A11B22C33D44E55F66778801 /* libSwiftTerm.a */,
 				93FE24382F2FFA7A00042752 /* ConsoleTests.xctest */,
 				93FE24422F2FFA7A00042752 /* ConsoleUITests.xctest */,
@@ -153,11 +190,13 @@
 				805450ADEE7B4E24AB043F6E /* Sources */,
 				7B6F6BAC5FB441AB8D9EE25B /* Frameworks */,
 				7C2B2CA8BDF74A95AA5F1C63 /* Resources */,
+				CCB00000000000000000000B /* Embed Helper Tools */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				A11B22C33D44E55F66778809 /* PBXTargetDependency */,
+				CCB00000000000000000000A /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				93FE24292F2FFA7800042752 /* Console */,
@@ -237,6 +276,27 @@
 			productReference = A11B22C33D44E55F66778801 /* libSwiftTerm.a */;
 			productType = "com.apple.product-type.library.static";
 		};
+		CCB000000000000000000003 /* ConsoleTermBridge */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CCB000000000000000000008 /* Build configuration list for PBXNativeTarget "ConsoleTermBridge" */;
+			buildPhases = (
+				CCB000000000000000000004 /* Sources */,
+				CCB000000000000000000005 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				CCB000000000000000000002 /* ConsoleTermBridge */,
+			);
+			name = ConsoleTermBridge;
+			packageProductDependencies = (
+			);
+			productName = ConsoleTermBridge;
+			productReference = CCB000000000000000000001 /* ConsoleTermBridge */;
+			productType = "com.apple.product-type.tool";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -258,6 +318,9 @@
 						CreatedOnToolsVersion = 26.2;
 						TestTargetID = 10E46C06C31F416092A51DF8;
 					};
+					CCB000000000000000000003 = {
+						CreatedOnToolsVersion = 26.2;
+					};
 				};
 			};
 			buildConfigurationList = 93FE24222F2FFA7800042752 /* Build configuration list for PBXProject "Console" */;
@@ -277,6 +340,7 @@
 			projectRoot = "";
 			targets = (
 				10E46C06C31F416092A51DF8 /* Console */,
+				CCB000000000000000000003 /* ConsoleTermBridge */,
 				A11B22C33D44E55F66778802 /* SwiftTerm */,
 				93FE24372F2FFA7A00042752 /* ConsoleTests */,
 				93FE24412F2FFA7A00042752 /* ConsoleUITests */,
@@ -344,6 +408,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CCB000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -361,6 +432,11 @@
 			isa = PBXTargetDependency;
 			target = A11B22C33D44E55F66778802 /* SwiftTerm */;
 			targetProxy = A11B22C33D44E55F66778808 /* PBXContainerItemProxy */;
+		};
+		CCB00000000000000000000A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CCB000000000000000000003 /* ConsoleTermBridge */;
+			targetProxy = CCB000000000000000000009 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -636,6 +712,40 @@
 			};
 			name = Release;
 		};
+		CCB000000000000000000006 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R85CE74CM3;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		CCB000000000000000000007 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = R85CE74CM3;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 		D0740D3DB19B476FB1CCEB08 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -718,6 +828,15 @@
 			buildConfigurations = (
 				A11B22C33D44E55F6677880B /* Debug */,
 				A11B22C33D44E55F6677880C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CCB000000000000000000008 /* Build configuration list for PBXNativeTarget "ConsoleTermBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CCB000000000000000000006 /* Debug */,
+				CCB000000000000000000007 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
