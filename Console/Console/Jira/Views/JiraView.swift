@@ -61,6 +61,7 @@ extension JiraWebSession: JiraPageServicing {
 /// Dedicated embedded WebView for the user's configured JIRA URL.
 struct JiraView: View {
     @AppStorage("webViewJiraURL") private var webViewJiraURL: String = ""
+    @Environment(SessionLaunchCoordinator.self) private var launchCoordinator
     @State private var page = JiraWebSession.shared.page
 
     var body: some View {
@@ -127,6 +128,19 @@ struct JiraView: View {
             }
             .help(page.isLoading ? "Stop" : "Reload")
 
+            // One-click session launch when the retained page displays an issue.
+            if case let .jira(key, title, url) = currentIssueContext {
+                Button {
+                    launchCoordinator.beginJiraTicketLaunch(key: key, title: title, url: url)
+                } label: {
+                    Label("Start Session", systemImage: "terminal")
+                        .labelStyle(.titleAndIcon)
+                }
+                .controlSize(.small)
+                .help("Start a Claude session for this ticket")
+                .accessibilityIdentifier("Jira.StartSessionButton")
+            }
+
             Text(page.url?.absoluteString ?? page.title)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(.secondary)
@@ -143,6 +157,16 @@ struct JiraView: View {
             Divider()
         }
         .accessibilityIdentifier("JiraWebViewControls")
+    }
+
+    /// Memory-only context parsed from the URL the retained WebView is
+    /// currently showing. Nothing here is fetched or persisted.
+    private var currentIssueContext: SessionLaunchSource? {
+        guard !page.isLoading, let url = page.url,
+              let key = JiraSourceContext.parseIssueKey(fromURL: url) else {
+            return nil
+        }
+        return .jira(key: key, title: page.title, url: url)
     }
 
     private var emptyState: some View {
@@ -194,4 +218,7 @@ struct JiraView: View {
 
 #Preview {
     JiraView()
+        .environment(SessionStore())
+        .environment(SessionWorkspaceStore())
+        .environment(SessionLaunchCoordinator(store: SessionStore(), workspaceStore: SessionWorkspaceStore()))
 }

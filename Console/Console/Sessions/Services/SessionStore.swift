@@ -129,6 +129,14 @@ final class SessionStore {
         sessions.first(where: { $0.id == selectedSessionID })
     }
 
+    /// True when the bridge socket server is running, so lifecycle events
+    /// (including `sessionStarted`) can be expected.
+    var isBridgeInstrumented: Bool { socketServer != nil }
+
+    /// Observer fired after each reduced lifecycle event is applied. Used by
+    /// the launch coordinator to deliver starter prompts at `sessionStarted`.
+    @ObservationIgnored var lifecycleObserver: (@MainActor (UUID, SessionLifecycleEvent) -> Void)?
+
     func session(withID id: UUID) -> ConsoleSession? {
         sessions.first(where: { $0.id == id })
     }
@@ -163,9 +171,11 @@ final class SessionStore {
         return "\(base) \(counter)"
     }
 
-    /// Creates and launches a new Claude session.
+    /// Creates and launches a new Claude session from a typed launch request.
+    /// The starter prompt stays memory-only: it is stored on the session and
+    /// delivered through the terminal, never via command-line arguments.
     @discardableResult
-    func createSession(name: String, workingDirectory: URL) throws -> UUID {
+    func createSession(request: SessionCreationRequest) throws -> UUID {
         guard let claudePath = locator.locate() else {
             throw SessionCreationError.claudeNotFound
         }
@@ -174,7 +184,7 @@ final class SessionStore {
 
         let consoleID = UUID()
         let claudeID = UUID()
-        let displayName = Self.uniquedName(name.trimmingCharacters(in: .whitespacesAndNewlines), existingNames: activeNames)
+        let displayName = Self.uniquedName(request.name.trimmingCharacters(in: .whitespacesAndNewlines), existingNames: activeNames)
 
         let terminalView = launcher.makeTerminalView()
 
@@ -189,13 +199,15 @@ final class SessionStore {
             id: consoleID,
             claudeSessionID: claudeID,
             name: displayName,
-            workingDirectory: workingDirectory,
+            workingDirectory: request.workingDirectory,
             terminalView: terminalView,
             activity: .starting,
             attention: .none,
             summary: nil,
-            artifacts: [],
-            bridgeStatus: socketServer != nil ? .unknown : .unavailable
+            artifacts: Self.initialArtifacts(for: request.source),
+            bridgeStatus: socketServer != nil ? .unknown : .unavailable,
+            purpose: request.purpose,
+            pendingStarterPrompt: request.starterPrompt
         )
         sessions.append(session)
         sessionTokens[consoleID] = token
@@ -216,7 +228,7 @@ final class SessionStore {
                     "CONSOLE_TERM_BRIDGE_SESSION_ID": consoleID.uuidString,
                     "CONSOLE_TERM_BRIDGE_TOKEN": token,
                 ].filterEnvironmentValues(),
-                workingDirectory: workingDirectory.path,
+                workingDirectory: request.workingDirectory.path,
                 terminalView: terminalView
             )
         } catch {
@@ -226,6 +238,26 @@ final class SessionStore {
             throw error
         }
         return consoleID
+    }
+
+    /// Initial informational chips for a launch's source context so the row
+    /// shows its ticket/MR immediately, before any bridge artifacts arrive.
+    static func initialArtifacts(for source: SessionLaunchSource?) -> [SessionArtifact] {
+        guard let source else { return [] }
+        return [SessionArtifact(kind: source.artifactKind, label: source.artifactLabel, url: source.artifactURL)]
+    }
+
+    /// Legacy creation entry point retained for compatibility; equivalent to
+    /// a General-purpose request with no source context or starter prompt.
+    @discardableResult
+    func createSession(name: String, workingDirectory: URL) throws -> UUID {
+        try createSession(
+            request: SessionCreationRequest(
+                purpose: .general,
+                name: name,
+                workingDirectory: workingDirectory
+            )
+        )
     }
 
     /// Exact launch arguments: identity, display name, bundled plugin, and
@@ -407,6 +439,50 @@ final class SessionStore {
         return .submitted
     }
 
+    // MARK: - Starter prompts (memory-only)
+
+    func pendingStarterPrompt(for sessionID: UUID) -> String? {
+        session(withID: sessionID)?.pendingStarterPrompt
+    }
+
+    func setPendingStarterPrompt(_ prompt: String?, for sessionID: UUID) {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
+        sessions[index].pendingStarterPrompt = prompt
+    }
+
+    /// Submits a starter prompt without the idle-only gate: sessions whose
+    /// bridge is unavailable never report activity changes, so the manual
+    /// banner path must still be able to deliver. The caller owns clearing
+    /// `pendingStarterPrompt` first (exactly-once semantics).
+    @discardableResult
+    func submitStarterPrompt(_ prompt: String, to sessionID: UUID) -> SubmissionResult {
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .rejected(.emptyPrompt)
+        }
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
+            return .rejected(.sessionNotFound)
+        }
+        let bytes = PromptSubmissionEngine.bytes(for: prompt)
+        sessions[index].terminalView.send(data: bytes[...])
+        applyEvent(.promptSubmitted, to: sessionID)
+        return .submitted
+    }
+
+    #if DEBUG
+    /// Test seam: the in-memory bridge token for one session so tests can
+    /// craft envelopes the router accepts. Never used at runtime.
+    func debugSessionToken(_ sessionID: UUID) -> String? {
+        sessionTokens[sessionID]
+    }
+
+    /// Test seam: feeds an envelope through the same validated router path as
+    /// the socket server without opening a socket.
+    func debugReceiveEnvelope(_ envelope: BridgeEnvelope) {
+        guard let data = try? envelope.encodedData() else { return }
+        router.receive(rawData: data)
+    }
+    #endif
+
     // MARK: - Bridge events
 
     /// Optimistic signal that the user typed into the terminal: clears
@@ -460,6 +536,7 @@ final class SessionStore {
 
         if case .artifactLinked(let artifact) = event {
             appendArtifact(artifact, toSessionAt: index)
+            lifecycleObserver?(sessionID, event)
             return
         }
 
@@ -476,6 +553,8 @@ final class SessionStore {
         if let path = state.workingDirectoryPath {
             sessions[index].workingDirectory = URL(fileURLWithPath: path)
         }
+
+        lifecycleObserver?(sessionID, event)
     }
 
     private func appendArtifact(_ artifact: SessionArtifact, toSessionAt index: Int) {

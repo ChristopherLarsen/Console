@@ -5,6 +5,7 @@ struct JiraPanelView: View {
     @AppStorage("webViewJiraURL") private var webViewJiraURL: String = ""
     @AppStorage("sidebarSelection") private var sidebarSelection: SidebarSelection = .home
     @State private var controller = JiraWebSession.shared.panelController
+    @Environment(SessionLaunchCoordinator.self) private var launchCoordinator
     @FocusState private var browserControlsFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -212,9 +213,20 @@ struct JiraPanelView: View {
             ScrollView {
                 LazyVStack(spacing: 6) {
                     ForEach(Array(tickets.enumerated()), id: \.element.id) { index, ticket in
-                        JiraTicketCard(ticket: ticket, accessibilityIdentifier: "JiraTicketCard.\(index)") {
-                            controller.open(ticket)
-                        }
+                        JiraTicketCard(
+                            ticket: ticket,
+                            accessibilityIdentifier: "JiraTicketCard.\(index)",
+                            action: {
+                                controller.open(ticket)
+                            },
+                            onStartSession: {
+                                launchCoordinator.beginJiraTicketLaunch(
+                                    key: ticket.key,
+                                    title: ticket.summary.isEmpty ? nil : ticket.summary,
+                                    url: ticket.issueURL
+                                )
+                            }
+                        )
                     }
                 }
                 .padding(.horizontal, 8)
@@ -363,9 +375,11 @@ private struct JiraTicketCard: View {
     let ticket: JiraTicketSummary
     let accessibilityIdentifier: String
     let action: () -> Void
+    var onStartSession: (() -> Void)?
 
     var body: some View {
-        Button(action: action) {
+        ZStack(alignment: .topTrailing) {
+            Button(action: action) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(ticket.key)
@@ -425,6 +439,24 @@ private struct JiraTicketCard: View {
         .accessibilityLabel(cardAccessibilityLabel)
         .accessibilityAction(named: "Open in JIRA", action)
         .accessibilityIdentifier(accessibilityIdentifier)
+
+            // Secondary launch affordance, a sibling of the open button so
+            // the card keeps its single primary action.
+            if let onStartSession {
+                Button(action: onStartSession) {
+                    Image(systemName: "terminal")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(5)
+                        .background(Circle().fill(Color(nsColor: .controlBackgroundColor)))
+                        .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
+                }
+                .buttonStyle(.plain)
+                .help("Start a Claude session for this ticket")
+                .accessibilityLabel("Start Claude session")
+                .accessibilityIdentifier("JiraTicketCard.StartSession")
+            }
+        }
     }
 
     private var cardAccessibilityLabel: String {

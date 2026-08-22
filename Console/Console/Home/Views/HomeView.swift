@@ -107,12 +107,17 @@ struct HomeView: View {
         HomePanelContainer(
             title: panel.title,
             subtitle: panel.serviceLabel,
-            showsHeader: panel != .jiraTickets,
+            // JIRA and Sessions own custom headers with actions; the container
+            // supplies only the card chrome and accessibility identifier.
+            showsHeader: panel != .jiraTickets && panel != .sessions,
             accessibilityIdentifier: panel.accessibilityIdentifier
         ) {
-            if panel == .jiraTickets {
+            switch panel {
+            case .jiraTickets:
                 JiraPanelView()
-            } else {
+            case .sessions:
+                HomeSessionsPanelView()
+            case .gitLabReviews, .gitLabAuthored:
                 HomePanelPlaceholder(
                     panelNumber: panel.number,
                     purpose: panel.futurePurpose

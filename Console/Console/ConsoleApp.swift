@@ -60,7 +60,9 @@ struct ConsoleApp: App {
     @State private var localCommandExecutor = LocalCommandExecutor()
     @State private var wakeWordManager: WakeWordManager?
     @State private var updateManager: UpdateManager
-    @State private var sessionStore = SessionStore()
+    @State private var sessionStore: SessionStore
+    @State private var workspaceStore: SessionWorkspaceStore
+    @State private var launchCoordinator: SessionLaunchCoordinator
     private var syntheticTranscriptSource: SyntheticTranscriptSource?
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("tabSelection") private var tabSelection: TabSelection = .triggers
@@ -85,6 +87,9 @@ struct ConsoleApp: App {
             "popupDurationSeconds": 3,
             "listenOnStartup": true
         ])
+
+        let workspaceStore = SessionWorkspaceStore()
+        _workspaceStore = State(initialValue: workspaceStore)
 
         // Always open on Home for each process launch (do not restore last sidebar page).
         UserDefaults.standard.set(SidebarSelection.home.rawValue, forKey: ConsoleNavigation.sidebarKey)
@@ -183,6 +188,12 @@ struct ConsoleApp: App {
         let updates = UpdateManager()
         _updateManager = State(initialValue: updates)
 
+        let sessionStore = SessionStore()
+        _sessionStore = State(initialValue: sessionStore)
+        _launchCoordinator = State(
+            initialValue: SessionLaunchCoordinator(store: sessionStore, workspaceStore: workspaceStore)
+        )
+
         if !Self.isRunningUnitTests {
             MenuBarManager.shared.installStatusItem()
 
@@ -209,6 +220,11 @@ struct ConsoleApp: App {
             UserDefaults.standard.set(SidebarSelection.sessions.rawValue, forKey: ConsoleNavigation.sidebarKey)
         }
         if ProcessInfo.processInfo.arguments.contains("-uiTestSessionsPreview") {
+            sessionStore.injectUITestPreviewSessions()
+        }
+        // Home radar preview: injected sessions while staying on Home — this
+        // flag deliberately does not touch sidebarSelection.
+        if ProcessInfo.processInfo.arguments.contains("-uiTestHomeSessionsPreview") {
             sessionStore.injectUITestPreviewSessions()
         }
         #endif
@@ -297,6 +313,8 @@ struct ConsoleApp: App {
             .environment(menuBarViewModel)
             .environment(updateManager)
             .environment(sessionStore)
+            .environment(workspaceStore)
+            .environment(launchCoordinator)
             #if DEBUG
             .environment(developerModeManager)
             #endif

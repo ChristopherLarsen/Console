@@ -16,6 +16,7 @@ final class MergeRequestsWebSession {
 /// Dedicated embedded WebView for the user's configured Merge Requests URL.
 struct MergeRequestsView: View {
     @AppStorage("webViewMergeRequestsURL") private var webViewMergeRequestsURL: String = ""
+    @Environment(SessionLaunchCoordinator.self) private var launchCoordinator
     @State private var page = MergeRequestsWebSession.shared.page
 
     var body: some View {
@@ -82,6 +83,19 @@ struct MergeRequestsView: View {
             }
             .help(page.isLoading ? "Stop" : "Reload")
 
+            // One-click review launch when the retained page displays an MR.
+            if case let .gitLabMergeRequest(iid, title, url) = currentMergeRequestContext {
+                Button {
+                    launchCoordinator.beginMergeRequestReview(iid: iid, title: title, url: url)
+                } label: {
+                    Label("Start Session", systemImage: "terminal")
+                        .labelStyle(.titleAndIcon)
+                }
+                .controlSize(.small)
+                .help("Start a Claude review session for this merge request")
+                .accessibilityIdentifier("MergeRequests.StartSessionButton")
+            }
+
             Text(page.url?.absoluteString ?? page.title)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(.secondary)
@@ -98,6 +112,16 @@ struct MergeRequestsView: View {
             Divider()
         }
         .accessibilityIdentifier("MergeRequestsWebViewControls")
+    }
+
+    /// Memory-only context parsed from the URL the retained WebView is
+    /// currently showing. Nothing here is fetched or persisted.
+    private var currentMergeRequestContext: SessionLaunchSource? {
+        guard !page.isLoading, let url = page.url,
+              let info = GitLabSourceContext.parseMergeRequest(fromURL: url) else {
+            return nil
+        }
+        return .gitLabMergeRequest(iid: info.iid, title: page.title, url: url)
     }
 
     private var emptyState: some View {
@@ -149,4 +173,7 @@ struct MergeRequestsView: View {
 
 #Preview {
     MergeRequestsView()
+        .environment(SessionStore())
+        .environment(SessionWorkspaceStore())
+        .environment(SessionLaunchCoordinator(store: SessionStore(), workspaceStore: SessionWorkspaceStore()))
 }
