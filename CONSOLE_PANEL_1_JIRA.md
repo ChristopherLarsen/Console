@@ -18,7 +18,7 @@ When the panel is eventually pointed at the company instance, Christopher enters
 
 Confirm these before starting implementation. They are not part of the panel work, but the panel cannot be cleanly delivered without them.
 
-1. **A clean working tree.** The Sessions and terminal-bridge work (`Console/Console/Sessions/`, `Console/ConsoleTermBridge/`, 8 new test files, 9 modified files) is in flight and untracked. Sessions is the **top-right Home quadrant** and touches the same `HomeView`/`HomePanelContainer` files this assignment must edit. Land or stash it first — otherwise the required final-diff review cannot separate the two changes.
+1. **A clean working tree** — *satisfied as of commit `676d561`.* The Sessions and terminal-bridge work has landed; only documentation remains uncommitted. Confirm `git status` shows no uncommitted source changes before starting, so the required final-diff review sees Panel 1 and nothing else.
 2. **A green test baseline.** As of this writing the baseline is red: `ConsoleTests` is flaky (`EndToEndIntegrationTests.testFieldDictation_ActivatesAndReleasesCleanly()` fails roughly half of runs) and `ConsoleUITests` fails 6 of 32 deterministically — including `NavigationUITests.testJiraSidebarAndSettingsURLField`, which is already about JIRA. Without a known-good baseline, "existing behavior remains intact" is unverifiable. The Debug build itself succeeds.
 3. **Open Question 7, answered.** Verify that one `WebPage` survives migration between two `WebView` presentations (Home quadrant and the full JIRA destination) without re-authenticating or losing scroll and history. The entire architecture rests on this. It is testable today against the personal site; do it before committing to the design.
 4. **The My Tickets navigator URL, loaded once.** `CONSOLE_JIRA_FIXTURES.md` gives the URL but flags that its path is unverified. If it does not resolve, the fixture site is not a usable dev target and prerequisite 1 of this plan collapses.
@@ -63,7 +63,9 @@ The project targets macOS 26 and already uses the new SwiftUI WebKit `WebPage` a
 
 `ConsoleApp.swift` declares `.defaultSize(width: 1100, height: 700)` and **no `.defaultMinSize`**. There is currently no declared minimum window size to design or test against.
 
-Panel 2 (Agent Sessions, top-right) is being implemented in parallel. Coordinate on shared Home files rather than rewriting them.
+Sessions shipped in commit `676d561` as a sidebar destination plus a terminal bridge — **not** as the Home quadrant. All four Home quadrants still render `HomePanelPlaceholder`. Replace the top-left one only.
+
+`HomeView` already wraps its grid in a vertical `ScrollView` with a computed `rowHeight`, so the "scrollable Home canvas" this plan asks for largely exists. Extend it rather than replacing it.
 
 ## Non-Negotiable Security Boundaries
 

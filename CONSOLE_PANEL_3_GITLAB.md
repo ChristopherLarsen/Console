@@ -18,7 +18,7 @@ When the panel is eventually pointed at the company instance, Christopher enters
 
 1. **Create the GitLab fixtures.** Two synthetic projects under Christopher's personal namespace, with merge requests covering: draft and non-draft; pipeline failed, running, passed, and absent; changes-requested and approved review states; the **same MR IID in two different projects** (the case that forces URL-based identity); a very long title; a title-only MR with every optional field absent; and enough MRs to make list order verifiable. Both list URLs — reviews-requested and authored — must return a non-trivial set. Write the results up as a `CONSOLE_GITLAB_FIXTURES.md` manifest mirroring `CONSOLE_JIRA_FIXTURES.md`: what each fixture exercises, the exact list URLs, and the expected source order.
    - Getting *reviews requested* to be non-empty needs a second account or a collaborator to open an MR and request Christopher's review. If that is impractical, say so and develop Panel 3 against a synthetic-DOM test suite plus whatever the authored list provides, rather than silently shipping an unexercised path.
-2. **A clean working tree.** The Sessions and terminal-bridge work is in flight and untracked; Sessions is the top-right Home quadrant and touches the same `HomeView`/`HomePanelContainer` files. Land or stash it first.
+2. **A clean working tree** — *satisfied as of commit `676d561`.* The Sessions and terminal-bridge work has landed. Confirm `git status` shows no uncommitted source changes before starting.
 3. **A green test baseline.** As of this writing the baseline is red: `ConsoleTests` is flaky (`EndToEndIntegrationTests.testFieldDictation_ActivatesAndReleasesCleanly()`) and `ConsoleUITests` fails 6 of 32 deterministically. Without a known-good baseline, "existing Console behavior remains intact" is unverifiable.
 4. **Verify the two-page session assumption.** Confirm that two retained `WebPage` instances sharing one persistent `WKWebsiteDataStore` really do share a gitlab.com login while keeping independent navigation histories. The whole Panel 3 / Panel 4 design depends on it, and it is testable today. If it does not hold, both plans need rework before either starts.
 
@@ -71,7 +71,7 @@ The project targets macOS 26 and uses SwiftUI WebKit `WebPage` and `WebView`. Ne
 
 `ConsoleApp.swift` declares `.defaultSize(width: 1100, height: 700)` and **no `.defaultMinSize`**. There is no declared minimum window size to design or test against; either add one or verify against the 160pt panel minimums in `HomeView.Layout`.
 
-Panel 1 (JIRA, top-left) and Panel 2 (Sessions, top-right) are both in progress. Coordinate on shared Home files rather than rewriting them.
+Panel 1 (JIRA, top-left) is in progress. Sessions shipped in commit `676d561` as a sidebar destination plus a terminal bridge, **not** as the Home quadrant — all four Home quadrants still render `HomePanelPlaceholder`. `HomeView` already wraps its grid in a vertical `ScrollView`; extend it rather than replacing it.
 
 ## Shared GitLab Foundation and Coordination Contract
 

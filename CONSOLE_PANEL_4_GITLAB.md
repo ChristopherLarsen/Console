@@ -19,7 +19,7 @@ When the panel is eventually pointed at the company instance, Christopher signs 
 ## Prerequisites Before Kickoff
 
 1. **Create the GitLab fixtures.** Synthetic projects under Christopher's personal namespace with authored MRs covering: draft and non-draft; pipeline failed, running, passed, and absent; changes-requested and approved review states; the **same MR IID in two different projects**; a very long title; a title-only MR with every optional field absent. Pipeline states require a `.gitlab-ci.yml` that can be made to pass and fail deliberately. Document the result in `CONSOLE_GITLAB_FIXTURES.md`, mirroring `CONSOLE_JIRA_FIXTURES.md`.
-2. **A clean working tree.** The Sessions and terminal-bridge work is in flight and untracked; Sessions is the top-right Home quadrant and touches the same `HomeView`/`HomePanelContainer` files. Land or stash it first.
+2. **A clean working tree** — *satisfied as of commit `676d561`.* The Sessions and terminal-bridge work has landed. Confirm `git status` shows no uncommitted source changes before starting.
 3. **A green test baseline.** As of this writing the baseline is red: `ConsoleTests` is flaky (`EndToEndIntegrationTests.testFieldDictation_ActivatesAndReleasesCleanly()`) and `ConsoleUITests` fails 6 of 32 deterministically.
 4. **Verify the two-page session assumption.** Confirm that two retained `WebPage` instances sharing one persistent `WKWebsiteDataStore` really do share a gitlab.com login while keeping independent navigation histories. Both GitLab plans depend on it, and it is testable today. If it does not hold, both need rework before either starts.
 
@@ -69,7 +69,7 @@ The project targets macOS 26 and uses SwiftUI WebKit `WebPage`/`WebView`. Source
 
 `ConsoleApp.swift` declares `.defaultSize(width: 1100, height: 700)` and **no `.defaultMinSize`**. There is no declared minimum window size to design or test against; either add one or verify against the 160pt panel minimums in `HomeView.Layout`.
 
-Panel 1 (JIRA, top-left) and Panel 2 (Sessions, top-right) are both in progress. Coordinate on shared Home files rather than rewriting them.
+Panel 1 (JIRA, top-left) is in progress. Sessions shipped in commit `676d561` as a sidebar destination plus a terminal bridge, **not** as the Home quadrant — all four Home quadrants still render `HomePanelPlaceholder`. `HomeView` already wraps its grid in a vertical `ScrollView`; extend it rather than replacing it.
 
 ## Shared GitLab Foundation and Coordination Contract
 
