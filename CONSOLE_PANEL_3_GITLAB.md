@@ -4,7 +4,23 @@
 
 Build the bottom-left Home quadrant for Console as a native **MRs to Review** panel backed by a real, authenticated GitLab merge-request list running in WebKit. A live GitLab `WebView` must fill the panel while an opaque native SwiftUI card layer presents the merge requests above it. Read only the merge-request rows GitLab has already rendered in the DOM. Do not add GitLab API calls, cookie extraction, injected `fetch`/XHR requests, AI summarization, user-agent spoofing, automatic pagination, or persistent storage of company merge-request content.
 
-This work must be completed and verified on the company machine where Christopher can sign into the real GitLab instance. Christopher enters credentials and completes MFA himself. Never request, capture, print, commit, or transmit credentials, cookies, raw DOM, project paths, merge-request titles, source branches, employee names, or other company data.
+## Development Target
+
+Build and verify this panel against **Christopher's personal gitlab.com account**, not the company machine. Unlike the JIRA panel — whose fixtures already exist — the GitLab fixtures still need creating. See *Prerequisites Before Kickoff*.
+
+Almost all of this assignment is buildable on any machine: the shared two-page session store, the state machine, the readiness strategy, extraction logic, card layout, Home integration, and every synthetic test.
+
+What the personal account does **not** settle is selectors. gitlab.com runs the current SaaS release. A self-managed company GitLab may be several releases behind, with different markup, feature flags, and themes. Selector work therefore has two phases — see *DOM Discovery* below.
+
+When the panel is eventually pointed at the company instance, Christopher enters credentials and completes MFA himself. Never request, capture, print, commit, or transmit company credentials, cookies, raw DOM, project paths, merge-request titles, source branches, employee names, or other company data.
+
+## Prerequisites Before Kickoff
+
+1. **Create the GitLab fixtures.** Two synthetic projects under Christopher's personal namespace, with merge requests covering: draft and non-draft; pipeline failed, running, passed, and absent; changes-requested and approved review states; the **same MR IID in two different projects** (the case that forces URL-based identity); a very long title; a title-only MR with every optional field absent; and enough MRs to make list order verifiable. Both list URLs — reviews-requested and authored — must return a non-trivial set. Write the results up as a `CONSOLE_GITLAB_FIXTURES.md` manifest mirroring `CONSOLE_JIRA_FIXTURES.md`: what each fixture exercises, the exact list URLs, and the expected source order.
+   - Getting *reviews requested* to be non-empty needs a second account or a collaborator to open an MR and request Christopher's review. If that is impractical, say so and develop Panel 3 against a synthetic-DOM test suite plus whatever the authored list provides, rather than silently shipping an unexercised path.
+2. **A clean working tree.** The Sessions and terminal-bridge work is in flight and untracked; Sessions is the top-right Home quadrant and touches the same `HomeView`/`HomePanelContainer` files. Land or stash it first.
+3. **A green test baseline.** As of this writing the baseline is red: `ConsoleTests` is flaky (`EndToEndIntegrationTests.testFieldDictation_ActivatesAndReleasesCleanly()`) and `ConsoleUITests` fails 6 of 32 deterministically. Without a known-good baseline, "existing Console behavior remains intact" is unverifiable.
+4. **Verify the two-page session assumption.** Confirm that two retained `WebPage` instances sharing one persistent `WKWebsiteDataStore` really do share a gitlab.com login while keeping independent navigation histories. The whole Panel 3 / Panel 4 design depends on it, and it is testable today. If it does not hold, both plans need rework before either starts.
 
 Panel numbering follows the agreed Home flow:
 
@@ -34,7 +50,14 @@ Read these files and the JIRA panel handoff before editing:
 - `CONSOLE_PANEL_4_GITLAB.md`
   - Defines the sibling My MRs panel and shared GitLab session contract.
 - `Console/Console/Views/MainView.swift`
-  - Home is currently a placeholder unless Panel 1 has already introduced `HomeView`.
+  - The center area shares vertical space with a persistent bottom terminal panel.
+- `Console/Console/Home/Views/HomeView.swift` — **already exists** (commit `fd92eb4`)
+  - Defines the `HomePanel` enum (`jiraTickets`, `sessions`, `gitLabReviews`, `gitLabAuthored`), the four-quadrant grid, titles, service labels, and accessibility identifiers.
+  - `HomePanelGitLabMRsToReview` is the established accessibility identifier for this panel, and its title is already `MRs to Review` with service label `GitLab`. Reuse both; do not invent new ones.
+  - Layout constants live in a private `Layout` enum: 12pt edge padding and grid spacing, 160pt minimum panel width and height.
+- `Console/Console/Home/Views/HomePanelContainer.swift` — **already exists**
+- `Console/Console/Home/Views/HomePanelPlaceholder.swift` — **already exists**
+  - Replace it in the bottom-left quadrant only.
 - `Console/Console/MergeRequests/Views/MergeRequestsView.swift`
   - `MergeRequestsWebSession.shared` currently owns one process-scoped `WebPage`.
   - The view currently loads one generic URL stored in `webViewMergeRequestsURL`.
@@ -45,6 +68,10 @@ Read these files and the JIRA panel handoff before editing:
 - `Console/Console/Sidebar/Views/SidebarView.swift`
 
 The project targets macOS 26 and uses SwiftUI WebKit `WebPage` and `WebView`. New files under the filesystem-synchronized source and test directories are automatically included in their targets.
+
+`ConsoleApp.swift` declares `.defaultSize(width: 1100, height: 700)` and **no `.defaultMinSize`**. There is no declared minimum window size to design or test against; either add one or verify against the 160pt panel minimums in `HomeView.Layout`.
+
+Panel 1 (JIRA, top-left) and Panel 2 (Sessions, top-right) are both in progress. Coordinate on shared Home files rather than rewriting them.
 
 ## Shared GitLab Foundation and Coordination Contract
 
@@ -88,6 +115,12 @@ Do not programmatically construct or modify GitLab query parameters in this phas
 
 ## Non-Negotiable Security Boundaries
 
+Two different kinds of constraint apply, and conflating them causes needless friction during development.
+
+**Implementation constraints** define the product and never relax. Console must not acquire a REST or GraphQL client, cookie access, injected requests, a spoofed user agent, an AI data path, or MR persistence — regardless of which GitLab it is pointed at. These hold while developing against gitlab.com, because the shipped app will be pointed at the company instance.
+
+**Company-data constraints** govern handling of company content specifically. They apply in full whenever Console is pointed at the company GitLab. They do **not** apply to synthetic fixtures in Christopher's personal namespace: that content is invented, so it may be freely read, screenshotted, discussed, and committed to tests.
+
 ### Allowed
 
 - Normal WebKit navigation to the configured GitLab list.
@@ -105,8 +138,8 @@ Do not programmatically construct or modify GitLab query parameters in this phas
 - No injected `fetch`, `XMLHttpRequest`, GraphQL, REST, or hidden endpoint navigation.
 - No undocumented GitLab endpoints.
 - No custom or spoofed Safari user agent.
-- No Claude, LLM, MCP, analytics, crash-reporting, or external-service transmission of GitLab data.
-- No persistence of MR content in SwiftData, UserDefaults, files, snapshots, logs, or test fixtures.
+- No Claude, LLM, MCP, analytics, crash-reporting, or external-service transmission of **company** GitLab data. (Company-data constraint; synthetic fixtures are exempt.)
+- No persistence of MR content in SwiftData, UserDefaults, files, snapshots, or logs. Committed test fixtures must be synthetic — which the personal-namespace fixtures are.
 - No automatic scrolling, pagination, continuous reload, or background refresh timer.
 - No automatic approve, comment, merge, checkout, or branch operations.
 
@@ -157,7 +190,7 @@ Console/Console/GitLab/Services/GitLabMergeRequestListExtractor.swift
 Console/Console/GitLab/Services/GitLabListPanelController.swift
 Console/Console/GitLab/Views/GitLabReviewsPanelView.swift
 Console/Console/GitLab/Views/GitLabMergeRequestsBrowserView.swift
-Console/Console/Home/Views/HomeView.swift
+Console/Console/Home/Views/HomeView.swift                              (exists — extend)
 Console/ConsoleTests/GitLabMergeRequestListExtractorTests.swift
 Console/ConsoleTests/GitLabListPanelControllerTests.swift
 ```
@@ -285,7 +318,7 @@ Omit unavailable optional fields rather than guessing. Preserve GitLab order.
 
 ## Home Integration
 
-Panel 3 belongs in the bottom-left quadrant. Reuse the `HomeView` and panel container introduced by Panel 1 if present. Do not replace another model's Home layout or implement the other quadrants.
+Panel 3 belongs in the bottom-left quadrant. `HomeView` and `HomePanelContainer` already exist (commit `fd92eb4`) with the quadrant, title, and accessibility identifier already defined for this panel — extend them. Do not replace another model's Home layout or implement the other quadrants.
 
 The target arrangement is:
 
@@ -294,23 +327,44 @@ JIRA My Tickets        Agent Sessions
 Reviews Requested      My Merge Requests
 ```
 
-Account for the bottom terminal reducing available height. Use a scrollable Home canvas or panel minimum heights rather than crushing MR rows.
+Account for the bottom terminal reducing available height. Use a scrollable Home canvas or panel minimum heights rather than crushing MR rows. Note that the app declares no minimum window size today.
 
-## One-Time Discovery on the Company Machine
+## DOM Discovery
 
-The exact GitLab DOM must be discovered locally against the real configured review list.
+Selector work happens in two phases. Phase 1 is where the extractor is built; Phase 2 only validates it.
+
+### Phase 1 — Personal gitlab.com (no restrictions)
+
+1. Build and launch Console on any machine.
+2. Configure both list URLs from `CONSOLE_GITLAB_FIXTURES.md`.
+3. Sign into gitlab.com normally.
+4. Confirm each page is the intended MR list.
+5. Inspect the DOM freely — Web Inspector, full `outerHTML`, screenshots, pasting markup into chat. This content is synthetic.
+6. Build the generalized extractor and exercise it against both `GitLabListKind` values.
+7. Commit synthetic fixtures derived from this DOM, scrubbing the account namespace from committed HTML.
+8. Write the full unit-test suite. All of it can pass here.
+
+Design selectors for **structural generality**. Prefer semantic elements, accessibility roles, stable `data-testid` attributes, and the `/-/merge_requests/<iid>` URL shape over anything specific to the current SaaS rendering, so Phase 2 becomes validation rather than a rewrite.
+
+### Phase 2 — Company GitLab (redacted probe only)
+
+Only once Phase 1 is complete and passing.
 
 1. Build and launch Console on the company machine.
-2. Christopher configures the exact To Review list URL.
-3. Christopher signs into GitLab and completes MFA himself.
-4. Confirm the visible page is the intended MR list.
-5. Run a temporary DEBUG-only structural probe through `WebPage.callJavaScript`.
-6. Record only generalized selector decisions.
-7. Build production extraction from those decisions.
-8. Commit only synthetic fake GitLab fixtures.
-9. Remove the probe or retain it DEBUG-only with strict redaction and no automatic output.
+2. Christopher configures the company To Review URL and signs in himself.
+3. Confirm the visible page is the intended MR list.
+4. Run the DEBUG-only structural probe through `WebPage.callJavaScript`.
+5. Compare its **shape** against the Phase 1 assumptions.
+6. If they match, the extractor ships unchanged. If they diverge, generalize — do not fork into a company-specific path.
+7. Remove the probe or retain it DEBUG-only with strict redaction and no automatic output.
 
-The probe may return element tags, roles, attribute names, stable test-identifier shapes, masked `/-/merge_requests/<iid>` URL patterns, and row/field counts. It must not return raw DOM, text content, real IDs, paths, names, titles, branches, URLs, tokens, cookies, storage, or headers. Never paste raw inspector output into a remote model conversation.
+Expect divergence to be more likely here than for JIRA: gitlab.com is always current, while a self-managed company instance may be several releases behind.
+
+### Probe redaction rules
+
+These apply to **Phase 2 only**. Phase 1 needs no redaction.
+
+The probe may return element tags, roles, attribute names, stable test-identifier shapes, masked `/-/merge_requests/<iid>` URL patterns, and row/field counts. It must not return raw DOM, text content, real IDs, paths, names, titles, branches, URLs, tokens, cookies, storage, or headers. Never paste raw company inspector output into a remote model conversation.
 
 ## User Experience and Failure States
 
@@ -328,7 +382,7 @@ The probe may return element tags, roles, attribute names, stable test-identifie
 - **Authenticated JavaScript API calls inside WebKit:** rejected because they add hidden requests beyond the rendered page.
 - **Cookie transfer:** rejected because it exposes session material.
 - **`glab` CLI:** rejected as a separate API client and credential path for panel ingestion.
-- **Claude/MCP:** rejected for deterministic retrieval due to data movement, latency, and AI cost.
+- **Claude/MCP:** rejected **as a runtime data path** for deterministic retrieval, due to data movement, latency, and AI cost. This says nothing about using tooling to manage fixtures during development; Console itself must never call it.
 - **Screenshot/OCR:** rejected as brittle and likely to capture sensitive code-review information.
 - **Raw GitLab only:** retained as the mandatory fallback.
 
@@ -351,7 +405,7 @@ The probe may return element tags, roles, attribute names, stable test-identifie
 
 ## Testing Strategy
 
-Use only synthetic fake GitLab content in committed tests.
+Use only synthetic fake GitLab content in committed tests. DOM captured from Christopher's personal namespace during Phase 1 qualifies — those projects and MRs are invented — provided the account namespace is scrubbed from committed HTML. Captured markup is preferable to hand-written fixtures because it is real GitLab structure rather than a guess at it.
 
 ### Unit tests
 
@@ -374,9 +428,21 @@ Where practical, load fake HTML into a nonpersistent `WebPage` and run the real 
 - Refresh retains prior cards.
 - The sibling authored page and controller remain independent.
 - Shared authentication configuration uses one website data store.
-- Layout remains usable with the terminal expanded and at minimum window size.
+- Layout remains usable with the terminal expanded, and at whatever minimum window size this work declares. If no `.defaultMinSize` is added, test against the 160pt panel minimums in `HomeView.Layout` instead — the app declares no window minimum today.
 
-### Manual verification
+### Manual verification — personal gitlab.com
+
+Do this first; it covers everything except company selectors. No redaction needed. Verify against `CONSOLE_GITLAB_FIXTURES.md`:
+
+1. Both configured lists load and render cards.
+2. Card count and order match the rendered rows.
+3. The same-IID-in-two-projects fixtures produce two distinct cards.
+4. Draft, pipeline, and review cues appear only where GitLab actually renders them, and absent states show nothing rather than a guess.
+5. A title-only MR still produces a valid, navigable card.
+6. Show GitLab, Show Cards, Refresh, and card selection behave as specified.
+7. Signing in through one page authenticates the other shared-data-store page.
+
+### Manual verification — company instance
 
 Christopher handles all authentication. Without capturing sensitive screenshots or logs, verify:
 
@@ -404,26 +470,34 @@ Christopher handles all authentication. Without capturing sensitive screenshots 
 - Synthetic tests pass and existing Console behavior remains intact.
 - The app builds and runs successfully.
 
-## Open Questions for the Company Machine
+## Open Questions
 
-1. What exact stable URL is Christopher's To Review list?
-2. Which GitLab version and deployment type is in use?
-3. Which semantic roles or stable attributes identify list items and card fields?
-4. Does the page represent “review requested” through reviewer, assignee, or approval filters?
-5. Which fields are actually visible: project, IID, author, draft, pipeline, approvals, and updated time?
-6. Does the list paginate or virtualize rows?
-7. Which SSO domains appear during login?
-8. Does the shared website data store authenticate both retained pages correctly?
+### Answerable now, on personal gitlab.com
+
+1. Does one shared persistent website data store authenticate both retained pages while keeping their navigation histories independent? **This is a prerequisite — answer it before writing either GitLab panel.**
+2. Which semantic roles or stable attributes identify list items and card fields on current gitlab.com?
+3. Which fields does the list actually render: project, IID, author, draft, pipeline, approvals, updated time?
+4. Does the list paginate or virtualize rows?
+5. Are pipeline and review states exposed as accessible text, or only as icons? If only icons, the card contract needs revisiting before implementation.
+6. Can a non-empty *reviews requested* list be produced at all on a personal account, or must that path rely on synthetic-DOM tests?
+
+### Must be confirmed on the company instance
+
+1. Which GitLab version and deployment type is in use? **Unresolved, and it determines how much of Phase 1's selector work survives.**
+2. What exact stable URL is Christopher's To Review list?
+3. Do the Phase 1 selectors hold, and can any divergence be generalized rather than forked?
+4. Does the page represent "review requested" through reviewer, assignee, or approval filters?
+5. Which SSO domains appear during login?
 
 ## Implementation Discipline
 
 - Preserve unrelated user changes.
 - Search for Panel 4's shared GitLab foundation before creating new files.
-- Keep real GitLab content out of tools, logs, commits, fixtures, screenshots, and chat.
+- Keep **company** GitLab content out of tools, logs, commits, fixtures, screenshots, and chat. Content from Christopher's personal namespace is synthetic and is the intended fixture source — see *Non-Negotiable Security Boundaries* for the distinction.
 - Keep the scope to shared GitLab infrastructure, Panel 3, and the minimum Home/Settings integration required.
 - Build and run the macOS app.
 - Run focused GitLab tests and the relevant existing suite.
-- Review the final diff for company data, secrets, URLs, raw DOM, debug probes, and duplicated session stores.
+- Review the final diff for **company** data, secrets, URLs, raw DOM, debug probes, and duplicated session stores. Synthetic fixture data and markup from the personal namespace are expected in the diff and are not findings.
 
 ## Card Design Specification
 
@@ -498,7 +572,7 @@ Staleness from a failed panel refresh belongs in the **panel header**, not on ev
 Do not display or derive the following on Panel 3 cards in this phase:
 
 - Description, diff statistics, file names, code, commit messages, or discussion excerpts.
-- Source and target branches unless a later company-machine review proves they are both already visible and essential to choosing a review; they are lower value than author and freshness here.
+- Source and target branches unless a later Phase 2 review proves they are both already visible and essential to choosing a review; they are lower value than author and freshness here.
 - Reviewer or approver avatar stacks, approval counts, comment counts, labels, milestones, or assignees unless a later design explicitly replaces a higher-priority field and the data is visibly rendered in the list.
 - A generated urgency score, “recommended next” badge, or age-based warning.
 - Any AI summary, sentiment, risk classification, or review estimate.

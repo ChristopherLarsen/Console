@@ -4,7 +4,24 @@
 
 Build the top-left Home quadrant for Console as a native **My Tickets** panel backed by a real, authenticated JIRA list running in the existing WebKit `WebPage`. The JIRA page must fill the quadrant and remain available for normal browser interaction, while an opaque native SwiftUI card layer presents the ticket list above it. Ticket data is read locally from the DOM that JIRA has already rendered. Do not add JIRA REST calls, cookie extraction, injected `fetch`/XHR requests, AI summarization, user-agent spoofing, or persistent storage of company ticket content.
 
-This work must be completed and verified on the company machine where Christopher can sign into the real JIRA instance. Christopher enters all credentials and completes MFA himself. The implementing model must never request, capture, print, commit, or transmit credentials, cookies, raw DOM, ticket descriptions, or meaningful company data.
+## Development Target
+
+Build and verify this panel against **Christopher's personal Atlassian Cloud site**, `deadratgames.atlassian.net` — not the company machine. Sixteen synthetic tickets already exist there for exactly this purpose. `CONSOLE_JIRA_FIXTURES.md` is the fixture manifest: it carries the My Tickets URL to configure, what each fixture exercises, and the expected extraction order. `CLAUDE.md` states the boundary between the two instances.
+
+Almost all of this assignment is buildable and verifiable on any machine: the shared web session, the state machine, the readiness strategy, extraction logic, card layout, Home integration, and every synthetic test.
+
+What the personal site does **not** settle is selectors. It is Jira **Cloud, team-managed**. If the company instance turns out to be Data Center or company-managed Cloud, its list DOM will differ. Selector work therefore has two phases — see *DOM Discovery* below.
+
+When the panel is eventually pointed at the company instance, Christopher enters all credentials and completes MFA himself. The implementing model must never request, capture, print, commit, or transmit company credentials, cookies, raw DOM, ticket descriptions, or other company data.
+
+## Prerequisites Before Kickoff
+
+Confirm these before starting implementation. They are not part of the panel work, but the panel cannot be cleanly delivered without them.
+
+1. **A clean working tree.** The Sessions and terminal-bridge work (`Console/Console/Sessions/`, `Console/ConsoleTermBridge/`, 8 new test files, 9 modified files) is in flight and untracked. Sessions is the **top-right Home quadrant** and touches the same `HomeView`/`HomePanelContainer` files this assignment must edit. Land or stash it first — otherwise the required final-diff review cannot separate the two changes.
+2. **A green test baseline.** As of this writing the baseline is red: `ConsoleTests` is flaky (`EndToEndIntegrationTests.testFieldDictation_ActivatesAndReleasesCleanly()` fails roughly half of runs) and `ConsoleUITests` fails 6 of 32 deterministically — including `NavigationUITests.testJiraSidebarAndSettingsURLField`, which is already about JIRA. Without a known-good baseline, "existing behavior remains intact" is unverifiable. The Debug build itself succeeds.
+3. **Open Question 7, answered.** Verify that one `WebPage` survives migration between two `WebView` presentations (Home quadrant and the full JIRA destination) without re-authenticating or losing scroll and history. The entire architecture rests on this. It is testable today against the personal site; do it before committing to the design.
+4. **The My Tickets navigator URL, loaded once.** `CONSOLE_JIRA_FIXTURES.md` gives the URL but flags that its path is unverified. If it does not resolve, the fixture site is not a usable dev target and prerequisite 1 of this plan collapses.
 
 ## Outcome
 
@@ -23,8 +40,14 @@ The panel must not implement agent launching yet. A later Home panel will connec
 Read these files before changing anything:
 
 - `Console/Console/Views/MainView.swift`
-  - Home currently renders a placeholder.
   - The center area shares vertical space with a persistent bottom terminal panel.
+- `Console/Console/Home/Views/HomeView.swift` — **already exists** (commit `fd92eb4`)
+  - Defines the `HomePanel` enum (`jiraTickets`, `sessions`, `gitLabReviews`, `gitLabAuthored`), the four-quadrant grid, per-panel titles, service labels, and accessibility identifiers.
+  - `HomePanelJiraTickets` is the established accessibility identifier for this panel. Reuse it; do not invent a new one.
+  - Layout constants live in a private `Layout` enum: 12pt edge padding and grid spacing, 160pt minimum panel width and height.
+- `Console/Console/Home/Views/HomePanelContainer.swift` — **already exists**
+- `Console/Console/Home/Views/HomePanelPlaceholder.swift` — **already exists**
+  - The quiet placeholder this assignment replaces, in the top-left quadrant only. Leave the other three quadrants on the placeholder.
 - `Console/Console/Jira/Views/JiraView.swift`
   - `JiraWebSession.shared` already owns a process-scoped `WebPage`.
   - `JiraView` already loads the URL stored in `webViewJiraURL` and provides browser controls.
@@ -38,7 +61,17 @@ Read these files before changing anything:
 
 The project targets macOS 26 and already uses the new SwiftUI WebKit `WebPage` and `WebView` APIs. The Xcode project uses filesystem-synchronized groups, so new Swift files under `Console/Console` and test files under `Console/ConsoleTests` are picked up automatically.
 
+`ConsoleApp.swift` declares `.defaultSize(width: 1100, height: 700)` and **no `.defaultMinSize`**. There is currently no declared minimum window size to design or test against.
+
+Panel 2 (Agent Sessions, top-right) is being implemented in parallel. Coordinate on shared Home files rather than rewriting them.
+
 ## Non-Negotiable Security Boundaries
+
+Two different kinds of constraint apply here, and conflating them causes needless friction during development.
+
+**Implementation constraints** define the product and never relax. Console must not acquire a REST client, cookie access, injected requests, a spoofed user agent, an AI data path, or ticket persistence — regardless of which JIRA instance it is pointed at. These hold while developing against the personal site, because the shipped app will be pointed at the company instance.
+
+**Company-data constraints** govern handling of company content specifically. They apply in full whenever Console is pointed at the company instance. They do **not** apply to the synthetic fixtures on `deadratgames.atlassian.net`: that content is invented, so it may be freely read, screenshotted, discussed, and committed to tests.
 
 The company laptop and its network are monitored. The implementation must be straightforward and defensible under review.
 
@@ -58,9 +91,9 @@ The company laptop and its network are monitored. The implementation must be str
 - Do not inject `fetch`, `XMLHttpRequest`, GraphQL calls, REST calls, or hidden navigations to API endpoints.
 - Do not use undocumented JIRA endpoints.
 - Do not set `customUserAgent` or imitate Safari's user agent.
-- Do not send JIRA content to Claude, another LLM, an MCP server, analytics, crash reporting, or any external service.
+- Do not send **company** JIRA content to Claude, another LLM, an MCP server, analytics, crash reporting, or any external service. (Company-data constraint. The personal site is reachable through the `atlassian` MCP server by design; the company instance never is.)
 - Do not save ticket content in SwiftData, UserDefaults, files, debug snapshots, or logs.
-- Do not commit a real DOM snapshot, screenshot, JIRA URL, issue key, project name, ticket title, employee name, or other company information.
+- Do not commit a real DOM snapshot, screenshot, JIRA URL, issue key, project name, ticket title, employee name, or other company information. (Company-data constraint. Synthetic fixtures from the personal site are exempt and are the intended source of committed test data.)
 - Do not automatically scroll, page through results, or continuously reload JIRA.
 - Do not describe the WebView traffic as identical to Safari. It is normal WebKit traffic but is distinguishable as an embedded browser.
 
@@ -111,8 +144,8 @@ Keep one JIRA `WebPage`. Do not create one WebView per card or independent authe
 Suggested file organization:
 
 ```text
-Console/Console/Home/Views/HomeView.swift
-Console/Console/Home/Views/HomePanelContainer.swift
+Console/Console/Home/Views/HomeView.swift                  (exists — extend)
+Console/Console/Home/Views/HomePanelContainer.swift        (exists — reuse)
 Console/Console/Jira/Models/JiraTicketSummary.swift
 Console/Console/Jira/Services/JiraListExtractor.swift
 Console/Console/Jira/Services/JiraPanelController.swift
@@ -285,25 +318,42 @@ Reviews Requested      My Merge Requests
 
 This assignment owns only the top-left JIRA panel. Do not implement agent or GitLab behavior. If their panels do not yet exist, use visually quiet placeholders or structure the grid so future panels can be inserted without rewriting JIRA.
 
-Account for the bottom terminal reducing Home's available height. The grid must remain usable at the app's declared minimum window size. Prefer a vertically scrollable Home canvas with sensible panel minimum heights over compressing ticket rows until they are unreadable.
+Account for the bottom terminal reducing Home's available height. The app declares **no** minimum window size today — only `.defaultSize(width: 1100, height: 700)`. Either add a `.defaultMinSize` as part of this work and state the value, or verify against the existing 160pt panel minimums in `HomeView.Layout`. Do not leave the acceptance criterion pointing at a constraint that does not exist. Prefer a vertically scrollable Home canvas with sensible panel minimum heights over compressing ticket rows until they are unreadable.
 
-## One-Time Discovery on the Authenticated Machine
+## DOM Discovery
 
-The exact DOM shape cannot be known reliably from the current repository. Perform a one-time local discovery against the real My Tickets list.
+Selector work happens in two phases. Phase 1 is where the extractor is actually built; Phase 2 only validates it.
 
-### Procedure
+### Phase 1 — Personal site (no restrictions)
+
+Do this first, on any machine.
+
+1. Build and launch Console.
+2. Configure the My Tickets URL from `CONSOLE_JIRA_FIXTURES.md` in Settings.
+3. Sign into `deadratgames.atlassian.net`.
+4. Confirm the visible page is the issue list, not a board.
+5. Inspect the DOM freely. Web Inspector, full `outerHTML` dumps, screenshots, and pasting markup into chat are all fine — this content is synthetic and invented.
+6. Build the production extractor against what you find.
+7. Commit synthetic fixtures derived from this DOM. Because the site's tickets are already fake, structure captured here can be committed largely as-is, provided the site hostname is scrubbed from committed HTML.
+8. Write the full unit-test suite. All of it can pass here.
+
+Design selectors for **structural generality**, not for this one site. Prefer semantic roles and URL shape over anything that looks specific to a team-managed Cloud rendering, so Phase 2 becomes a validation pass rather than a rewrite.
+
+### Phase 2 — Company instance (redacted probe only)
+
+Only once Phase 1 is complete and the extractor is passing its synthetic tests.
 
 1. Build and launch Console on the company machine.
-2. Christopher configures the exact stable My Tickets list URL in Settings.
-3. Christopher opens JIRA inside Console and signs in himself.
-4. Confirm the visible page is the list, not a board.
-5. Run a DEBUG-only structural probe through `WebPage.callJavaScript`.
-6. Inspect only the structural result needed to choose selectors.
-7. Implement the production extractor.
-8. Replace the real structure with synthetic fake HTML in committed tests.
-9. Remove the temporary probe or keep it DEBUG-only with strict redaction and no automatic logging.
+2. Christopher configures the company My Tickets URL and signs in himself.
+3. Confirm the page is the list, not a board.
+4. Run the DEBUG-only structural probe through `WebPage.callJavaScript`.
+5. Compare its **shape** against the Phase 1 assumptions.
+6. If they match, the extractor ships unchanged. If they diverge, generalize the selectors — do not fork into a company-specific path.
+7. Remove the probe, or keep it DEBUG-only with strict redaction and no automatic logging.
 
 ### Probe redaction rules
+
+These apply to **Phase 2 only**. Phase 1 needs no redaction.
 
 The structural probe may report:
 
@@ -322,7 +372,7 @@ It must not report:
 - Actual issue keys, project names, summaries, people, labels, or URLs.
 - Cookies, local storage, session storage, request headers, or tokens.
 
-Do not paste raw inspector output into a remote chat. If direct local visual inspection is necessary, perform it locally and record only the generalized selector decisions in code comments or this document.
+Do not paste raw company inspector output into a remote chat. If direct local visual inspection is necessary, perform it locally and record only the generalized selector decisions in code comments or this document.
 
 ## User Experience
 
@@ -367,7 +417,9 @@ Rejected. This would expose session material to application code and create a se
 
 ### Claude Code or an Atlassian MCP connector
 
-Rejected for routine ticket retrieval because of latency, cost, and the unnecessary movement of company data through an AI path. AI is not needed to display deterministic ticket fields.
+Rejected **as a runtime data path**. Routine ticket retrieval through an MCP connector adds latency and cost and moves company data through an AI path. AI is not needed to display deterministic ticket fields.
+
+This rejection is about the shipped app, not the development process. The `atlassian` MCP server is the intended way to manage fixtures on the personal site during development. Console itself must never call it.
 
 ### Screenshot/OCR extraction
 
@@ -411,7 +463,7 @@ Handle these conservatively. Do not guess at data that was not found.
 
 ### Unit tests with synthetic data
 
-Commit only invented fixture content such as `DEMO-101` and generic summaries.
+Commit only invented fixture content. Two sources qualify: hand-written HTML using placeholder keys such as `DEMO-101`, and DOM captured from the personal site during Phase 1 — its tickets are already synthetic, so its markup can be committed once the site hostname is scrubbed. Captured markup is the better source, because it is real Jira structure rather than a guess at it.
 
 Test:
 
@@ -440,9 +492,22 @@ Verify:
 - Refresh state retains previous cards.
 - Empty, authentication, unsupported, and stale states are distinct.
 - Keyboard navigation and VoiceOver order are sensible.
-- The layout remains usable with the terminal expanded and at minimum window size.
+- The layout remains usable with the terminal expanded, and at whatever minimum window size this work declares. If no `.defaultMinSize` is added, test against the 160pt panel minimums in `HomeView.Layout` instead — the app declares no window minimum today.
 
-### Manual verification on the company machine
+### Manual verification — personal site
+
+Do this first; it covers everything except company selectors. No redaction needed.
+
+1. The configured My Tickets list loads and all 16 fixtures appear as cards.
+2. Card order matches `CONSOLE_JIRA_FIXTURES.md`: SCRUM-21 down to SCRUM-6.
+3. The markup fixture renders its angle brackets as literal text, proving `textContent` rather than `innerHTML`.
+4. The fixture whose summary contains a literal issue key resolves to its own key, not the one in the text.
+5. Long, RTL, CJK, diacritic, and punctuation-only summaries all render legibly and truncate cleanly.
+6. All five priorities and all five workflow statuses render, including the multi-word ones.
+7. Show JIRA, Show Cards, Refresh, and card selection behave as specified.
+8. Selecting a card opens the correct issue.
+
+### Manual verification — company instance
 
 Christopher must perform login and MFA. Verify without recording sensitive screenshots or logs:
 
@@ -475,17 +540,27 @@ The work is complete only when all of the following are true:
 - Synthetic tests cover extraction and state handling.
 - The app builds successfully and existing JIRA, terminal, sidebar, command, trigger, provider, and settings behavior remains intact.
 
-## Open Questions to Resolve on the Company Machine
+## Open Questions
 
-Do not ask for credentials or confidential examples. Resolve these through local structural inspection and direct user confirmation:
+### Answerable now, on the personal site
 
-1. Is the company instance JIRA Cloud or JIRA Data Center?
-2. What exact stable URL opens the My Tickets list?
-3. Which semantic roles or stable JIRA attributes identify the list, headers, rows, and fields?
-4. Does the list render all relevant rows or virtualize/paginate them?
-5. Are the visible columns exactly key, summary, status, priority, and updated, or should sprint/story points replace updated?
-6. Which SSO domains appear during authentication, and does the existing WebView handle them without navigation-policy changes?
-7. Does moving the shared `WebPage` between Home and the full JIRA view preserve expected scroll and navigation state?
+Resolve these during Phase 1. None require the company machine.
+
+1. Does moving the shared `WebPage` between Home and the full JIRA view preserve authentication, scroll, and navigation state? **This is a prerequisite — answer it before writing the panel.**
+2. Which semantic roles or stable JIRA attributes identify the list, headers, rows, and fields on Cloud?
+3. Does the Cloud issue navigator render as a table with semantic headers, or as a virtualized list? This determines whether the header-to-cell mapping described above is even the right shape.
+4. Does the list render all rows, or virtualize/paginate them?
+5. How does the panel behave across the fixture edge cases — long summaries, RTL text, markup-bearing summaries, a summary containing a literal issue key? `CONSOLE_JIRA_FIXTURES.md` maps each fixture to the behavior it exercises.
+
+### Must be confirmed on the company instance
+
+Resolve these in Phase 2, through structural inspection and direct user confirmation. Do not ask for credentials or confidential examples.
+
+1. Is the company instance JIRA Cloud or JIRA Data Center? **Unresolved, and it determines how much of Phase 1's selector work survives.**
+2. What exact stable URL opens the company My Tickets list?
+3. Do the Phase 1 selectors hold, and if not, can they be generalized rather than forked?
+4. Are the visible columns exactly key, summary, status, priority, and updated, or should sprint/story points replace updated?
+5. Which SSO domains appear during authentication, and does the existing WebView handle them without navigation-policy changes?
 
 ## Implementation Discipline
 
@@ -495,7 +570,7 @@ Do not ask for credentials or confidential examples. Resolve these through local
 - Do not weaken security boundaries to make the demo look complete.
 - Build and run the macOS app after implementation.
 - Run focused JIRA tests, then the relevant existing test suite.
-- Review the final diff for company data, URLs, debug output, raw DOM, secrets, or snapshots before handing the work back.
+- Review the final diff for **company** data, URLs, debug output, raw DOM, secrets, or snapshots before handing the work back. Synthetic fixture data and markup from the personal site are expected in the diff and are not findings.
 
 ## Card Design Specification
 
