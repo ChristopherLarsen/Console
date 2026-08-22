@@ -5,7 +5,7 @@ import Foundation
 /// Malformed tags are rejected: missing components (`1.2`), extra components
 /// (`1.2.3.4`), leading zeros (`01.2.3`), any whitespace, pre-release suffixes
 /// (`1.2.3-beta`) and build metadata (`1.2.3+5`).
-struct SemanticVersion: Hashable, Comparable, CustomStringConvertible, Sendable {
+nonisolated struct SemanticVersion: Hashable, Comparable, CustomStringConvertible, Sendable {
 
     let major: Int
     let minor: Int

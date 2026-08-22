@@ -182,7 +182,7 @@ enum MergeRequestListExtractor {
         return cleaned
     }
 
-    private static func nonEmpty(_ value: String) -> String? {
+    private nonisolated static func nonEmpty(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }

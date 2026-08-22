@@ -1,7 +1,7 @@
 import Foundation
 import WebKit
 
-enum JiraListExtraction: Equatable {
+nonisolated enum JiraListExtraction: Equatable {
     case tickets([JiraTicketSummary])
     case empty
     case authenticationRequired

@@ -20,6 +20,8 @@ protocol ProcessRunning: Sendable {
 /// child process. Pipes are drained concurrently so long output cannot deadlock.
 struct SystemProcessRunner: ProcessRunning {
 
+    nonisolated init() {}
+
     func run(executablePath: String,
              arguments: [String],
              workingDirectory: String?) async throws -> ProcessResult {
@@ -34,7 +36,7 @@ struct SystemProcessRunner: ProcessRunning {
     }
 
     /// Owns exactly one child process lifecycle.
-    private final class Invocation: @unchecked Sendable {
+    private nonisolated final class Invocation: @unchecked Sendable {
 
         private let executablePath: String
         private let arguments: [String]

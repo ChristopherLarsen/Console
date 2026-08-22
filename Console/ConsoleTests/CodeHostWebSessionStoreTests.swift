@@ -72,7 +72,7 @@ final class CodeHostWebSessionStoreTests: XCTestCase {
         let store = CodeHostWebSessionStore(dataStore: sharedStore)
 
         // Synthetic, credential-free probe on an invented host.
-        guard let probeCookie = try HTTPCookie(
+        guard let probeCookie = HTTPCookie(
             properties: [
                 .domain: ".gitlab.probe.invalid",
                 .path: "/",
@@ -83,7 +83,7 @@ final class CodeHostWebSessionStoreTests: XCTestCase {
             return XCTFail("Failed to build synthetic probe cookie")
         }
 
-        try await sharedStore.httpCookieStore.setCookie(probeCookie)
+        await sharedStore.httpCookieStore.setCookie(probeCookie)
 
         let reviewsSawProbe = try await pageSeesProbe(store.reviewsPage)
         let authoredSawProbe = try await pageSeesProbe(store.authoredPage)

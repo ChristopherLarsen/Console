@@ -1,7 +1,7 @@
 import Foundation
 
 /// LM Studio native REST API (`/api/v1/*`), introduced in LM Studio 0.4.
-enum LMStudioAPI {
+nonisolated enum LMStudioAPI {
     static let defaultOrigin = "http://127.0.0.1:1234"
 
     static func origin(from endpointURL: String) -> String {

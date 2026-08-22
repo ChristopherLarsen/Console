@@ -1,6 +1,6 @@
 import Foundation
 
-struct JiraTicketSummary: Identifiable, Equatable, Sendable {
+nonisolated struct JiraTicketSummary: Identifiable, Equatable, Sendable {
     let key: String
     let summary: String
     let status: String?

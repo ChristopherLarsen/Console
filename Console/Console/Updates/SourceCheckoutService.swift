@@ -1,7 +1,7 @@
 import Foundation
 
 /// A checked-out source tree ready for a manual Release build in Xcode.
-struct PreparedSource: Equatable, Sendable {
+nonisolated struct PreparedSource: Equatable, Sendable {
     let directoryPath: String
     let xcodeProjectPath: String?
 }
@@ -50,17 +50,17 @@ protocol SourceCheckouting: Sendable {
 /// It never builds or installs anything and never touches the running app.
 struct SourceCheckoutService: SourceCheckouting {
 
-    static let gitExecutablePath = "/usr/bin/git"
-    static let defaultRepositoryURL = "https://github.com/ChristopherLarsen/Console.git"
-    static let defaultDestinationRoot = NSString(string: "~/Developer/ConsoleUpdates").expandingTildeInPath
+    nonisolated static let gitExecutablePath = "/usr/bin/git"
+    nonisolated static let defaultRepositoryURL = "https://github.com/ChristopherLarsen/Console.git"
+    nonisolated static let defaultDestinationRoot = NSString(string: "~/Developer/ConsoleUpdates").expandingTildeInPath
 
     let repositoryURL: String
     let destinationRoot: String
     let processRunner: any ProcessRunning
 
-    init(repositoryURL: String = SourceCheckoutService.defaultRepositoryURL,
-         destinationRoot: String = SourceCheckoutService.defaultDestinationRoot,
-         processRunner: any ProcessRunning = SystemProcessRunner()) {
+    nonisolated init(repositoryURL: String = SourceCheckoutService.defaultRepositoryURL,
+                     destinationRoot: String = SourceCheckoutService.defaultDestinationRoot,
+                     processRunner: any ProcessRunning = SystemProcessRunner()) {
         self.repositoryURL = repositoryURL
         self.destinationRoot = destinationRoot
         self.processRunner = processRunner
@@ -68,7 +68,7 @@ struct SourceCheckoutService: SourceCheckouting {
 
     /// Directory that will hold the checkout for `tag`, e.g.
     /// `~/Developer/ConsoleUpdates/Console-v1.2.3`.
-    func destinationPath(for tag: String) -> String? {
+    nonisolated func destinationPath(for tag: String) -> String? {
         guard SemanticVersion.parse(tag) != nil else { return nil }
         return destinationRoot + "/Console-\(tag)"
     }

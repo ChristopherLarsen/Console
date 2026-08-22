@@ -4,7 +4,7 @@ import Foundation
 /// merge request (`/-/merge_requests/<iid>`) or a GitHub pull request
 /// (`/{owner}/{repo}/pull/<n>`) by shape, and exposes one identity scheme so
 /// workspace associations resolve identically for both hosts.
-enum MergeRequestSourceContext {
+nonisolated enum MergeRequestSourceContext {
     struct ParsedMergeRequest: Equatable {
         let host: CodeHostProvider
         let iid: String

@@ -58,7 +58,7 @@ enum SessionPurpose: String, Codable, CaseIterable {
 
 /// Memory-only context about the Jira ticket or code-host merge request a
 /// launch came from. Never persisted and never leaves the process.
-enum SessionLaunchSource: Equatable, Sendable {
+nonisolated enum SessionLaunchSource: Equatable, Sendable {
     case jira(key: String, title: String?, url: URL?)
     case mergeRequest(host: CodeHostProvider, iid: String, title: String?, url: URL)
 
@@ -150,7 +150,7 @@ struct SessionWorkspace: Identifiable, Codable, Equatable {
 
 /// Parses Jira keys and URLs out of strings the retained WebView already
 /// rendered. Results live only in memory.
-enum JiraSourceContext {
+nonisolated enum JiraSourceContext {
     /// Uppercase project prefix of a key like `ENG-123` → `ENG`.
     static func projectKeyPrefix(of key: String) -> String? {
         guard let match = key.firstMatch(of: /^([A-Za-z][A-Za-z0-9]*)-\d+$/) else { return nil }
@@ -200,7 +200,7 @@ enum JiraSourceContext {
 
 /// Parses GitLab merge-request URLs out of strings the retained WebView
 /// already rendered. Results live only in memory.
-enum GitLabSourceContext {
+nonisolated enum GitLabSourceContext {
     struct MergeRequestInfo: Equatable {
         let iid: String
         let projectIdentity: String
@@ -254,7 +254,7 @@ enum GitLabSourceContext {
 /// Parses GitHub pull-request URLs (`https://github.com/{owner}/{repo}/pull/{n}`)
 /// out of strings the retained WebView already rendered. Results live only in
 /// memory.
-enum GitHubSourceContext {
+nonisolated enum GitHubSourceContext {
     struct PullRequestInfo: Equatable {
         let number: String
         let projectIdentity: String
