@@ -22,6 +22,20 @@ final class HomeSessionsUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
+    /// Radar cards use generic UUID-based identifiers; find them by label.
+    private func radarCard(named name: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'HomeSessionCard.' AND label CONTAINS %@", name)
+        ).firstMatch
+    }
+
+    /// Session rows use generic UUID-based identifiers too.
+    private func sessionRow(named name: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'SessionRow.' AND label CONTAINS %@", name)
+        ).firstMatch
+    }
+
     // MARK: - Default launch (Home)
 
     func testDefaultLaunchShowsHomePanelsWithEmptySessionsState() throws {
@@ -48,13 +62,13 @@ final class HomeSessionsUITests: XCTestCase {
         app.launchArguments.append("-uiTestHomeSessionsPreview")
         app.launch()
 
-        let alphaCard = element("HomeSessionCard.Preview Alpha")
+        let alphaCard = radarCard(named: "Preview Alpha")
         XCTAssertTrue(
             alphaCard.waitForExistence(timeout: 8),
             "radar shows Preview Alpha on Home. Tree:\n\(app.debugDescription)"
         )
 
-        let betaCard = element("HomeSessionCard.Preview Beta")
+        let betaCard = radarCard(named: "Preview Beta")
         XCTAssertTrue(betaCard.exists, "radar shows Preview Beta on Home")
 
         XCTAssertLessThan(
@@ -68,11 +82,11 @@ final class HomeSessionsUITests: XCTestCase {
         app.launchArguments.append("-uiTestHomeSessionsPreview")
         app.launch()
 
-        let alphaCard = element("HomeSessionCard.Preview Alpha")
+        let alphaCard = radarCard(named: "Preview Alpha")
         XCTAssertTrue(alphaCard.waitForExistence(timeout: 8))
         alphaCard.tap()
 
-        let alphaRow = element("SessionRow.Preview Alpha")
+        let alphaRow = sessionRow(named: "Preview Alpha")
         XCTAssertTrue(
             alphaRow.waitForExistence(timeout: 8),
             "jump lands on the Sessions destination with Alpha listed. Tree:\n\(app.debugDescription)"
@@ -97,19 +111,26 @@ final class HomeSessionsUITests: XCTestCase {
         )
     }
 
-    func testNewSessionSheetOpensAndCancelReturnsToHomeEmptyState() throws {
+    func testIntentPickerOpensFromHomeAndEscapeKeepsZeroSessions() throws {
         app.launch()
 
         let newButton = element("HomePanelSessions.NewSessionButton")
         XCTAssertTrue(newButton.waitForExistence(timeout: 8))
         newButton.tap()
 
-        let nameField = element("SessionNameField")
-        XCTAssertTrue(nameField.waitForExistence(timeout: 8), "creation sheet appears from Home")
+        let picker = element("SessionIntentPicker")
+        XCTAssertTrue(
+            picker.waitForExistence(timeout: 8),
+            "the compact intent launcher appears from Home. Tree:\n\(app.debugDescription)"
+        )
+        XCTAssertTrue(element("Sessions.Intent.newTicket").waitForExistence(timeout: 5), "New Ticket intent row present")
+        XCTAssertTrue(element("Sessions.Intent.existingTicket").exists, "Existing Ticket intent row present")
+        XCTAssertTrue(element("Sessions.Intent.review").exists, "Review intent row present")
+        XCTAssertTrue(element("Sessions.Intent.general").exists, "General intent row present")
 
-        element("CancelSessionButton").tap()
+        app.typeKey(.escape, modifierFlags: [])
 
         let emptyState = element("HomePanelSessions.EmptyState")
-        XCTAssertTrue(emptyState.waitForExistence(timeout: 8), "cancel keeps zero sessions on Home")
+        XCTAssertTrue(emptyState.waitForExistence(timeout: 8), "dismissing keeps zero sessions on Home")
     }
 }

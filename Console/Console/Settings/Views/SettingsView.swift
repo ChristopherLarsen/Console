@@ -53,6 +53,7 @@ struct SettingsView: View {
             Form {
                 generalSection
                 claudeSection
+                SessionsSettingsSection()
                 urlsSection
                 popupsSection
                 permissionsSection

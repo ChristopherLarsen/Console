@@ -22,6 +22,20 @@ final class SessionsUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
+    /// Session rows use generic UUID-based identifiers (names may contain
+    /// ticket keys), so locate them by their accessibility label instead.
+    private func sessionRow(named name: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'SessionRow.' AND label CONTAINS %@", name)
+        ).firstMatch
+    }
+
+    private func removeButton(forSessionNamed name: String) -> XCUIElement {
+        app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'RemoveSessionButton.' AND label CONTAINS %@", name)
+        ).firstMatch
+    }
+
     private func launchSessions(preview: Bool) {
         if preview {
             app.launchArguments.append("-uiTestSessionsPreview")
@@ -49,27 +63,59 @@ final class SessionsUITests: XCTestCase {
         )
     }
 
-    // MARK: - Creation sheet
+    // MARK: - Intent launcher
 
-    func testCreationSheetOpensAndCancels() throws {
+    func testIntentPickerOpensWithAllFourIntentsAndNoRequiredNameField() throws {
         launchSessions(preview: false)
 
         let newButton = element("NewSessionButton")
         XCTAssertTrue(newButton.waitForExistence(timeout: 5))
         newButton.tap()
 
-        let nameField = element("SessionNameField")
-        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "sheet shows an editable session name")
+        let picker = element("SessionIntentPicker")
+        XCTAssertTrue(
+            picker.waitForExistence(timeout: 8),
+            "the '+' opens the compact intent launcher. Tree:\n\(app.debugDescription)"
+        )
+        let newRow = element("Sessions.Intent.newTicket")
+        XCTAssertTrue(
+            newRow.waitForExistence(timeout: 5),
+            "New Ticket intent row present. Tree:\n\(app.debugDescription)"
+        )
+        XCTAssertTrue(element("Sessions.Intent.existingTicket").exists, "Existing Ticket intent row present")
+        XCTAssertTrue(element("Sessions.Intent.review").exists, "Review intent row present")
+        XCTAssertTrue(element("Sessions.Intent.general").exists, "General intent row present")
 
-        let createButton = element("CreateSessionButton")
-        XCTAssertFalse(createButton.isEnabled, "create stays disabled until a working directory is chosen")
+        // No mandatory typing: the Customize area is collapsed and there is no
+        // required Name field in the initial step.
+        XCTAssertFalse(element("Sessions.Launcher.NameField").exists, "name entry is optional behind Customize")
 
-        element("CancelSessionButton").tap()
+        app.typeKey(.escape, modifierFlags: [])
 
         XCTAssertTrue(
             element("Sessions.EmptyState").waitForExistence(timeout: 5),
-            "cancelling keeps zero sessions"
+            "dismissing keeps zero sessions"
         )
+    }
+
+    func testExistingTicketWithoutContextExpandsInlineKeyField() throws {
+        launchSessions(preview: false)
+
+        let newButton = element("NewSessionButton")
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+        newButton.tap()
+
+        let existingRow = element("Sessions.Intent.existingTicket")
+        XCTAssertTrue(existingRow.waitForExistence(timeout: 8))
+        existingRow.tap()
+
+        let keyField = element("Sessions.Launcher.Jira.Field")
+        XCTAssertTrue(
+            keyField.waitForExistence(timeout: 8),
+            "missing context expands only the inline ticket field. Tree:\n\(app.debugDescription)"
+        )
+
+        app.typeKey(.escape, modifierFlags: [])
     }
 
     // MARK: - Previewed rows (two concurrent sessions, switching, retention)
@@ -77,10 +123,10 @@ final class SessionsUITests: XCTestCase {
     func testTwoConcurrentSessionsListSwitchingAndExitedRetention() throws {
         launchSessions(preview: true)
 
-        let alphaRow = element("SessionRow.Preview Alpha")
+        let alphaRow = sessionRow(named: "Preview Alpha")
         XCTAssertTrue(alphaRow.waitForExistence(timeout: 5), "first concurrent session row visible")
 
-        let betaRow = element("SessionRow.Preview Beta")
+        let betaRow = sessionRow(named: "Preview Beta")
         XCTAssertTrue(betaRow.exists, "second concurrent session row visible")
 
         // Alpha is selected by the preview injection; its pane header is shown.
@@ -95,8 +141,8 @@ final class SessionsUITests: XCTestCase {
         XCTAssertTrue(alphaRow.exists, "switching keeps both rows alive")
 
         // Exited session retains its row until removed.
-        let removeButton = element("RemoveSessionButton.Preview Beta")
-        XCTAssertTrue(removeButton.waitForExistence(timeout: 5), "exited sessions expose removal")
+        let betaRemoveButton = removeButton(forSessionNamed: "Preview Beta")
+        XCTAssertTrue(betaRemoveButton.waitForExistence(timeout: 5), "exited sessions expose removal")
 
         // Stop confirmation appears for a Working session.
         alphaRow.tap()

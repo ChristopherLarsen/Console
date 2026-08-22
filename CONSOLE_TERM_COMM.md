@@ -142,7 +142,7 @@ Resolution order:
 
 Settings shows the detected path, **Choose…**, and **Reset to Automatic**. Only
 the override path persists — never session content. If Claude cannot be found,
-the creation sheet stays open with an actionable local error.
+the launch surfaces an actionable local error and no session is created.
 
 ## 5. Helper: `ConsoleTermBridge`
 
@@ -287,26 +287,67 @@ func submit(prompt: String, to sessionID: UUID) -> SubmissionResult
   descriptor is never written directly.
 - Multiline content is wrapped in bracketed-paste bytes
   (`ESC[200~ … ESC[201~`) followed by Return (`\r`).
-- Future JIRA/MR card actions call this API; no redundant native prompt
-  composer ships in this milestone.
+- Starter prompts are the one exception with a delivery pipeline of their own
+  (§7.1); they still travel through these same `send` APIs.
+
+### 7.1 Starter prompt delivery (intent-aware launches)
+
+Existing Ticket and Review launches carry a memory-only starter prompt built by
+`StarterPromptBuilder` from the launch source (identifier, optional visible
+title, optional URL — unavailable pieces are omitted, never placeholdered).
+New Ticket and General never generate one.
+
+- The prompt is stored on `ConsoleSession.pendingStarterPrompt`. It is never
+  persisted, logged, or placed in process arguments/environment.
+- With **Automatically Start Contextual Work** enabled (default), the
+  `SessionLaunchCoordinator` observes lifecycle events and submits exactly once
+  when the bridge reports `sessionStarted`; clearing before submitting is the
+  exactly-once guarantee.
+- The queued prompt is dropped on stop, process termination, and turn failure.
+- When automatic start is disabled or bridge instrumentation is unavailable,
+  the terminal pane shows a **Send Starter Prompt** banner
+  (`Sessions.StarterPromptBanner`). Manual send bypasses the idle-only gate
+  (`submitStarterPrompt`) because such sessions never report activity changes.
 
 ## 8. Sessions UI
 
-- Rows show session name, working-folder basename, displayed state, and unread
-  attention indicator.
+- Rows show session name, working-folder basename, displayed state, unread
+  attention indicator, and a small purpose icon (`SessionPurpose`).
 - The selected terminal header shows the session name and state.
 - An optional compact strip above the terminal shows the latest one-line
   summary/attention message, up to two artifact chips, and an overflow count.
+  When a starter prompt is still pending, a banner replaces the strip.
 - Artifact chips are informational only this milestone — no JIRA/GitLab access,
   no network requests.
 - State and metadata are exposed through one coherent accessibility element;
-  terminal accessibility remains intact.
+  terminal accessibility remains intact. Accessibility identifiers carry only
+  generic or UUID-based values — never ticket keys, MR numbers, titles, URLs,
+  or project names.
 - Home Panel 2 ("Sessions") is the live Sessions radar described in
   `CONSOLE_PANEL_2_SESSIONS.md`: a compact, attention-sorted launcher over the
   same `SessionStore`. It shows state, summary-or-folder, and informational
   artifact chips; clicking a card selects that session and navigates to the
   Sessions destination. It never embeds a terminal and offers no
   stop/remove controls.
+- The Sessions "+" opens the intent launcher (`SessionIntentPickerView`):
+  four keyboard-accessible intent rows (New Ticket, Existing Ticket, Review,
+  General), a workspace header with active-session counts, and a collapsed
+  Customize area for optional name/workspace overrides. No Name field is ever
+  required; automatic names come from `SessionPurpose.defaultName(source:)`.
+- Workspace resolution lives in `SessionLaunchCoordinator` (override → hashed
+  association → unique GitLab remote match → selected-session containment →
+  last-used per purpose → default). Unresolved contextual launches host one
+  compact chooser sheet at `MainView`; confirming remembers a SHA-256-hashed
+  routing association so later launches are one click.
+- Workspaces persist through `SessionWorkspaceStore` (UserDefaults): folder
+  paths/names the user picked, UUIDs, defaults, last-used choices, and hashes.
+  Ticket titles, MR titles, source URLs, and raw project identifiers are never
+  stored.
+- The Jira/Merge Requests browser toolbars show **Start Session** while their
+  retained page displays a parseable ticket or MR URL; Jira ticket cards carry
+  a secondary Start Session button. Both call the typed coordinator entry
+  points (`beginJiraTicketLaunch` / `beginMergeRequestReview`). Nothing is
+  fetched: context comes from URLs already rendered in the retained WebViews.
 - Legacy `TabSelection.live` callers (`ConsoleNavigation.showTerminal(tab: .live)`)
   expand the bottom Terminal drawer instead of navigating; Sessions has its own
   `showSessions()`.
@@ -324,6 +365,14 @@ Coverage:
   (`SessionLifecycleReducerTests`).
 - Prompt submission gating and bracketed-paste byte generation
   (`PromptSubmissionTests`).
+- Workspace persistence, availability, per-purpose last-used inputs, hashed
+  associations, and the persisted-data privacy boundary
+  (`SessionWorkspaceStoreTests`).
+- Naming, prompt generation, Jira/GitLab parsing, remote normalization, and
+  remote matching (`SessionLaunchNamingTests`).
+- Typed requests, resolution order, one-time choice learning, and starter
+  prompt delivery/clearing via validated test envelopes
+  (`SessionLaunchCoordinatorTests`).
 - Claude executable discovery and Settings override
   (`ClaudeExecutableLocatorTests`).
 - Hook filtering with synthetic payloads containing fake sensitive fields, run
@@ -335,8 +384,11 @@ Coverage:
 - MCP initialization, tool listing, valid calls, invalid calls, clean stdout
   framing (`HelperMCPTests`).
 - Plugin/helper embedding and executable signing (`SessionsPackagingTests`).
-- Zero-session UI, creation sheet, concurrent rows, switching, stop
-  confirmation, exited retention (`SessionsUITests`).
+- Zero-session UI, intent launcher rows, inline ticket context step,
+  concurrent rows, switching, stop confirmation, exited retention
+  (`SessionsUITests`).
+- Home radar presence, previewed cards, Home → Sessions hop, and the intent
+  launcher entry from Home (`HomeSessionsUITests`).
 
 Manual real-Claude verification checklist lives in the delivery report:
 two named sessions in different folders survive switching; Idle, Working,

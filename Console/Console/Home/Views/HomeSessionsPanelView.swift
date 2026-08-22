@@ -7,7 +7,8 @@ import SwiftUI
 /// destination where the process, terminal view, and scrollback are alive.
 struct HomeSessionsPanelView: View {
     @Environment(SessionStore.self) private var store
-    @State private var showingNewSessionSheet = false
+    @Environment(SessionLaunchCoordinator.self) private var launchCoordinator
+    @State private var showingIntentPicker = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,10 +16,11 @@ struct HomeSessionsPanelView: View {
             Divider()
             content
         }
-        .sheet(isPresented: $showingNewSessionSheet) {
-            // After a successful create the sheet has already selected the new
-            // session; land on Sessions so the first prompt is typed there.
-            NewClaudeSessionSheet(onCreated: { ConsoleNavigation.showSessions() })
+        // The intent picker navigates to Sessions itself after a successful
+        // create, so no onCreated hop is needed from Home.
+        .popover(isPresented: $showingIntentPicker, arrowEdge: .leading) {
+            SessionIntentPickerView()
+                .frame(width: 380)
         }
     }
 
@@ -47,7 +49,7 @@ struct HomeSessionsPanelView: View {
             Spacer(minLength: 4)
 
             Button {
-                showingNewSessionSheet = true
+                showingIntentPicker = true
             } label: {
                 Image(systemName: "plus")
             }
@@ -115,7 +117,7 @@ struct HomeSessionsPanelView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Button("New Claude Session") {
-                showingNewSessionSheet = true
+                showingIntentPicker = true
             }
             .controlSize(.small)
             .accessibilityIdentifier("HomePanelSessions.EmptyStateNewSessionButton")
@@ -187,7 +189,7 @@ private struct HomeSessionCard: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(cardAccessibilityLabel)
         .accessibilityHint("Opens this session on the Sessions page")
-        .accessibilityIdentifier("HomeSessionCard.\(session.name)")
+        .accessibilityIdentifier("HomeSessionCard.\(session.id.uuidString)")
     }
 
     @ViewBuilder
@@ -245,8 +247,9 @@ private struct HomeSessionCard: View {
 }
 
 #Preview("Sessions Radar") {
-    HomeSessionsPanelView()
-        .environment(SessionStore())
-        .frame(width: 380, height: 280)
-        .padding()
+    sessionLauncherPreview {
+        HomeSessionsPanelView()
+            .frame(width: 380, height: 280)
+            .padding()
+    }
 }

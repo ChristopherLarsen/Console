@@ -12,6 +12,7 @@ struct MainView: View {
     @State private var isResizingTerminal = false
     @Environment(\.modelContext) private var modelContext
     @Environment(PermissionsManager.self) private var permissionsManager
+    @Environment(SessionLaunchCoordinator.self) private var launchCoordinator
 
     private static let terminalMinExpandedHeight: CGFloat = 150
     private static let terminalDefaultExpandedHeight: CGFloat = 250
@@ -29,6 +30,18 @@ struct MainView: View {
         .environment(themeManager)
         .tint(Color.accentColor)
         .preferredColorScheme(themeManager.colorScheme)
+        // Shared host for unresolved contextual launches: Jira, GitLab,
+        // future Home cards, and the Sessions launcher all land here.
+        .sheet(item: choiceSheetBinding) { choice in
+            WorkspaceChoiceSheet(
+                choice: choice,
+                onConfirm: { workspaceID in
+                    _ = try? launchCoordinator.confirmWorkspaceChoice(workspaceID: workspaceID)
+                },
+                onCancel: { launchCoordinator.cancelWorkspaceChoice() }
+            )
+            .frame(minWidth: 420, maxWidth: 420, minHeight: 300, maxHeight: 420)
+        }
         .onAppear {
             // Conservative migration from the removed bottom-terminal era.
             ConsoleNavigation.migrateLegacyTerminalNavigation()
@@ -52,6 +65,17 @@ struct MainView: View {
                 }
             }
         }
+    }
+
+    private var choiceSheetBinding: Binding<PendingWorkspaceChoice?> {
+        Binding(
+            get: { launchCoordinator.pendingChoice },
+            set: { newValue in
+                if newValue == nil {
+                    launchCoordinator.cancelWorkspaceChoice()
+                }
+            }
+        )
     }
 
     private var detailColumn: some View {
@@ -185,5 +209,7 @@ struct MainView: View {
 #Preview {
     MainView()
         .environment(SessionStore())
+        .environment(SessionWorkspaceStore())
+        .environment(SessionLaunchCoordinator(store: SessionStore(), workspaceStore: SessionWorkspaceStore()))
         .modelContainer(for: [Command.self, WakeWord.self], inMemory: true)
 }

@@ -18,9 +18,17 @@ struct SessionListRow: View {
                     stateDot
 
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(session.name)
-                            .font(.system(size: 12, weight: .medium))
-                            .lineLimit(1)
+                        HStack(spacing: 4) {
+                            if let purpose = session.purpose {
+                                Image(systemName: purpose.symbolName)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .help(purpose.displayName)
+                            }
+                            Text(session.name)
+                                .font(.system(size: 12, weight: .medium))
+                                .lineLimit(1)
+                        }
 
                         Text(session.workingDirectory.lastPathComponent)
                             .font(.caption2)
@@ -46,10 +54,12 @@ struct SessionListRow: View {
             // One coherent accessibility element for the whole row's metadata.
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(
-                "\(session.name), \(session.workingDirectory.lastPathComponent), \(displayedState.label)\(showsAttentionBadge ? ", needs attention" : "")"
+                "\(purposePrefix)\(session.name), \(session.workingDirectory.lastPathComponent), \(displayedState.label)\(showsAttentionBadge ? ", needs attention" : "")"
             )
             .accessibilityAddTraits(isSelected ? [.isSelected] : [])
-            .accessibilityIdentifier("SessionRow.\(session.name)")
+            // Generic identifier only: generated names may contain ticket
+            // keys or MR numbers that must not leak into AX identifiers.
+            .accessibilityIdentifier("SessionRow.\(session.id.uuidString)")
 
             if showsAttentionBadge {
                 Image(systemName: "exclamationmark.circle.fill")
@@ -68,7 +78,7 @@ struct SessionListRow: View {
                 .buttonStyle(.plain)
                 .help("Remove Exited Session")
                 .accessibilityLabel("Remove \(session.name)")
-                .accessibilityIdentifier("RemoveSessionButton.\(session.name)")
+                .accessibilityIdentifier("RemoveSessionButton.\(session.id.uuidString)")
             }
         }
         .contextMenu {
@@ -79,6 +89,11 @@ struct SessionListRow: View {
                 Button("Remove", action: onRemove)
             }
         }
+    }
+
+    private var purposePrefix: String {
+        guard let purpose = session.purpose else { return "" }
+        return "\(purpose.displayName). "
     }
 
     private var showsAttentionBadge: Bool {

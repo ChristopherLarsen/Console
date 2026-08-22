@@ -4,7 +4,8 @@ import SwiftUI
 /// list filling the right edge.
 struct SessionsView: View {
     @Environment(SessionStore.self) private var store
-    @State private var showingNewSessionSheet = false
+    @Environment(SessionLaunchCoordinator.self) private var coordinator
+    @State private var showingIntentPicker = false
     @State private var pendingStopConfirmationID: UUID?
 
     static let listWidth: CGFloat = 260
@@ -27,8 +28,8 @@ struct SessionsView: View {
             .frame(width: Self.listWidth)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .sheet(isPresented: $showingNewSessionSheet) {
-            NewClaudeSessionSheet()
+        .popover(isPresented: $showingIntentPicker, arrowEdge: .leading) {
+            SessionIntentPickerView()
         }
         .confirmationDialog(
             stopConfirmationTitle,
@@ -72,12 +73,12 @@ struct SessionsView: View {
                 .font(.headline)
             Spacer()
             Button {
-                showingNewSessionSheet = true
+                showingIntentPicker = true
             } label: {
                 Image(systemName: "plus")
             }
             .buttonStyle(.plain)
-            .help("New Claude Session")
+            .help("New Session")
             .accessibilityIdentifier("NewSessionButton")
         }
         .padding(.horizontal, 12)
@@ -94,7 +95,7 @@ struct SessionsView: View {
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("Sessions.EmptyState")
             Button("New Claude Session") {
-                showingNewSessionSheet = true
+                showingIntentPicker = true
             }
             .controlSize(.small)
             .accessibilityIdentifier("EmptyStateNewSessionButton")
@@ -133,7 +134,10 @@ struct SessionsView: View {
                     activity: session.activity,
                     attention: session.attention
                 ),
-                onRequestStop: { requestStop(session) }
+                onRequestStop: { requestStop(session) },
+                onSendStarterPrompt: {
+                    _ = coordinator.manuallySendStarterPrompt(to: session.id)
+                }
             )
             .id(session.id)
         } else {
@@ -192,6 +196,16 @@ struct SessionsView: View {
 }
 
 #Preview("Zero Sessions") {
-    SessionsView()
-        .environment(SessionStore())
+    sessionLauncherPreview { SessionsView() }
+}
+
+/// Shared preview environment: sessions plus launcher dependencies.
+@MainActor
+func sessionLauncherPreview(@ViewBuilder content: () -> some View) -> some View {
+    let store = SessionStore()
+    let workspaces = SessionWorkspaceStore()
+    return content()
+        .environment(store)
+        .environment(workspaces)
+        .environment(SessionLaunchCoordinator(store: store, workspaceStore: workspaces))
 }

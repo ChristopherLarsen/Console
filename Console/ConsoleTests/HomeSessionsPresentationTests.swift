@@ -65,10 +65,13 @@ final class HomeSessionsPresentationTests: XCTestCase {
             starting, unknown, idle, review, done, blocked, needsInput, error,
         ])
 
+        // Store order: starting(0) unknown(1) idle(2) review(3) done(4)
+        // blocked(5) needsInput(6) error(7). Equal ranks keep store order,
+        // so Review precedes Blocked (both rank 1).
         XCTAssertEqual(sorted.map(\.name), [
             "Question",   // rank 0
-            "Review",     // rank 1, earlier in store order
-            "Blocked",    // rank 1, later in store order
+            "Review",     // rank 1, store position 3
+            "Blocked",    // rank 1, store position 5
             "Error",      // rank 2
             "Done",       // rank 3
             "Idle",       // rank 5
@@ -78,16 +81,19 @@ final class HomeSessionsPresentationTests: XCTestCase {
     }
 
     func testSortKeepsStoreOrderAsStableTieBreak() {
-        // Store order is the order passed in — not creation order, not
-        // alphabetical. Same-rank sessions keep their relative positions.
-        let w1 = makeSession(name: "W1", activity: .working)
-        let w2 = makeSession(name: "W2", activity: .working)
-        let e1 = makeSession(name: "E1", activity: .exited)
-        let e2 = makeSession(name: "E2", activity: .exited)
+        let workingLate = makeSession(name: "Working Late", activity: .working)
+        let exitedEarly = makeSession(name: "Exited Early", activity: .exited)
+        let workingEarly = makeSession(name: "Working Early", activity: .working)
+        let exitedLate = makeSession(name: "Exited Late", activity: .exited)
 
-        let sorted = HomeSessionsPresentation.sorted([w2, w1, e2, e1])
+        let sorted = HomeSessionsPresentation.sorted([
+            workingLate, exitedEarly, workingEarly, exitedLate,
+        ])
 
-        XCTAssertEqual(sorted.map(\.name), ["W2", "W1", "E2", "E1"])
+        // Ranks group together; within each rank store order is preserved.
+        XCTAssertEqual(sorted.map(\.name), [
+            "Working Late", "Working Early", "Exited Early", "Exited Late",
+        ])
     }
 
     func testSortDoesNotReorderAlphabetically() {
@@ -216,7 +222,7 @@ final class HomeSessionsPresentationTests: XCTestCase {
 
         let presentation = HomeSessionsPresentation.artifactChips(for: session)
 
-        // suffix(2), same as SessionInfoStrip: the two most recent artifacts.
+        // Latest two, matching SessionInfoStrip; older chips count as overflow.
         XCTAssertEqual(presentation.chips.map(\.label), ["MR !42", "ENG-202"])
         XCTAssertEqual(presentation.overflow, 1)
     }
