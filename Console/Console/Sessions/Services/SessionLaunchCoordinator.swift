@@ -99,14 +99,21 @@ final class SessionLaunchCoordinator {
         return .jira(key: key, title: JiraWebSession.shared.page.title, url: url)
     }
 
-    /// Source parsed from the retained Merge Requests WebView's current URL,
-    /// if it is displaying a merge request. Memory-only; nothing is fetched.
+    /// Source parsed from whichever retained GitLab page (To Review or My MRs)
+    /// is currently displaying a merge request. Memory-only; nothing is fetched.
     func retainedMergeRequestSource() -> SessionLaunchSource? {
-        guard let url = MergeRequestsWebSession.shared.page.url,
-              let info = GitLabSourceContext.parseMergeRequest(fromURL: url) else {
-            return nil
+        let pages = [
+            GitLabWebSessionStore.shared.reviewsPage,
+            GitLabWebSessionStore.shared.authoredPage,
+        ]
+        for page in pages {
+            guard let url = page.url,
+                  let info = GitLabSourceContext.parseMergeRequest(fromURL: url) else {
+                continue
+            }
+            return .gitLabMergeRequest(iid: info.iid, title: page.title, url: url)
         }
-        return .gitLabMergeRequest(iid: info.iid, title: MergeRequestsWebSession.shared.page.title, url: url)
+        return nil
     }
 
     // MARK: - Typed entry points for browser toolbars / future cards
