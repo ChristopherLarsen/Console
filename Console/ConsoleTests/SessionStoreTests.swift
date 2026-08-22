@@ -28,6 +28,7 @@ final class SessionStoreTests: XCTestCase {
         var launchCount = 0
         var lastExecutable: String?
         var lastArguments: [String]?
+        var lastEnvironment: [String: String]?
 
         func makeTerminalView() -> LocalProcessTerminalView {
             let view = ConsoleTerminalView()
@@ -45,6 +46,7 @@ final class SessionStoreTests: XCTestCase {
             launchCount += 1
             lastExecutable = executable
             lastArguments = arguments
+            lastEnvironment = environment
         }
     }
 
@@ -88,6 +90,20 @@ final class SessionStoreTests: XCTestCase {
             "exactly the three Console MCP tools are preapproved"
         )
         XCTAssertFalse(args.contains("*"), "no MCP wildcard is allowed")
+    }
+
+    func testLaunchEnvironmentMatchesDrawerTerminalLayering() throws {
+        let (store, launcher) = makeStore()
+        let consoleID = try store.createSession(name: "Env", workingDirectory: tmpDirectory("Env"))
+        let environment = try XCTUnwrap(launcher.lastEnvironment)
+
+        // Drawer-equivalent terminal defaults are present.
+        XCTAssertEqual(environment["TERM"], "xterm-256color")
+        XCTAssertEqual(environment["COLORTERM"], "truecolor")
+
+        // Bridge identity always wins and matches this session.
+        XCTAssertEqual(environment["CONSOLE_TERM_BRIDGE_SESSION_ID"], consoleID.uuidString)
+        XCTAssertFalse((environment["CONSOLE_TERM_BRIDGE_TOKEN"] ?? "").isEmpty)
     }
 
     func testDuplicateActiveNamesAreSuffixed() throws {

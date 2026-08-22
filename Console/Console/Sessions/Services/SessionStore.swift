@@ -40,6 +40,10 @@ final class SessionStore {
     @ObservationIgnored private let ephemeralRoot: URL
     @ObservationIgnored private var assembledPluginRoot: URL?
     @ObservationIgnored private var inputMonitor: Any?
+    /// Captured login-shell environment for session launches; nil until the
+    /// first capture attempt, which happens at first session creation.
+    @ObservationIgnored private var cachedLoginShellEnvironment: [String: String]?
+    @ObservationIgnored private var didCaptureLoginShellEnvironment = false
 
     static let gracefulStopGraceSeconds: UInt64 = 3
 
@@ -222,12 +226,14 @@ final class SessionStore {
                     name: displayName,
                     pluginDirectory: pluginRoot
                 ),
-                environment: [
-                    "CONSOLE_TERM_BRIDGE_HELPER": helperPath,
-                    "CONSOLE_TERM_BRIDGE_SOCKET": bridgeSocketPath,
-                    "CONSOLE_TERM_BRIDGE_SESSION_ID": consoleID.uuidString,
-                    "CONSOLE_TERM_BRIDGE_TOKEN": token,
-                ].filterEnvironmentValues(),
+                environment: childEnvironment(
+                    bridgeEnvironment: [
+                        "CONSOLE_TERM_BRIDGE_HELPER": helperPath,
+                        "CONSOLE_TERM_BRIDGE_SOCKET": bridgeSocketPath,
+                        "CONSOLE_TERM_BRIDGE_SESSION_ID": consoleID.uuidString,
+                        "CONSOLE_TERM_BRIDGE_TOKEN": token,
+                    ]
+                ),
                 workingDirectory: request.workingDirectory.path,
                 terminalView: terminalView
             )
@@ -268,6 +274,29 @@ final class SessionStore {
             "--name", name,
             "--plugin-dir", pluginDirectory,
         ] + ["--allowedTools"] + ConsoleClaudePluginAssembler.allowedToolNames
+    }
+
+    /// Environment for a session launch: Console's environment layered with
+    /// terminal defaults and the cached login-shell snapshot (matching the
+    /// drawer's `zsh --login`), with bridge identity variables always winning.
+    private func childEnvironment(bridgeEnvironment: [String: String]) -> [String: String] {
+        SessionEnvironmentBuilder.childEnvironment(
+            base: ProcessInfo.processInfo.environment,
+            loginShellEnvironment: loginShellEnvironment(),
+            bridge: bridgeEnvironment
+        ).filterEnvironmentValues()
+    }
+
+    /// The login-shell environment is captured once per process; a failed
+    /// capture is retried on the next session creation.
+    private func loginShellEnvironment() -> [String: String]? {
+        if didCaptureLoginShellEnvironment {
+            return cachedLoginShellEnvironment
+        }
+        let captured = SessionEnvironmentBuilder.captureLoginShellEnvironment()
+        didCaptureLoginShellEnvironment = true
+        cachedLoginShellEnvironment = captured
+        return captured
     }
 
     private func materializePluginRoot() throws -> String {
