@@ -1,47 +1,41 @@
 import SwiftUI
 import WebKit
 
-/// Process-scoped WebPage so navigating away from Merge Requests and back keeps the live session.
-@MainActor
-final class MergeRequestsWebSession {
-    static let shared = MergeRequestsWebSession()
-
-    let page = WebPage()
-    /// Normalized URL string last loaded into `page`, if any.
-    var lastLoadedURLString: String?
-
-    private init() {}
-}
-
-/// Dedicated embedded WebView for the user's configured Merge Requests URL.
+/// Dedicated embedded WebView destination for the user's configured GitLab
+/// merge-request lists.
+///
+/// A compact To Review / My MRs selector renders the corresponding shared page
+/// from `GitLabWebSessionStore`. Both pages share one authenticated website
+/// data store while keeping independent navigation histories.
 struct MergeRequestsView: View {
-    @AppStorage("webViewMergeRequestsURL") private var webViewMergeRequestsURL: String = ""
-    @State private var page = MergeRequestsWebSession.shared.page
+    @AppStorage(AppSettings.webViewGitLabReviewsURLKey) private var webViewGitLabReviewsURL: String = ""
+    @AppStorage(AppSettings.webViewGitLabMyMergeRequestsURLKey) private var webViewGitLabMyMergeRequestsURL: String = ""
+    @AppStorage(AppSettings.webViewMergeRequestsURLLegacyKey) private var legacyWebViewMergeRequestsURL: String = ""
+
+    @State private var selectedKind: GitLabListKind = .reviewsRequested
 
     var body: some View {
         Group {
-            if let url = Self.normalizedURL(from: webViewMergeRequestsURL) {
+            if let url = configuredURL(for: selectedKind) {
                 VStack(spacing: 0) {
-                    navigationControls
-
-                    if page.isLoading {
-                        ProgressView(value: page.estimatedProgress)
-                            .progressViewStyle(.linear)
-                    }
-
-                    WebView(page)
-                        .webViewBackForwardNavigationGestures(.enabled)
-                        .webViewMagnificationGestures(.enabled)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .accessibilityIdentifier("MergeRequestsWebView")
+                    listSelector
+                    GitLabMergeRequestsBrowserView(
+                        page: sessionStore.page(for: selectedKind),
+                        webViewAccessibilityIdentifier: "MergeRequestsWebView"
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .onAppear {
-                    loadIfNeeded(url: url, force: false)
+                    loadSelectedList(url: url)
                 }
-                .onChange(of: webViewMergeRequestsURL) { _, newValue in
-                    guard let updated = Self.normalizedURL(from: newValue) else { return }
-                    loadIfNeeded(url: updated, force: true)
+                .onChange(of: selectedKind) { _, newKind in
+                    if let updated = configuredURL(for: newKind) {
+                        sessionStore.loadIfNeeded(newKind, url: updated, force: false)
+                    }
                 }
+                .onChange(of: webViewGitLabReviewsURL) { _, _ in reloadIfConfigured() }
+                .onChange(of: webViewGitLabMyMergeRequestsURL) { _, _ in reloadIfConfigured() }
+                .onChange(of: legacyWebViewMergeRequestsURL) { _, _ in reloadIfConfigured() }
             } else {
                 emptyState
             }
@@ -49,55 +43,50 @@ struct MergeRequestsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var navigationControls: some View {
-        HStack(spacing: 12) {
-            Button {
-                if let item = page.backForwardList.backList.last {
-                    page.load(item)
-                }
-            } label: {
-                Image(systemName: "chevron.backward")
-            }
-            .disabled(page.backForwardList.backList.isEmpty)
-            .help("Back")
+    private var sessionStore: GitLabWebSessionStore { GitLabWebSessionStore.shared }
 
-            Button {
-                if let item = page.backForwardList.forwardList.first {
-                    page.load(item)
-                }
-            } label: {
-                Image(systemName: "chevron.forward")
-            }
-            .disabled(page.backForwardList.forwardList.isEmpty)
-            .help("Forward")
+    // MARK: - Selector
 
-            Button {
-                if page.isLoading {
-                    page.stopLoading()
-                } else {
-                    page.reload()
-                }
-            } label: {
-                Image(systemName: page.isLoading ? "xmark" : "arrow.clockwise")
-            }
-            .help(page.isLoading ? "Stop" : "Reload")
-
-            Text(page.url?.absoluteString ?? page.title)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .help(page.url?.absoluteString ?? "")
+    private var listSelector: some View {
+        Picker("Merge request list", selection: $selectedKind) {
+            Text(GitLabListKind.reviewsRequested.displayTitle).tag(GitLabListKind.reviewsRequested)
+            Text(GitLabListKind.authored.displayTitle).tag(GitLabListKind.authored)
         }
-        .buttonStyle(.borderless)
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) {
             Divider()
         }
-        .accessibilityIdentifier("MergeRequestsWebViewControls")
+        .accessibilityIdentifier("MergeRequestsListSelector")
+    }
+
+    // MARK: - Configuration
+
+    /// Effective configured URL per list. The reviews list conservatively falls
+    /// back to the legacy generic Merge Requests URL; configured URLs are never
+    /// logged.
+    private func configuredURL(for kind: GitLabListKind) -> URL? {
+        let raw: String
+        switch kind {
+        case .reviewsRequested:
+            raw = GitLabConfiguration.effectiveReviewsURLString()
+        case .authored:
+            raw = GitLabConfiguration.effectiveAuthoredURLString()
+        }
+        return GitLabListURLNormalization.url(from: raw)
+    }
+
+    private func loadSelectedList(url: URL) {
+        sessionStore.loadIfNeeded(selectedKind, url: url, force: false)
+    }
+
+    private func reloadIfConfigured() {
+        guard let url = configuredURL(for: selectedKind) else { return }
+        sessionStore.loadIfNeeded(selectedKind, url: url, force: true)
     }
 
     private var emptyState: some View {
@@ -106,44 +95,22 @@ struct MergeRequestsView: View {
                 .font(.system(size: 40))
                 .foregroundStyle(.secondary)
 
-            Text("Set Web View Merge Requests URL in Settings")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+            switch selectedKind {
+            case .reviewsRequested:
+                Text("Set Web View GitLab Reviews URL in Settings")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            case .authored:
+                Text("Set Web View GitLab My MRs URL in Settings")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("MergeRequestsEmptyState")
-    }
-
-    private func loadIfNeeded(url: URL, force: Bool) {
-        let normalized = url.absoluteString
-        if !force, MergeRequestsWebSession.shared.lastLoadedURLString == normalized {
-            return
-        }
-        MergeRequestsWebSession.shared.lastLoadedURLString = normalized
-        page.load(URLRequest(url: url))
-    }
-
-    /// Trims whitespace and prepends `https://` when the scheme is missing.
-    static func normalizedURL(from raw: String) -> URL? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-
-        let withScheme: String
-        if let scheme = URL(string: trimmed)?.scheme, !scheme.isEmpty {
-            withScheme = trimmed
-        } else {
-            withScheme = "https://\(trimmed)"
-        }
-
-        guard let url = URL(string: withScheme),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https",
-              url.host != nil
-        else {
-            return nil
-        }
-        return url
     }
 }
 

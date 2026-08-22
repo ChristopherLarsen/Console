@@ -10,6 +10,8 @@ struct SettingsView: View {
     @AppStorage("soundFeedbackEnabled") private var soundFeedbackEnabled: Bool = true
     @AppStorage("webViewJiraURL") private var webViewJiraURL: String = ""
     @AppStorage("webViewMergeRequestsURL") private var webViewMergeRequestsURL: String = ""
+    @AppStorage(AppSettings.webViewGitLabReviewsURLKey) private var webViewGitLabReviewsURL: String = ""
+    @AppStorage(AppSettings.webViewGitLabMyMergeRequestsURLKey) private var webViewGitLabMyMergeRequestsURL: String = ""
 
     @AppStorage("cueTriggerRecognized") private var cueTriggerRecognized: String = AppSettings.CueSound.fishListening.rawValue
     @AppStorage("cueCommandRecognized") private var cueCommandRecognized: String = AppSettings.CueSound.happyFish.rawValue
@@ -40,6 +42,8 @@ struct SettingsView: View {
     @FocusState private var isAuthWordsFocused: Bool
     @FocusState private var isJiraURLFocused: Bool
     @FocusState private var isMergeRequestsURLFocused: Bool
+    @FocusState private var isGitLabReviewsURLFocused: Bool
+    @FocusState private var isGitLabMyMRsURLFocused: Bool
     @State private var importExportMessage: String?
     @State private var importExportSucceeded = false
     @State private var showImportExportAlert = false
@@ -321,6 +325,24 @@ struct SettingsView: View {
                 text: $webViewMergeRequestsURL,
                 isFocused: $isMergeRequestsURLFocused,
                 accessibilityIdentifier: "WebViewMergeRequestsURLField"
+            )
+
+            defaultURLField(
+                title: "Web View GitLab Reviews URL",
+                prompt: "https://gitlab.com/dashboard/merge_requests",
+                caption: "Exact GitLab list of merge requests awaiting your review (Home MRs to Review panel)",
+                text: $webViewGitLabReviewsURL,
+                isFocused: $isGitLabReviewsURLFocused,
+                accessibilityIdentifier: "WebViewGitLabReviewsURLField"
+            )
+
+            defaultURLField(
+                title: "Web View GitLab My MRs URL",
+                prompt: "https://gitlab.com/dashboard/merge_requests?state=opened",
+                caption: "Exact GitLab list of merge requests you authored",
+                text: $webViewGitLabMyMergeRequestsURL,
+                isFocused: $isGitLabMyMRsURLFocused,
+                accessibilityIdentifier: "WebViewGitLabMyMRsURLField"
             )
         }
     }

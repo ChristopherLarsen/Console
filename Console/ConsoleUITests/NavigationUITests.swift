@@ -83,8 +83,14 @@ final class NavigationUITests: XCTestCase {
         mergeRequestsItem.tap()
 
         let emptyState = app.staticTexts["Set Web View Merge Requests URL in Settings"].firstMatch
+        let reviewsEmptyState = app.staticTexts["Set Web View GitLab Reviews URL in Settings"].firstMatch
+        let anySurface = app.descendants(matching: .any).matching(identifier: "MergeRequestsEmptyState").firstMatch
+        let anyWebView = app.descendants(matching: .any).matching(identifier: "MergeRequestsWebView").firstMatch
         XCTAssertTrue(
-            emptyState.waitForExistence(timeout: 5) || app.otherElements["MergeRequestsWebView"].exists || app.otherElements["MergeRequestsEmptyState"].exists,
+            emptyState.waitForExistence(timeout: 2)
+                || reviewsEmptyState.exists
+                || anyWebView.exists
+                || anySurface.exists,
             "Merge Requests destination should show empty state or web view"
         )
 
@@ -94,6 +100,43 @@ final class NavigationUITests: XCTestCase {
 
         let mergeRequestsURLLabel = app.staticTexts["Web View Merge Requests URL"].firstMatch
         XCTAssertTrue(mergeRequestsURLLabel.waitForExistence(timeout: 5), "Settings should show Web View Merge Requests URL field")
+
+        // New GitLab list fields share the URL's section.
+        let gitLabReviewsURLLabel = app.staticTexts["Web View GitLab Reviews URL"].firstMatch
+        XCTAssertTrue(gitLabReviewsURLLabel.waitForExistence(timeout: 5), "Settings should show Web View GitLab Reviews URL field")
+
+        let gitLabMyMRsURLLabel = app.staticTexts["Web View GitLab My MRs URL"].firstMatch
+        XCTAssertTrue(gitLabMyMRsURLLabel.waitForExistence(timeout: 5), "Settings should show Web View GitLab My MRs URL field")
+    }
+
+    // MARK: - Home Panel 3 (GitLab MRs to Review)
+
+    func testHomePanelThreeIsNotPlaceholder() throws {
+        app.launch()
+
+        let mainWindow = app.windows.firstMatch
+        XCTAssertTrue(mainWindow.waitForExistence(timeout: 5), "Main window should appear")
+
+        let homeDashboard = app.descendants(matching: .any)["HomeDashboard"].firstMatch
+        XCTAssertTrue(homeDashboard.waitForExistence(timeout: 5), "App should start on Home")
+
+        let reviewsPanel = app.descendants(matching: .any)["HomePanelGitLabMRsToReview"].firstMatch
+        XCTAssertTrue(reviewsPanel.waitForExistence(timeout: 5), "Panel 3 container should be present")
+
+        // The GitLab panel body replaces the placeholder: its own chrome is
+        // rendered instead of the "Panel 3" placeholder copy.
+        XCTAssertFalse(
+            reviewsPanel.staticTexts["Panel 3"].exists,
+            "Panel 3 should no longer render the placeholder body"
+        )
+        XCTAssertTrue(
+            reviewsPanel.buttons["GitLabPanelRefreshButton"].waitForExistence(timeout: 5),
+            "Panel 3 should expose its Refresh control"
+        )
+        XCTAssertTrue(
+            reviewsPanel.buttons["GitLabPanelShowGitLabButton"].exists || reviewsPanel.otherElements["GitLabPanelUnconfiguredState"].exists,
+            "Panel 3 should be interactive or explain an unconfigured URL"
+        )
     }
 
     func testSettingsSidebarShowsSettings() throws {

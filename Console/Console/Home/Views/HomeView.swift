@@ -110,9 +110,12 @@ struct HomeView: View {
             showsHeader: panel != .jiraTickets,
             accessibilityIdentifier: panel.accessibilityIdentifier
         ) {
-            if panel == .jiraTickets {
+            switch panel {
+            case .jiraTickets:
                 JiraPanelView()
-            } else {
+            case .gitLabReviews:
+                GitLabReviewsPanelView()
+            default:
                 HomePanelPlaceholder(
                     panelNumber: panel.number,
                     purpose: panel.futurePurpose
