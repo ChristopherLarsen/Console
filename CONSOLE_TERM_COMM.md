@@ -39,12 +39,12 @@ Official references:
 - Console owns an observable `SessionStore`, created in `ConsoleApp` and
   injected into the environment.
 - The Sessions destination shows the selected terminal on the left and a
-  compact session list on the right. The app starts with zero
-  sessions.
-- **New Claude Session** opens a sheet requesting an editable session name and
-  a required working directory chosen with `NSOpenPanel`. The suggested name is
-  derived from the selected folder's last path component; duplicate active
-  names are suffixed automatically (`Folder`, `Folder 2`, …).
+  compact session list on the right. The app starts with zero sessions.
+- The Sessions "+" opens the intent launcher (`SessionIntentPickerView`): New
+  Ticket, Existing Ticket, Review, and General. Names are generated
+  automatically (`SessionPurpose.defaultName(source:)`, duplicates suffixed
+  `Folder`, `Folder 2`, …); Customize offers optional name/workspace overrides,
+  and first-use picks the workspace folder with `NSOpenPanel`.
 - Claude is launched as the PTY child directly (the resolved `claude`
   executable). A shell is never started and `claude` never typed into it.
 - Each creation generates two UUIDs: a Console session UUID and a Claude

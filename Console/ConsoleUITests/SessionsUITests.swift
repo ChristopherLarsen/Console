@@ -169,7 +169,7 @@ final class SessionsUITests: XCTestCase {
             "selected terminal header present. Tree:\n\(app.debugDescription)"
         )
 
-        let alphaRow = element("SessionRow.Preview Alpha")
+        let alphaRow = sessionRow(named: "Preview Alpha")
         XCTAssertTrue(alphaRow.exists, "session list row visible")
 
         XCTAssertLessThan(
