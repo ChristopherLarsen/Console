@@ -101,25 +101,6 @@ struct SessionListRow: View {
     }
 
     private var stateColor: Color {
-        switch displayedState {
-        case .needsApproval, .needsInput:
-            return .orange
-        case .blocked, .needsReview:
-            return .purple
-        case .error:
-            return .red
-        case .done:
-            return .green
-        case .working:
-            return .accentColor
-        case .idle:
-            return .secondary
-        case .starting:
-            return .yellow
-        case .exited:
-            return .gray
-        case .unknown:
-            return .gray
-        }
+        displayedState.tint
     }
 }

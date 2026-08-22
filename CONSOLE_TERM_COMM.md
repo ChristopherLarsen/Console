@@ -301,8 +301,12 @@ func submit(prompt: String, to sessionID: UUID) -> SubmissionResult
   no network requests.
 - State and metadata are exposed through one coherent accessibility element;
   terminal accessibility remains intact.
-- Home Panel 2 ("Sessions") stays a placeholder. No Home quadrant is populated
-  in this task.
+- Home Panel 2 ("Sessions") is the live Sessions radar described in
+  `CONSOLE_PANEL_2_SESSIONS.md`: a compact, attention-sorted launcher over the
+  same `SessionStore`. It shows state, summary-or-folder, and informational
+  artifact chips; clicking a card selects that session and navigates to the
+  Sessions destination. It never embeds a terminal and offers no
+  stop/remove controls.
 - Legacy `TabSelection.live` callers (`ConsoleNavigation.showTerminal(tab: .live)`)
   expand the bottom Terminal drawer instead of navigating; Sessions has its own
   `showSessions()`.

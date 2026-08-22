@@ -7,6 +7,10 @@ struct NewClaudeSessionSheet: View {
     @Environment(SessionStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
+    /// Called after a successful create, before dismissal returns. The Sessions
+    /// destination leaves this nil; Home uses it to navigate to Sessions.
+    var onCreated: (() -> Void)?
+
     @State private var name: String = ""
     @State private var workingDirectory: URL?
     @State private var errorMessage: String?
@@ -102,6 +106,7 @@ struct NewClaudeSessionSheet: View {
                 name: name,
                 workingDirectory: directory
             )
+            onCreated?()
             dismiss()
         } catch {
             // Keep the sheet open with an actionable local error.
