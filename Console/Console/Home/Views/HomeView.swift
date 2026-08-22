@@ -107,12 +107,17 @@ struct HomeView: View {
         HomePanelContainer(
             title: panel.title,
             subtitle: panel.serviceLabel,
+            showsHeader: panel != .jiraTickets,
             accessibilityIdentifier: panel.accessibilityIdentifier
         ) {
-            HomePanelPlaceholder(
-                panelNumber: panel.number,
-                purpose: panel.futurePurpose
-            )
+            if panel == .jiraTickets {
+                JiraPanelView()
+            } else {
+                HomePanelPlaceholder(
+                    panelNumber: panel.number,
+                    purpose: panel.futurePurpose
+                )
+            }
         }
         .frame(
             minWidth: Layout.minimumPanelWidth,

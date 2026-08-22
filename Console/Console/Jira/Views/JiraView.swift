@@ -7,10 +7,55 @@ final class JiraWebSession {
     static let shared = JiraWebSession()
 
     let page = WebPage()
+    /// Survives Home unmount so cards and last extraction remain when returning.
+    let panelController = JiraPanelController()
     /// Normalized URL string last loaded into `page`, if any.
     var lastLoadedURLString: String?
 
     private init() {}
+}
+
+extension JiraWebSession: JiraPageServicing {
+    var pageURL: URL? { page.url }
+
+    func load(url: URL) {
+        lastLoadedURLString = url.absoluteString
+        page.load(URLRequest(url: url))
+    }
+
+    func reload() {
+        page.reload()
+    }
+
+    func navigate(to url: URL) {
+        lastLoadedURLString = nil
+        page.load(URLRequest(url: url))
+    }
+
+    func readiness() async -> JiraReadiness? {
+        do {
+            let raw = try await page.callJavaScript(JiraListExtractor.readinessProbeScript)
+            guard let json = raw as? String,
+                  let data = json.data(using: .utf8),
+                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else {
+                return nil
+            }
+            if object["authLike"] as? Bool == true {
+                return .authenticationDetected
+            }
+            return .pending(
+                hasRows: object["hasRows"] as? Bool ?? false,
+                hasContainer: object["hasTable"] as? Bool ?? false
+            )
+        } catch {
+            return nil
+        }
+    }
+
+    func extractTickets() async -> JiraListExtraction {
+        await JiraListExtractor.extract(from: page)
+    }
 }
 
 /// Dedicated embedded WebView for the user's configured JIRA URL.

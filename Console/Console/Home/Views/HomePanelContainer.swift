@@ -5,26 +5,30 @@ import SwiftUI
 struct HomePanelContainer<Content: View>: View {
     let title: String
     var subtitle: String?
+    var showsHeader: Bool = true
     var accessibilityIdentifier: String = ""
     @ViewBuilder var content: () -> Content
 
     init(
         title: String,
         subtitle: String? = nil,
+        showsHeader: Bool = true,
         accessibilityIdentifier: String = "",
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
         self.subtitle = subtitle
+        self.showsHeader = showsHeader
         self.accessibilityIdentifier = accessibilityIdentifier
         self.content = content
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-
-            Divider()
+            if showsHeader {
+                header
+                Divider()
+            }
 
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
