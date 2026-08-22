@@ -2,10 +2,10 @@ import XCTest
 import WebKit
 @testable import Console
 
-/// State-machine tests for `GitLabListPanelController` using deterministic
+/// State-machine tests for `CodeHostListPanelController` using deterministic
 /// navigation/extraction seams. No live GitLab login is involved.
 @MainActor
-final class GitLabListPanelControllerTests: XCTestCase {
+final class CodeHostListPanelControllerTests: XCTestCase {
 
     private var configuredURLString = "https://gitlab.example.test/review-list"
     private var currentDate = Date(timeIntervalSince1970: 1_787_000_000)
@@ -17,8 +17,8 @@ final class GitLabListPanelControllerTests: XCTestCase {
         loader: (@MainActor (WebPage, URLRequest) async -> Bool)? = nil,
         executor: (@MainActor (WebPage) async throws -> String?)? = nil,
         provider: (() -> String?)? = nil
-    ) -> GitLabListPanelController {
-        GitLabListPanelController(
+    ) -> CodeHostListPanelController {
+        CodeHostListPanelController(
             kind: .reviewsRequested,
             page: page,
             configuredURLStringProvider: provider ?? { [weak self] in self?.configuredURLString },
@@ -31,7 +31,7 @@ final class GitLabListPanelControllerTests: XCTestCase {
     }
 
     /// Waits until the controller's in-flight extraction settles.
-    private func waitForSettled(_ controller: GitLabListPanelController) async {
+    private func waitForSettled(_ controller: CodeHostListPanelController) async {
         for _ in 0..<400 {
             if !controller.isRefreshing { return }
             try? await Task.sleep(nanoseconds: 5_000_000)
@@ -57,9 +57,9 @@ final class GitLabListPanelControllerTests: XCTestCase {
         return "{\"outcome\":\"items\",\"items\":[\(rows)]}"
     }
 
-    private func summary(index: Int) -> GitLabMergeRequestSummary {
+    private func summary(index: Int) -> MergeRequestSummary {
         let url = URL(string: "https://gitlab.example.test/p\(index)/-/merge_requests/\(index)")!
-        return GitLabMergeRequestSummary(
+        return MergeRequestSummary(
             id: url,
             iidText: "\(index)",
             title: "Fixture \(index)",
@@ -75,7 +75,7 @@ final class GitLabListPanelControllerTests: XCTestCase {
     }
 
     private func makePage() -> WebPage {
-        GitLabWebSessionStore.makePage(dataStore: WKWebsiteDataStore.nonPersistent())
+        CodeHostWebSessionStore.makePage(dataStore: WKWebsiteDataStore.nonPersistent())
     }
 
     // MARK: - Configuration
@@ -356,7 +356,7 @@ final class GitLabListPanelControllerTests: XCTestCase {
     // MARK: - Redaction
 
     func testLoadedStateDescriptionContainsNoExtractedValues() {
-        let secret = GitLabMergeRequestSummary(
+        let secret = MergeRequestSummary(
             id: URL(string: "https://gitlab.example.test/secret/widget/-/merge_requests/77")!,
             iidText: "77",
             title: "SECRET TITLE VALUE",
@@ -370,7 +370,7 @@ final class GitLabListPanelControllerTests: XCTestCase {
             sourceOrder: 0
         )
 
-        let state = GitLabListPanelState.loaded(items: [secret], refreshedAt: currentDate)
+        let state = MergeRequestListPanelState.loaded(items: [secret], refreshedAt: currentDate)
         for representation in ["\(state)", String(describing: state), String(reflecting: state)] {
             XCTAssertFalse(representation.contains("SECRET"), "Panel state leaked extracted values")
             XCTAssertFalse(representation.contains("merge_requests"), "Panel state leaked a URL shape")
@@ -378,7 +378,7 @@ final class GitLabListPanelControllerTests: XCTestCase {
     }
 
     func testStaleReasonTextsContainNoExtractedValues() {
-        for reason in [GitLabRefreshFailureReason.signInRequired, .pageWasNotAList, .extractionFailed] {
+        for reason in [MergeRequestRefreshFailureReason.signInRequired, .pageWasNotAList, .extractionFailed] {
             XCTAssertFalse(reason.reasonText.isEmpty)
         }
     }

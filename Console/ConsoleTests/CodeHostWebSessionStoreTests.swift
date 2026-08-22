@@ -2,41 +2,58 @@ import XCTest
 import WebKit
 @testable import Console
 
-/// Verifies the two-page session assumption both GitLab panels depend on:
+/// Verifies the two-page session assumption both hosted panels depend on:
 ///
 /// 1. Both pages are constructed with the SAME explicit persistent
 ///    `WKWebsiteDataStore` (so a normal sign-in in one page is visible to the
 ///    other through shared website data).
 /// 2. Their back-forward navigation histories stay independent.
+/// 3. Each code host owns its own store instance while both instances share
+///    WebKit's default persistent website data store.
 ///
 /// The cookie probe below uses one synthetic, valueless cookie on an invented
 /// host inside a NON-persistent store. No real credentials, cookies, or site
 /// data are ever read, copied, or persisted.
 @MainActor
-final class GitLabWebSessionStoreTests: XCTestCase {
+final class CodeHostWebSessionStoreTests: XCTestCase {
 
     // MARK: - Structure
 
     func testSharedSingletonUsesTheDefaultPersistentDataStore() {
-        let store = GitLabWebSessionStore.shared
+        let store = CodeHostWebSessionStore.shared(for: .gitlab)
         XCTAssertTrue(store.websiteDataStore.isPersistent, "The shared store must be persistent")
         XCTAssertTrue(store.websiteDataStore === WKWebsiteDataStore.default(), "Production pages share the default persistent store")
     }
 
     func testBothPagesAreDistinctInstances() {
-        let store = GitLabWebSessionStore.shared
+        let store = CodeHostWebSessionStore.shared(for: .gitlab)
         XCTAssertFalse(store.reviewsPage === store.authoredPage, "Each list kind owns its own page and history")
+    }
+
+    func testEachProviderOwnsOneStableInstanceOnTheSameDefaultDataStore() {
+        let gitlabFirst = CodeHostWebSessionStore.shared(for: .gitlab)
+        let githubFirst = CodeHostWebSessionStore.shared(for: .github)
+        let gitlabAgain = CodeHostWebSessionStore.shared(for: .gitlab)
+
+        XCTAssertTrue(gitlabFirst === gitlabAgain, "A provider's store must be a stable process-wide instance")
+        XCTAssertFalse(gitlabFirst === githubFirst, "Different hosts own different page pairs")
+
+        XCTAssertTrue(gitlabFirst.websiteDataStore === WKWebsiteDataStore.default())
+        XCTAssertTrue(githubFirst.websiteDataStore === WKWebsiteDataStore.default(),
+                      "Both hosts share WebKit's persistent store; cookies coexist per domain")
+        XCTAssertTrue(gitlabFirst.reviewsPage !== githubFirst.reviewsPage)
+        XCTAssertTrue(gitlabFirst.authoredPage !== githubFirst.authoredPage)
     }
 
     func testInjectedPagesReceiveExactlyOneSharedDataStore() {
         let injectedStore = WKWebsiteDataStore.nonPersistent()
         var capturedStores: [WKWebsiteDataStore] = []
 
-        _ = GitLabWebSessionStore(
+        _ = CodeHostWebSessionStore(
             dataStore: injectedStore,
             pageProvider: { dataStore in
                 capturedStores.append(dataStore)
-                return GitLabWebSessionStore.makePage(dataStore: dataStore)
+                return CodeHostWebSessionStore.makePage(dataStore: dataStore)
             }
         )
 
@@ -52,7 +69,7 @@ final class GitLabWebSessionStoreTests: XCTestCase {
 
     func testBothPagesSeeSiteDataSharedThroughOneStore() async throws {
         let sharedStore = WKWebsiteDataStore.nonPersistent()
-        let store = GitLabWebSessionStore(dataStore: sharedStore)
+        let store = CodeHostWebSessionStore(dataStore: sharedStore)
 
         // Synthetic, credential-free probe on an invented host.
         guard let probeCookie = try HTTPCookie(
@@ -93,7 +110,7 @@ final class GitLabWebSessionStoreTests: XCTestCase {
     // MARK: - Independent navigation histories
 
     func testBackForwardListsStayIndependent() async throws {
-        let store = GitLabWebSessionStore(dataStore: WKWebsiteDataStore.nonPersistent())
+        let store = CodeHostWebSessionStore(dataStore: WKWebsiteDataStore.nonPersistent())
         let reviewsPage = store.reviewsPage
         let authoredPage = store.authoredPage
 

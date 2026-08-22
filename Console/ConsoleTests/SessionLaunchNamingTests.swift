@@ -2,7 +2,7 @@ import XCTest
 @testable import Console
 
 /// Pure launch-flow rules: automatic naming, starter-prompt generation,
-/// Jira/GitLab source parsing, remote normalization, and remote matching.
+/// Jira, GitLab, and GitHub source parsing, remote normalization, and remote matching.
 @MainActor
 final class SessionLaunchNamingTests: XCTestCase {
 
@@ -35,7 +35,8 @@ final class SessionLaunchNamingTests: XCTestCase {
     }
 
     func testReviewUsesTheMergeRequestIID() {
-        let source = SessionLaunchSource.gitLabMergeRequest(
+        let source = SessionLaunchSource.mergeRequest(
+            host: .gitlab,
             iid: "42",
             title: nil,
             url: URL(string: "https://gitlab.com/grp/proj/-/merge_requests/42")!
@@ -93,7 +94,7 @@ final class SessionLaunchNamingTests: XCTestCase {
     func testReviewPromptIncludesOnlyIIDTitleAndURL() {
         let prompt = StarterPromptBuilder.prompt(
             for: .review,
-            source: .gitLabMergeRequest(iid: "42", title: "Add SSO", url: mrURL)
+            source: .mergeRequest(host: .gitlab, iid: "42", title: "Add SSO", url: mrURL)
         )
 
         XCTAssertEqual(
@@ -102,7 +103,7 @@ final class SessionLaunchNamingTests: XCTestCase {
             Review GitLab merge request 42: Add SSO
             Source: https://gitlab.com/grp/proj/-/merge_requests/42
 
-            Inspect the merge-request diff and report concrete findings prioritized by severity, including regressions, security issues, and missing tests. Do not modify files unless I ask.
+            Inspect the change diff and report concrete findings prioritized by severity, including regressions, security issues, and missing tests. Do not modify files unless I ask.
             """
         )
     }
@@ -158,27 +159,27 @@ final class SessionLaunchNamingTests: XCTestCase {
 
     func testRemoteNormalizationCollapsesHTTPSAndSSHForms() {
         XCTAssertEqual(
-            GitLabSourceContext.normalizeRemoteURL("https://GitLab.Example.com/Group/Proj.git"),
+            MergeRequestSourceContext.normalizeRemoteURL("https://GitLab.Example.com/Group/Proj.git"),
             "gitlab.example.com/group/proj"
         )
         XCTAssertEqual(
-            GitLabSourceContext.normalizeRemoteURL("git@GitLab.Example.com:Group/Proj.git"),
+            MergeRequestSourceContext.normalizeRemoteURL("git@GitLab.Example.com:Group/Proj.git"),
             "gitlab.example.com/group/proj"
         )
         XCTAssertEqual(
-            GitLabSourceContext.normalizeRemoteURL("ssh://git@gitlab.example.com:2222/group/proj.git"),
+            MergeRequestSourceContext.normalizeRemoteURL("ssh://git@gitlab.example.com:2222/group/proj.git"),
             "gitlab.example.com/group/proj"
         )
         XCTAssertEqual(
-            GitLabSourceContext.normalizeRemoteURL("https://gitlab.example.com/group/proj/-/merge_requests/12"),
+            MergeRequestSourceContext.normalizeRemoteURL("https://gitlab.example.com/group/proj/-/merge_requests/12"),
             "gitlab.example.com/group/proj",
             "MR tails are stripped so MR URLs and remotes share one identity"
         )
     }
 
     func testRemoteNormalizationRejectsGarbage() {
-        XCTAssertNil(GitLabSourceContext.normalizeRemoteURL(""))
-        XCTAssertNil(GitLabSourceContext.normalizeRemoteURL(":://not a remote"))
+        XCTAssertNil(MergeRequestSourceContext.normalizeRemoteURL(""))
+        XCTAssertNil(MergeRequestSourceContext.normalizeRemoteURL(":://not a remote"))
     }
 
     // MARK: - Routing identities (hashed association inputs)
@@ -187,7 +188,7 @@ final class SessionLaunchNamingTests: XCTestCase {
         let jira = SessionLaunchSource.jira(key: "eng-123", title: "Secret title", url: jiraURL)
         XCTAssertEqual(jira.routingIdentity, "ENG")
 
-        let mr = SessionLaunchSource.gitLabMergeRequest(iid: "42", title: "Secret MR title", url: mrURL)
+        let mr = SessionLaunchSource.mergeRequest(host: .gitlab, iid: "42", title: "Secret MR title", url: mrURL)
         XCTAssertEqual(mr.routingIdentity, "gitlab.com/grp/proj")
     }
 

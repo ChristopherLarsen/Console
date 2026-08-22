@@ -1,12 +1,13 @@
 import SwiftUI
 
-/// Compact native card for one merge request rendered by a GitLab list.
+/// Compact native card for one merge request rendered by the active code
+/// host's list.
 ///
 /// At most three rows; the title dominates. Unavailable optional fields are
 /// omitted entirely — never guessed, never shown as "Unknown". The whole card
 /// is one button that opens the captured absolute MR URL in the shared page.
-struct GitLabMergeRequestCardView: View {
-    let item: GitLabMergeRequestSummary
+struct MergeRequestCardView: View {
+    let item: MergeRequestSummary
     let opensInPanel: () -> Void
 
     var body: some View {
@@ -16,7 +17,7 @@ struct GitLabMergeRequestCardView: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint("Open merge request in GitLab")
+        .accessibilityHint("Open merge request in \(AppSettings().codeHostProvider.displayName)")
     }
 
     private var cardBody: some View {
@@ -64,7 +65,7 @@ struct GitLabMergeRequestCardView: View {
         .contentShape(RoundedRectangle(cornerRadius: 7))
     }
 
-    // MARK: - Fields (omitted cleanly when GitLab did not render them)
+    // MARK: - Fields (omitted cleanly when the host did not render them)
 
     private var eyebrow: String {
         var parts: [String] = []
@@ -137,8 +138,8 @@ struct GitLabMergeRequestCardView: View {
 }
 
 #Preview("Card") {
-    GitLabMergeRequestCardView(
-        item: GitLabMergeRequestSummary(
+    MergeRequestCardView(
+        item: MergeRequestSummary(
             id: URL(string: "https://example.com/group/project/-/merge_requests/123")!,
             iidText: "123",
             title: "Fix account recovery navigation crash",

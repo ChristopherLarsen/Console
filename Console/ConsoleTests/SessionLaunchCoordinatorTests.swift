@@ -101,7 +101,8 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
     }
 
     private func mrSource(_ iid: String = "42") -> SessionLaunchSource {
-        .gitLabMergeRequest(
+        .mergeRequest(
+            host: .gitlab,
             iid: iid,
             title: "Add SSO",
             url: URL(string: "https://gitlab.com/grp/proj/-/merge_requests/\(iid)")!
