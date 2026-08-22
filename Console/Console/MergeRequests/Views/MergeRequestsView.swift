@@ -12,7 +12,7 @@ struct MergeRequestsView: View {
     @AppStorage(AppSettings.webViewGitLabMyMergeRequestsURLKey) private var webViewGitLabMyMergeRequestsURL: String = ""
     @AppStorage(AppSettings.webViewMergeRequestsURLLegacyKey) private var legacyWebViewMergeRequestsURL: String = ""
 
-    @State private var selectedKind: GitLabListKind = .reviewsRequested
+    @State private var selectedKind: GitLabListKind = .authored
 
     var body: some View {
         Group {

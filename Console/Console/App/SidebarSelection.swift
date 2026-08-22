@@ -17,7 +17,7 @@ enum SidebarSelection: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "Home"
         case .jira: return "JIRA"
-        case .mergeRequests: return "Merge Requests"
+        case .mergeRequests: return "GitLab"
         case .triggers: return "Triggers"
         case .commands: return "Commands"
         case .aiProvider: return "AI Provider"

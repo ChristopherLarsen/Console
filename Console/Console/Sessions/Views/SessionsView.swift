@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The Sessions destination: compact session list on the left, selected
-/// terminal filling the remaining space.
+/// The Sessions destination: selected terminal on the left, compact session
+/// list filling the right edge.
 struct SessionsView: View {
     @Environment(SessionStore.self) private var store
     @State private var showingNewSessionSheet = false
@@ -11,6 +11,10 @@ struct SessionsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            detailArea
+
+            Divider()
+
             VStack(spacing: 0) {
                 listHeader
                 Divider()
@@ -21,10 +25,6 @@ struct SessionsView: View {
                 }
             }
             .frame(width: Self.listWidth)
-
-            Divider()
-
-            detailArea
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .sheet(isPresented: $showingNewSessionSheet) {

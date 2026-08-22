@@ -38,8 +38,8 @@ Official references:
   `SessionStore`.
 - Console owns an observable `SessionStore`, created in `ConsoleApp` and
   injected into the environment.
-- The Sessions destination shows a compact session list on the left and the
-  selected terminal filling the remaining space. The app starts with zero
+- The Sessions destination shows the selected terminal on the left and a
+  compact session list on the right. The app starts with zero
   sessions.
 - **New Claude Session** opens a sheet requesting an editable session name and
   a required working directory chosen with `NSOpenPanel`. The suggested name is

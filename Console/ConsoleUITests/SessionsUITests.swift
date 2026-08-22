@@ -1,7 +1,8 @@
 import XCTest
 
 /// Sessions destination flows: zero-state, creation sheet, previewed rows,
-/// switching, stop confirmation, and exited retention.
+/// switching, stop confirmation, exited retention, and pane ordering
+/// (terminal on the left, session list on the right).
 final class SessionsUITests: XCTestCase {
 
     var app: XCUIApplication!
@@ -109,5 +110,26 @@ final class SessionsUITests: XCTestCase {
             "working sessions require stop confirmation. Tree:\n\(app.debugDescription)"
         )
         confirmStop.tap()
+    }
+
+    // MARK: - Pane ordering
+
+    func testTerminalPaneSitsLeftOfSessionList() throws {
+        launchSessions(preview: true)
+
+        let header = element("Sessions.Header")
+        XCTAssertTrue(
+            header.waitForExistence(timeout: 8),
+            "selected terminal header present. Tree:\n\(app.debugDescription)"
+        )
+
+        let alphaRow = element("SessionRow.Preview Alpha")
+        XCTAssertTrue(alphaRow.exists, "session list row visible")
+
+        XCTAssertLessThan(
+            header.frame.maxX,
+            alphaRow.frame.minX,
+            "terminal pane occupies the left side; the session list sits on the right"
+        )
     }
 }

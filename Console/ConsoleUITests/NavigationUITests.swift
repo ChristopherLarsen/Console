@@ -23,7 +23,7 @@ final class NavigationUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["Home"].firstMatch.waitForExistence(timeout: 5), "Home sidebar item should be visible")
         XCTAssertTrue(app.buttons["JIRA"].firstMatch.exists, "JIRA sidebar item should be visible")
-        XCTAssertTrue(app.buttons["Merge Requests"].firstMatch.exists, "Merge Requests sidebar item should be visible")
+        XCTAssertTrue(app.buttons["GitLab"].firstMatch.exists, "GitLab sidebar item should be visible")
         XCTAssertTrue(app.buttons["Triggers"].firstMatch.exists, "Triggers sidebar item should be visible")
         XCTAssertTrue(app.buttons["Commands"].firstMatch.exists, "Commands sidebar item should be visible")
         XCTAssertTrue(app.buttons["Sessions"].firstMatch.exists, "Sessions sidebar item should be visible")
@@ -78,20 +78,22 @@ final class NavigationUITests: XCTestCase {
         let mainWindow = app.windows.firstMatch
         XCTAssertTrue(mainWindow.waitForExistence(timeout: 5), "Main window should appear")
 
-        let mergeRequestsItem = app.buttons["Merge Requests"].firstMatch
-        XCTAssertTrue(mergeRequestsItem.waitForExistence(timeout: 5), "Merge Requests sidebar item should be visible")
-        mergeRequestsItem.tap()
+        let gitLabItem = app.buttons["GitLab"].firstMatch
+        XCTAssertTrue(gitLabItem.waitForExistence(timeout: 5), "GitLab sidebar item should be visible")
+        gitLabItem.tap()
 
-        let emptyState = app.staticTexts["Set Web View Merge Requests URL in Settings"].firstMatch
+        let legacyEmptyState = app.staticTexts["Set Web View Merge Requests URL in Settings"].firstMatch
         let reviewsEmptyState = app.staticTexts["Set Web View GitLab Reviews URL in Settings"].firstMatch
+        let authoredEmptyState = app.staticTexts["Set Web View GitLab My MRs URL in Settings"].firstMatch
         let anySurface = app.descendants(matching: .any).matching(identifier: "MergeRequestsEmptyState").firstMatch
         let anyWebView = app.descendants(matching: .any).matching(identifier: "MergeRequestsWebView").firstMatch
         XCTAssertTrue(
-            emptyState.waitForExistence(timeout: 2)
+            legacyEmptyState.waitForExistence(timeout: 2)
                 || reviewsEmptyState.exists
+                || authoredEmptyState.exists
                 || anyWebView.exists
                 || anySurface.exists,
-            "Merge Requests destination should show empty state or web view"
+            "GitLab destination should show empty state or web view"
         )
 
         let settingsItem = app.buttons["Settings"].firstMatch
