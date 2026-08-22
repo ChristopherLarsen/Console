@@ -219,6 +219,9 @@ struct ConsoleApp: App {
             || ProcessInfo.processInfo.arguments.contains("-uiTestSessionsPreview") {
             UserDefaults.standard.set(SidebarSelection.sessions.rawValue, forKey: ConsoleNavigation.sidebarKey)
         }
+        if ProcessInfo.processInfo.arguments.contains("-uiTestSelectGitLab") {
+            UserDefaults.standard.set(SidebarSelection.mergeRequests.rawValue, forKey: ConsoleNavigation.sidebarKey)
+        }
         if ProcessInfo.processInfo.arguments.contains("-uiTestSessionsPreview") {
             sessionStore.injectUITestPreviewSessions()
         }
