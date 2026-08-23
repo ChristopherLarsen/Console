@@ -1,0 +1,233 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, sans-serif; }
+    a { color: #0071e3; } a:hover { color: #0058b0; }
+    .sheet { --win:#ECECEC; --card:#FFFFFF; --sep:rgba(0,0,0,.10); --l1:rgba(0,0,0,.85);
+             --l2:rgba(0,0,0,.50); --l3:rgba(0,0,0,.26); --fill4:rgba(0,0,0,.05);
+             --blue:#007AFF; --red:#FF3B30; --orange:#FF9500; --green:#28CD41; --gray:#8E8E93;
+             --paper:#F7F7F8; --ink:#1d1d1f; --rule:rgba(0,0,0,.09); --hov:rgba(0,0,0,.045); }
+    .sheet.dark { --win:#323232; --card:#1E1E1E; --sep:rgba(255,255,255,.11); --l1:rgba(255,255,255,.85);
+             --l2:rgba(255,255,255,.55); --l3:rgba(255,255,255,.25); --fill4:rgba(255,255,255,.05);
+             --blue:#0A84FF; --red:#FF453A; --orange:#FF9F0A; --green:#32D74B; --gray:#98989D;
+             --paper:#161617; --ink:#f5f5f7; --rule:rgba(255,255,255,.10); --hov:rgba(255,255,255,.06); }
+    .sheet { background: var(--paper); color: var(--ink); min-height: 100%; box-sizing: border-box;
+             padding: 30px 32px 36px; display: flex; flex-direction: column; gap: 24px; }
+    h1 { font: 600 20px/1.2 inherit; margin: 0; letter-spacing: -.012em; }
+    .sub { font: 400 12.5px/1.55 inherit; color: var(--l2); margin: 0; max-width: 62ch; text-wrap: pretty; }
+    .lab { font: 600 9.5px/1 inherit; letter-spacing: .1em; text-transform: uppercase; color: var(--l3); }
+    .grp { display: flex; flex-direction: column; gap: 11px; }
+    .rule { height: 1px; background: var(--rule); }
+    .two { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 26px; align-items: start; }
+    .cap { font: 400 10.5px/1.45 inherit; color: var(--l3); }
+
+    /* panel shell */
+    .panel { border-radius: 9px; overflow: hidden; background: var(--card); height: 366px;
+             display: flex; flex-direction: column; }
+    .phead { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border-bottom: 1px solid var(--sep); }
+    .pt { font: 600 13px/1.2 inherit; color: var(--l1); }
+    .ps { font: 400 10px/1.2 inherit; color: var(--l3); }
+    .grow { flex: 1 1 auto; }
+    .pa { color: var(--l2); width: 13px; height: 13px; }
+    .pbody { flex: 1 1 auto; overflow: hidden; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+    .pbody.old { background: var(--card); padding: 8px; gap: 6px; }
+    .pbody.new { background: var(--win); }
+    .pfoot { font: 400 10px/1 inherit; color: var(--l3); text-align: right; padding: 4px 10px 6px; }
+
+    /* today */
+    .bcard { background: var(--card); border: 1px solid var(--sep); border-radius: 7px;
+             padding: 7px 9px; min-height: 72px; box-sizing: border-box;
+             display: flex; flex-direction: column; gap: 3px; position: relative; flex: none; }
+    .br { display: flex; align-items: baseline; gap: 8px; }
+    .bkey { font: 500 11px/1.3 ui-monospace, "SF Mono", Menlo, monospace; color: var(--l2); }
+    .bpri { font: 400 10px/1.3 inherit; overflow: hidden; white-space: nowrap; }
+    .clipbox { width: 42px; overflow: hidden; display: inline-block; vertical-align: bottom; }
+    .bsum { font: 500 10px/13px inherit; color: var(--l1); height: 26px; overflow: hidden;
+             display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .bcap { font: 400 10px/1.3 inherit; color: var(--l2); white-space: nowrap; }
+    .bpill { font: 400 10px/1.3 inherit; padding: 1px 5px; border-radius: 99px; background: var(--fill4); }
+    .bterm { position: absolute; top: 0; right: 0; width: 22px; height: 22px; border-radius: 50%;
+             background: var(--card); border: .5px solid var(--sep); color: var(--blue);
+             display: flex; align-items: center; justify-content: center; }
+    .bterm svg { width: 11px; height: 11px; }
+
+    /* proposed */
+    .card { background: var(--card); border-radius: 6px; padding: 7px 9px 8px; flex: none;
+            display: flex; flex-direction: column; gap: 3px; }
+    .card.hover { background: var(--card); box-shadow: 0 0 0 1px var(--blue) inset; }
+    .r1 { display: flex; align-items: center; gap: 6px; min-height: 13px; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+    .key { font: 500 10px/1 ui-monospace, "SF Mono", Menlo, monospace; color: var(--l2); letter-spacing: .02em; }
+    .state { font: 500 10px/1 inherit; }
+    .time { font: 400 10px/1 inherit; color: var(--l3); font-variant-numeric: tabular-nums; }
+    .r2 { display: flex; align-items: flex-start; gap: 8px; }
+    .title { font: 500 13px/16px inherit; color: var(--l1); flex: 1 1 auto; text-wrap: pretty; }
+    .act { width: 16px; height: 16px; flex: none; color: var(--blue); opacity: .3; }
+    .act.on { opacity: 1; }
+    .pri { width: 7px; height: 7px; flex: none; }
+
+    .chg { display: flex; flex-direction: column; }
+    .ci { display: grid; grid-template-columns: 128px minmax(0,1fr); gap: 14px; padding: 9px 0;
+          border-top: 1px solid var(--rule); align-items: baseline; }
+    .ci:first-child { border-top: 0; }
+    .cn { font: 600 11.5px/1.4 inherit; color: var(--l1); }
+    .cd { font: 400 11.5px/1.5 inherit; color: var(--l2); text-wrap: pretty; }
+    .cd b { color: var(--l1); font-weight: 600; }
+    .cd code { font: 400 10.5px/1.4 ui-monospace, "SF Mono", Menlo, monospace; color: var(--l3); }
+  </style>
+</helmet>
+<div class="sheet {{theme}}">
+
+  <div class="grp">
+    <div class="lab">Home panel 1 · JIRA</div>
+    <h1>Ticket card</h1>
+    <p class="sub">The question this column answers is "which of my sixteen tickets is moving, and which one do I open next". Same panel height in both columns.</p>
+  </div>
+
+  <div class="two">
+    <div class="grp">
+      <div class="lab">Today &middot; four rows visible</div>
+      <div class="panel">
+        <div class="phead">
+          <span class="pt">My Tickets &middot; 16 shown</span><span class="ps">JIRA</span><span class="grow"></span>
+        </div>
+        <div class="pbody old">
+          <div class="bcard">
+            <div class="bterm"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 4.5 L7 8 L3.5 11.5"></path><path d="M8.5 11.5 H12.5"></path></svg></div>
+            <div class="br"><span class="bkey">SCRUM-21</span><span class="grow"></span><span class="bpri" style="color: var(--l2)"><span class="clipbox">Lowest</span></span></div>
+            <div class="bsum">Session list does not persist scroll position across relaunch</div>
+            <div class="br"><span class="bpill">Testing</span><span class="grow"></span><span class="bcap">Aug 21, 2026, 11:34 PM</span></div>
+          </div>
+          <div class="bcard">
+            <div class="bterm"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 4.5 L7 8 L3.5 11.5"></path><path d="M8.5 11.5 H12.5"></path></svg></div>
+            <div class="br"><span class="bkey">SCRUM-20</span><span class="grow"></span><span class="bpri" style="color: var(--l2)"><span class="clipbox">Low</span></span></div>
+            <div class="bsum">Add a stale-cards indicator when refresh fails</div>
+            <div class="br"><span class="bpill">Testing</span><span class="grow"></span><span class="bcap">Aug 21, 2026, 11:34 PM</span></div>
+          </div>
+          <div class="bcard">
+            <div class="bterm"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 4.5 L7 8 L3.5 11.5"></path><path d="M8.5 11.5 H12.5"></path></svg></div>
+            <div class="br"><span class="bkey">SCRUM-19</span><span class="grow"></span><span class="bpri" style="color: var(--orange)"><span class="clipbox">High</span></span></div>
+            <div class="bsum">Terminal bridge drops the first prompt submitted after a cold launch</div>
+            <div class="br"><span class="bpill">In Progress</span><span class="grow"></span><span class="bcap">Aug 21, 2026, 11:34 PM</span></div>
+          </div>
+        </div>
+        <div class="pfoot">Updated 12:59 AM</div>
+      </div>
+      <div class="cap">72pt floor, a reserved second line on every card, an absolute timestamp, and the priority under the button.</div>
+    </div>
+
+    <div class="grp">
+      <div class="lab">Proposed &middot; six rows in the same space</div>
+      <div class="panel">
+        <div class="phead">
+          <span class="pt">My Tickets</span><span class="ps">JIRA &middot; 16</span><span class="grow"></span>
+          <span class="pa"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"></path><path d="M13.8 1.5v2.8h-2.8"></path></svg></span>
+          <span class="pa"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="1.6" y="3.2" width="12.8" height="9.6" rx="1.6"></rect><path d="M1.6 6.2h12.8"></path></svg></span>
+        </div>
+        <div class="pbody new">
+          <div class="card">
+            <div class="r1">
+              <span class="dot" style="background: var(--orange)"></span>
+              <span class="key">SCRUM-21</span><span class="state" style="color: var(--orange)">Testing</span>
+              <span class="grow"></span><span class="time">1d</span>
+            </div>
+            <div class="r2">
+              <span class="title">Session list does not persist scroll position across relaunch</span>
+              <span class="act"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2.2"></rect><path d="M4.6 6.6 L6.9 8.6 L4.6 10.6"></path><path d="M8.6 10.9 H11.6"></path></svg></span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="r1">
+              <span class="dot" style="background: var(--orange)"></span>
+              <span class="key">SCRUM-20</span><span class="state" style="color: var(--orange)">Testing</span>
+              <span class="grow"></span><span class="time">1d</span>
+            </div>
+            <div class="r2">
+              <span class="title">Add a stale-cards indicator when refresh fails</span>
+              <span class="act"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2.2"></rect><path d="M4.6 6.6 L6.9 8.6 L4.6 10.6"></path><path d="M8.6 10.9 H11.6"></path></svg></span>
+            </div>
+          </div>
+          <div class="card hover">
+            <div class="r1">
+              <span class="pri" style="color: var(--orange)"><svg viewBox="0 0 8 8"><path d="M4 1 L7.2 6.6 H0.8 Z" fill="currentColor"></path></svg></span>
+              <span class="dot" style="background: var(--blue)"></span>
+              <span class="key">SCRUM-19</span><span class="state" style="color: var(--blue)">In Progress</span>
+              <span class="grow"></span><span class="time">1d</span>
+            </div>
+            <div class="r2">
+              <span class="title">Terminal bridge drops the first prompt submitted after a cold launch</span>
+              <span class="act on"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2.2"></rect><path d="M4.6 6.6 L6.9 8.6 L4.6 10.6"></path><path d="M8.6 10.9 H11.6"></path></svg></span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="r1">
+              <span class="dot" style="background: var(--gray)"></span>
+              <span class="key">SCRUM-18</span><span class="state" style="color: var(--l2)">Backlog</span>
+              <span class="grow"></span><span class="time">1d</span>
+            </div>
+            <div class="r2">
+              <span class="title">Distinguish an empty ticket list from a failed DOM extraction</span>
+              <span class="act"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2.2"></rect><path d="M4.6 6.6 L6.9 8.6 L4.6 10.6"></path><path d="M8.6 10.9 H11.6"></path></svg></span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="r1">
+              <span class="pri" style="color: var(--red)"><svg viewBox="0 0 8 8"><path d="M4 1 L7.2 6.6 H0.8 Z" fill="currentColor"></path></svg></span>
+              <span class="dot" style="background: var(--red)"></span>
+              <span class="key">SCRUM-17</span><span class="state" style="color: var(--red)">Blocked</span>
+              <span class="grow"></span><span class="time">2d</span>
+            </div>
+            <div class="r2">
+              <span class="title">Card overlay must never cover an MFA challenge</span>
+              <span class="act"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2.2"></rect><path d="M4.6 6.6 L6.9 8.6 L4.6 10.6"></path><path d="M8.6 10.9 H11.6"></path></svg></span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="r1">
+              <span class="dot" style="background: var(--green)"></span>
+              <span class="key">SCRUM-16</span><span class="state" style="color: var(--green)">Done</span>
+              <span class="grow"></span><span class="time">3d</span>
+            </div>
+            <div class="r2">
+              <span class="title">Retain prior cards when a refresh fails</span>
+              <span class="act"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2.2"></rect><path d="M4.6 6.6 L6.9 8.6 L4.6 10.6"></path><path d="M8.6 10.9 H11.6"></path></svg></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="cap">Third row shown hovered: the action slot was always reserved, so nothing moves and nothing is covered.</div>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <div class="grp">
+    <div class="lab">What changed, and where</div>
+    <div class="chg">
+      <div class="ci"><span class="cn">Status leads</span><span class="cd">Status drives the dot and becomes tinted text; the grey capsule goes. <code>Backlog / To Do</code> grey, <code>In Progress</code> blue, <code>Testing / In Review</code> orange, <code>Blocked</code> red, <code>Done</code> green — mapped in one place so Sessions and MRs can share it. <code>JiraPanelView.swift:405–420</code></span></div>
+      <div class="ci"><span class="cn">Priority demoted</span><span class="cd">A single caret glyph at the leading edge, drawn only for <b>High</b> and <b>Highest</b>. Medium and below are omitted entirely — twelve rows reading "Low" teach nothing, and the field stops competing for the trailing corner. <code>JiraPanelView.swift:390–394</code></span></div>
+      <div class="ci"><span class="cn">Action reserved</span><span class="cd">The session button leaves the ZStack and becomes a sibling in row two with a permanent 16pt slot: 30% opacity at rest, full on hover. The occlusion is structurally impossible rather than tuned away. <code>JiraPanelView.swift:381 · :441–456</code></span></div>
+      <div class="ci"><span class="cn">Relative time</span><span class="cd">One time language for the whole dashboard. JIRA's extracted <code>updatedText</code> is parsed to a Date and formatted relative, falling back to the raw string when it will not parse rather than showing nothing. <code>JiraTicketSummary.swift · MergeRequestSummary.swift</code></span></div>
+      <div class="ci"><span class="cn">Density</span><span class="cd">Drop <code>reservesSpace: true</code> and the 72pt floor; 44pt minimum, growing to a second title line only when the title needs one. Sessions cards shrink with it so the 2&times;2 grid stays even — this supersedes the 64–72pt guidance in <code>CONSOLE_PANEL_2_SESSIONS.md:149</code>.</span></div>
+      <div class="ci"><span class="cn">Surfaces</span><span class="cd">Card stroke removed; the list tray takes <code>windowBackgroundColor</code> so cards separate by contrast. Hover paints a one-point accent inset; the existing focus ring is unchanged. <code>JiraPanelView.swift:421–432</code></span></div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"dark":{"editor":"boolean","default":false,"section":"Theme"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { theme: this.props.dark ? 'dark' : 'light' };
+  }
+}
+</script>
+</body>
+</html>

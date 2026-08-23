@@ -31,52 +31,46 @@ struct HomeSessionsPanelView: View {
     // MARK: - Header
 
     /// ```text
-    /// Sessions · 3   · 1 needs you                [+]  [Open Sessions]
+    /// Sessions  3 · 1 needs you                     [+]  [window]
     /// ```
     private var header: some View {
-        HStack(spacing: 8) {
-            Text(headerTitle)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
+        HomePanelHeader(
+            title: "Sessions",
+            detail: {
+                HomePanelDetail("\(store.sessions.count)")
 
-            if needsYouCount > 0 {
-                Text("· \(needsYouCount) needs you")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if needsYouCount > 0 {
+                    Text("· \(needsYouCount) needs you")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.red)
+                        .lineLimit(1)
+                }
+            },
+            accessory: {
+                Button {
+                    showingIntentPicker = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .help("New Claude Session")
+                .accessibilityLabel("New Claude Session")
+                .accessibilityIdentifier("HomePanelSessions.NewSessionButton")
+
+                Button {
+                    ConsoleNavigation.showSessions()
+                } label: {
+                    Image(systemName: "macwindow.on.rectangle")
+                }
+                .help("Open Sessions")
+                .accessibilityLabel("Open Sessions")
+                .accessibilityIdentifier("HomePanelSessions.OpenSessionsButton")
             }
-
-            Spacer(minLength: 4)
-
-            Button {
-                showingIntentPicker = true
-            } label: {
-                Image(systemName: "plus")
-            }
-            .help("New Claude Session")
-            .accessibilityLabel("New Claude Session")
-            .accessibilityIdentifier("HomePanelSessions.NewSessionButton")
-
-            Button("Open Sessions") {
-                ConsoleNavigation.showSessions()
-            }
-            .help("Open the Sessions page")
-            .accessibilityIdentifier("HomePanelSessions.OpenSessionsButton")
-        }
-        .buttonStyle(.borderless)
-        .controlSize(.small)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .accessibilityElement(children: .contain)
+        )
         .accessibilityIdentifier("HomePanelSessions.Header")
     }
 
     private var needsYouCount: Int {
         HomeSessionsPresentation.needsYouCount(in: store.sessions)
-    }
-
-    private var headerTitle: String {
-        "Sessions · \(store.sessions.count)"
     }
 
     // MARK: - Content
@@ -87,7 +81,7 @@ struct HomeSessionsPanelView: View {
             emptyState
         } else {
             ScrollView {
-                LazyVStack(spacing: 6) {
+                LazyVStack(spacing: HomeCardMetrics.listGap) {
                     ForEach(sortedSessions) { session in
                         HomeSessionCard(
                             session: session,
@@ -104,6 +98,7 @@ struct HomeSessionsPanelView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 8)
             }
+            .background(Color(nsColor: .windowBackgroundColor))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -128,63 +123,69 @@ struct HomeSessionsPanelView: View {
     }
 }
 
-/// One jump target on the Home radar: state dot + label, name, optional
-/// summary-or-folder subtitle, and up to two informational artifact chips.
-/// The whole card is a single button; no nested controls.
+/// One jump target on the Home radar, drawn to the shared card grammar
+/// (Design/HomeCards/DESIGN_PROMPT.md §3): row one is the state dot plus its
+/// tinted label; row two is the session name in the title slot at the
+/// dashboard's fixed x-origin with a reserved trailing slot for the jump
+/// chevron; row three merges folder-or-summary (monospace, leading) with the
+/// artifact chips (trailing). The whole card is one button; no nested controls.
 private struct HomeSessionCard: View {
     let session: ConsoleSession
     let displayedState: DisplayedSessionState
     let action: () -> Void
 
+    @State private var hovering = false
+
+    private var needsYou: Bool {
+        HomeSessionsPresentation.needsYou(displayedState)
+    }
+
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: HomeCardMetrics.rowGap) {
+                HStack(spacing: 5) {
                     Circle()
-                        .fill(displayedState.tint)
-                        .frame(width: 8, height: 8)
+                        .fill(displayedState.attentionChannel.color)
+                        .frame(width: 6, height: 6)
 
                     Text(displayedState.label)
-                        .font(.caption2)
-                        .foregroundStyle(displayedState.tint)
+                        .font(needsYou ? HomeCardMetrics.stateEmphasisFont : HomeCardMetrics.stateFont)
+                        .foregroundStyle(displayedState.attentionChannel.color)
                         .fixedSize()
                         .lineLimit(1)
 
-                    Spacer(minLength: 6)
+                    Spacer(minLength: 4)
+                }
 
+                HStack(alignment: .top, spacing: 4) {
                     Text(session.name)
-                        .font(.footnote.weight(.medium))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        .font(HomeCardMetrics.titleFont)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Spacer(minLength: 2)
+
+                    // Jump affordance: decoration inside this single card
+                    // button, never a nested control.
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.accentColor.opacity(hovering ? 1 : 0.3))
+                        .homeActionSlot
                 }
 
-                if let subtitle = HomeSessionsPresentation.subtitle(for: session) {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                chipRow
+                contextRow
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 7))
+            .padding(HomeCardMetrics.padding)
+            .frame(maxWidth: .infinity, minHeight: HomeCardMetrics.minHeight, alignment: .leading)
+            // States that block the agent get a one-point red inset.
+            .homeCardSurface(hovering: hovering, alertInset: needsYou ? Color.red : nil)
         }
         .buttonStyle(.plain)
         .focusable(true)
         .focusEffectDisabled(false)
+        .onHover { hovering = $0 }
         // One coherent accessibility element for all of the card's metadata.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(cardAccessibilityLabel)
@@ -192,32 +193,52 @@ private struct HomeSessionCard: View {
         .accessibilityIdentifier("HomeSessionCard.\(session.id.uuidString)")
     }
 
+    /// Folder or summary on the left in monospace, artifact chips
+    /// right-aligned; present only when there is something to say.
     @ViewBuilder
-    private var chipRow: some View {
+    private var contextRow: some View {
         let presentation = HomeSessionsPresentation.artifactChips(for: session)
-        if !presentation.chips.isEmpty || presentation.overflow > 0 {
-            HStack(spacing: 5) {
-                ForEach(presentation.chips) { artifact in
-                    HStack(spacing: 3) {
-                        Image(systemName: icon(for: artifact.kind))
-                            .font(.caption2)
-                        Text(artifact.label)
-                            .font(.caption2)
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(Color(nsColor: .quaternarySystemFill)))
-                    .help("Artifact (informational): \(artifact.label)")
-                }
+        if let subtitle = HomeSessionsPresentation.subtitle(for: session) {
+            HStack(spacing: 6) {
+                Text(subtitle)
+                    .font(HomeCardMetrics.identityFont)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
-                if presentation.overflow > 0 {
-                    Text("+\(presentation.overflow)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                Spacer(minLength: 4)
 
-                Spacer(minLength: 0)
+                chips(presentation)
+            }
+        } else if !presentation.chips.isEmpty || presentation.overflow > 0 {
+            HStack(spacing: 6) {
+                Spacer(minLength: 4)
+                chips(presentation)
+            }
+        }
+    }
+
+    private func chips(_ presentation: (chips: [SessionArtifact], overflow: Int)) -> some View {
+        HStack(spacing: 5) {
+            ForEach(presentation.chips) { artifact in
+                // Filled capsules mean a linked object — a ticket, an MR.
+                HStack(spacing: 3) {
+                    Image(systemName: icon(for: artifact.kind))
+                        .font(.system(size: 8))
+                    Text(artifact.label)
+                        .font(.system(size: 9))
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(Color(nsColor: .quaternarySystemFill)))
+                .help("Artifact (informational): \(artifact.label)")
+            }
+
+            if presentation.overflow > 0 {
+                Text("+\(presentation.overflow)")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -234,7 +255,7 @@ private struct HomeSessionCard: View {
         if let folder = folderSubtitle { parts.append(folder) }
         parts.append(displayedState.label)
         if let summary = session.summary, !summary.isEmpty { parts.append(summary) }
-        if HomeSessionsPresentation.needsYou(displayedState) { parts.append("needs attention") }
+        if needsYou { parts.append("needs attention") }
         return parts.joined(separator: ", ")
     }
 

@@ -1,0 +1,211 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+  html, body { height: 100%; }
+  x-dc { display: block; height: 100%; }
+  helmet { display: none; }
+</style>
+<script>
+  // Lets the render script read the real content height back out of --dump-dom.
+  addEventListener('load', () => {
+    document.title = 'H' + document.documentElement.scrollHeight;
+  });
+</script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, sans-serif; }
+    a { color: #0071e3; } a:hover { color: #0058b0; }
+    .sheet { --win:#ECECEC; --card:#FFFFFF; --sep:rgba(0,0,0,.10); --l1:rgba(0,0,0,.85);
+             --l2:rgba(0,0,0,.50); --l3:rgba(0,0,0,.26); --fill4:rgba(0,0,0,.05);
+             --blue:#007AFF; --red:#FF3B30; --orange:#FF9500; --green:#28CD41; --gray:#8E8E93;
+             --paper:#F7F7F8; --ink:#1d1d1f; --rule:rgba(0,0,0,.09); }
+    .sheet.dark { --win:#323232; --card:#1E1E1E; --sep:rgba(255,255,255,.11); --l1:rgba(255,255,255,.85);
+             --l2:rgba(255,255,255,.55); --l3:rgba(255,255,255,.25); --fill4:rgba(255,255,255,.05);
+             --blue:#0A84FF; --red:#FF453A; --orange:#FF9F0A; --green:#32D74B; --gray:#98989D;
+             --paper:#161617; --ink:#f5f5f7; --rule:rgba(255,255,255,.10); }
+    .sheet { background: var(--paper); color: var(--ink); min-height: 100%; box-sizing: border-box;
+             padding: 30px 32px 36px; display: flex; flex-direction: column; gap: 26px; }
+    h1 { font: 600 20px/1.2 inherit; margin: 0; letter-spacing: -.012em; }
+    .sub { font: 400 12.5px/1.55 inherit; color: var(--l2); margin: 0; max-width: 66ch; text-wrap: pretty; }
+    .lab { font: 600 9.5px/1 inherit; letter-spacing: .1em; text-transform: uppercase; color: var(--l3); }
+    .grp { display: flex; flex-direction: column; gap: 11px; }
+    .rule { height: 1px; background: var(--rule); }
+
+    .tray { background: var(--win); border-radius: 9px; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+    .card { background: var(--card); border-radius: 6px; padding: 7px 9px 8px; display: flex; flex-direction: column; gap: 3px; }
+    .r1 { display: flex; align-items: center; gap: 6px; min-height: 13px; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+    .key { font: 500 10px/1 ui-monospace, "SF Mono", Menlo, monospace; color: var(--l2); letter-spacing: .02em; }
+    .state { font: 500 10px/1 inherit; }
+    .time { font: 400 10px/1 inherit; color: var(--l3); font-variant-numeric: tabular-nums; }
+    .grow { flex: 1 1 auto; }
+    .r2 { display: flex; align-items: flex-start; gap: 8px; }
+    .title { font: 500 13px/16px inherit; color: var(--l1); flex: 1 1 auto; text-wrap: pretty; }
+    .act { width: 16px; height: 16px; flex: none; color: var(--blue); opacity: .35; }
+    .pri { width: 7px; height: 7px; flex: none; }
+
+    .scale { transform: scale(1.75); transform-origin: left top; width: 344px; }
+    .scalebox { height: 106px; width: 620px; }
+
+    .cols { display: flex; flex-direction: column; gap: 22px; }
+    .zones { display: flex; flex-direction: column; gap: 0; }
+    .zone { display: grid; grid-template-columns: 18px 128px minmax(0,1fr); gap: 14px; padding: 9px 0;
+            border-top: 1px solid var(--rule); align-items: baseline; }
+    .zone:first-child { border-top: 0; }
+    .num { font: 600 10px/1 ui-monospace, "SF Mono", Menlo, monospace; color: var(--blue); }
+    .zn { font: 600 11.5px/1.35 inherit; color: var(--l1); }
+    .zd { font: 400 11.5px/1.45 inherit; color: var(--l2); text-wrap: pretty; }
+    .zd b { font-weight: 600; color: var(--l1); }
+
+    .legend { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 14px; }
+    .li { display: flex; flex-direction: column; gap: 5px; }
+    .lit { display: flex; align-items: center; gap: 6px; font: 600 11px/1 inherit; }
+    .lid { font: 400 10.5px/1.45 inherit; color: var(--l2); }
+    .specs { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 26px; }
+    .kv { display: grid; grid-template-columns: 108px minmax(0,1fr); gap: 8px; padding: 5px 0;
+          border-top: 1px solid var(--rule); font: 400 11px/1.4 inherit; }
+    .kv:first-child { border-top: 0; }
+    .kv span:first-child { color: var(--l3); }
+    .kv span:last-child { color: var(--l1); }
+    .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px; }
+  </style>
+</helmet>
+<div class="sheet light">
+
+  <div class="grp">
+    <div class="lab">Console · Home dashboard</div>
+    <h1>Card grammar</h1>
+    <p class="sub">Home is a triage surface: four columns, one question each, answered by scanning down. The scan unit is the <b>column</b>, not the card — so every card in every panel puts its attention signal, its identity token, its title and its age in the same place. Panel-specific fields vary; the skeleton never does.</p>
+  </div>
+
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div class="grp">
+      <div class="lab">Anatomy · shown at 1.75×</div>
+      <div class="scalebox">
+        <div class="scale">
+          <div class="tray">
+            <div class="card">
+              <div class="r1">
+                <span class="dot" style="background: var(--blue)"></span>
+                <span class="key">SCRUM-19</span>
+                <span class="state" style="color: var(--blue)">In Progress</span>
+                <span class="grow"></span>
+                <span class="time">38m</span>
+              </div>
+              <div class="r2">
+                <span class="title">Terminal bridge drops the first prompt submitted after a cold launch</span>
+                <span class="act">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2.2"></rect>
+                    <path d="M4.6 6.6 L6.9 8.6 L4.6 10.6"></path>
+                    <path d="M8.6 10.9 H11.6"></path>
+                  </svg>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="zones">
+      <div class="zone">
+        <span class="num">1</span>
+        <span class="zn">Attention dot</span>
+        <span class="zd">6pt, fixed leading x. The <b>only</b> coloured channel on the card, and it always means the same thing: is this moving, stalled, or waiting on you. Sessions already work this way — tickets and MRs adopt it.</span>
+      </div>
+      <div class="zone">
+        <span class="num">2</span>
+        <span class="zn">Identity</span>
+        <span class="zd">Monospaced, 10pt secondary. <b>SCRUM-19</b>, <b>!5</b>, or the session's state label. Tabular and stable so the column reads as a ruler, not ragged text.</span>
+      </div>
+      <div class="zone">
+        <span class="num">3</span>
+        <span class="zn">State</span>
+        <span class="zd">Tinted <b>text</b>, never a filled capsule. Filled capsules are reserved for artifact chips, which mean <i>linked object</i>, not <i>workflow state</i>.</span>
+      </div>
+      <div class="zone">
+        <span class="num">4</span>
+        <span class="zn">Age</span>
+        <span class="zd">Relative, right-aligned, tabular numerals, tertiary. One time language across all four panels — <b>38m</b>, <b>4h</b>, <b>2d</b>. Never an absolute timestamp on a card.</span>
+      </div>
+      <div class="zone">
+        <span class="num">5</span>
+        <span class="zn">Title + action slot</span>
+        <span class="zd">13pt medium — the one element with real size. Fixed x-origin, wraps to two lines only when it needs them. A <b>permanently reserved</b> 16pt trailing slot holds the secondary action, so it can never sit on top of another field.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <div class="grp">
+    <div class="lab">The colour channel — one meaning, four panels</div>
+    <div class="legend">
+      <div class="li">
+        <div class="lit"><span class="dot" style="background: var(--red)"></span>Needs you</div>
+        <div class="lid">Blocked, pipeline failed, session needs approval or input, error.</div>
+      </div>
+      <div class="li">
+        <div class="lit"><span class="dot" style="background: var(--orange)"></span>In flight</div>
+        <div class="lid">Testing, in review, pipeline running or pending.</div>
+      </div>
+      <div class="li">
+        <div class="lit"><span class="dot" style="background: var(--blue)"></span>Active</div>
+        <div class="lid">In Progress, session working. Someone is on it right now.</div>
+      </div>
+      <div class="li">
+        <div class="lit"><span class="dot" style="background: var(--green)"></span>Clear</div>
+        <div class="lid">Pipeline passed, session done, ticket resolved.</div>
+      </div>
+      <div class="li">
+        <div class="lit"><span class="dot" style="background: var(--gray)"></span>Parked</div>
+        <div class="lid">Backlog, draft, idle, exited. Present but not asking for anything.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <div class="grp">
+    <div class="lab">Metrics</div>
+    <div class="specs">
+      <div>
+        <div class="kv"><span>Title</span><span class="mono">13pt / 16 · medium · label</span></div>
+        <div class="kv"><span>Identity</span><span class="mono">10pt mono · medium · secondary</span></div>
+        <div class="kv"><span>State</span><span class="mono">10pt · medium · tinted</span></div>
+        <div class="kv"><span>Age</span><span class="mono">10pt · regular · tertiary</span></div>
+      </div>
+      <div>
+        <div class="kv"><span>Card fill</span><span class="mono">controlBackgroundColor</span></div>
+        <div class="kv"><span>Card stroke</span><span class="mono">none</span></div>
+        <div class="kv"><span>List tray</span><span class="mono">windowBackgroundColor</span></div>
+        <div class="kv"><span>Corner</span><span class="mono">6pt card · 9pt tray</span></div>
+      </div>
+      <div>
+        <div class="kv"><span>Padding</span><span class="mono">9 / 7 / 9 / 8</span></div>
+        <div class="kv"><span>Row gap</span><span class="mono">3pt internal · 4pt between</span></div>
+        <div class="kv"><span>Height</span><span class="mono">44pt min · grows to content</span></div>
+        <div class="kv"><span>Hover</span><span class="mono">tray fill lifts, action to 100%</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"dark":{"editor":"boolean","default":false,"section":"Theme"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { theme: this.props.dark ? 'dark' : 'light' };
+  }
+}
+</script>
+</body>
+</html>

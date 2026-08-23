@@ -151,67 +151,58 @@ struct JiraPanelView: View {
     }
 
     private var panelHeader: some View {
-        HStack(spacing: 8) {
-            Text(headerTitle)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
+        HomePanelHeader(
+            title: "My Tickets",
+            detail: {
+                if let count = headerCount {
+                    HomePanelDetail("JIRA", "\(count)")
+                }
+            },
+            accessory: {
+                if controller.isRefreshing {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .accessibilityLabel("Refreshing")
+                }
 
-            Text("JIRA")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Button {
+                    controller.refresh()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(controller.isRefreshing || normalizedURL == nil)
+                .help("Refresh tickets")
+                .accessibilityIdentifier("JiraPanelRefreshButton")
 
-            if controller.isRefreshing {
-                ProgressView()
-                    .controlSize(.mini)
-                    .accessibilityLabel("Refreshing")
+                Button {
+                    controller.showJIRA()
+                } label: {
+                    Image(systemName: "macwindow.on.rectangle")
+                }
+                .help("Show JIRA")
+                .accessibilityIdentifier("JiraPanelShowJIRAButton")
             }
-
-            Spacer(minLength: 0)
-
-            Button {
-                controller.refresh()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .disabled(controller.isRefreshing || normalizedURL == nil)
-            .help("Refresh tickets")
-            .accessibilityIdentifier("JiraPanelRefreshButton")
-
-            Button {
-                controller.showJIRA()
-            } label: {
-                Image(systemName: "macwindow.on.rectangle")
-            }
-            .help("Show JIRA")
-            .accessibilityIdentifier("JiraPanelShowJIRAButton")
-        }
-        .buttonStyle(.borderless)
-        .controlSize(.small)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .accessibilityElement(children: .contain)
+        )
         .accessibilityIdentifier("JiraPanelHeader")
     }
 
-    private var headerTitle: String {
+    private var headerCount: Int? {
         switch controller.state {
-        case let .loaded(tickets, _):
-            return "My Tickets · \(tickets.count) shown"
-        case let .stale(tickets, _, _):
-            return "My Tickets · \(tickets.count) shown"
+        case let .loaded(tickets, _), let .stale(tickets, _, _):
+            return tickets.count
         default:
-            return "My Tickets"
+            return nil
         }
     }
 
     private func ticketList(_ tickets: [JiraTicketSummary], refreshedAt: Date, staleReason: String?) -> some View {
         VStack(spacing: 0) {
             if let staleReason {
-                staleBanner(reason: staleReason)
+                staleBanner(reason: staleReason, refreshedAt: refreshedAt)
             }
 
             ScrollView {
-                LazyVStack(spacing: 6) {
+                LazyVStack(spacing: HomeCardMetrics.listGap) {
                     ForEach(Array(tickets.enumerated()), id: \.element.id) { index, ticket in
                         JiraTicketCard(
                             ticket: ticket,
@@ -232,26 +223,37 @@ struct JiraPanelView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 8)
             }
+            .background(Color(nsColor: .windowBackgroundColor))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             footerTimestamp(refreshedAt: refreshedAt)
         }
     }
 
-    private func staleBanner(reason: String) -> some View {
+    /// Amber strip naming the age of what you are looking at, plus a way out.
+    /// The cards below stay at full strength — they are old, not wrong.
+    private func staleBanner(reason: String, refreshedAt: Date) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.caption2)
-            Text("Could not refresh · showing previous results (\(reason))")
-                .font(.caption)
+                .font(.system(size: 9, weight: .medium))
+            Text("Showing results from \(refreshedAt.formatted(date: .omitted, time: .shortened))")
+                .font(.system(size: 10))
                 .lineLimit(1)
-            Spacer()
+            Spacer(minLength: 4)
+            Button("Retry") {
+                controller.refresh()
+            }
+            .disabled(controller.isRefreshing)
+            .accessibilityIdentifier("JiraPanelStaleRetryButton")
         }
-        .foregroundStyle(.secondary)
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .foregroundStyle(Color.orange)
         .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .background(Color(nsColor: .quaternarySystemFill))
-        .accessibilityElement(children: .combine)
+        .padding(.vertical, 3)
+        .background(Color.orange.opacity(0.12))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Could not refresh · showing previous results (\(reason))")
         .accessibilityIdentifier("JiraPanelStaleBanner")
     }
 
@@ -266,12 +268,9 @@ struct JiraPanelView: View {
     }
 
     private var loadingBody: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: HomeCardMetrics.listGap) {
             ForEach(0..<4, id: \.self) { index in
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(nsColor: .quaternarySystemFill))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 64)
+                HomeSkeletonCard()
                     .opacity(index == 3 ? 0.5 : 1)
             }
             Spacer()
@@ -371,91 +370,147 @@ struct JiraPanelView: View {
     }
 }
 
+/// One ticket on the Home dashboard, drawn to the shared card grammar
+/// (Design/HomeCards/DESIGN_PROMPT.md §3): row one is dot + identity + state
+/// + age; row two is the title plus a permanently reserved trailing action
+/// slot; tickets have no optional third row today.
 private struct JiraTicketCard: View {
     let ticket: JiraTicketSummary
     let accessibilityIdentifier: String
     let action: () -> Void
     var onStartSession: (() -> Void)?
 
+    @State private var hovering = false
+    /// Vertical center of the title row in the card's own coordinate space;
+    /// the session button (a sibling of the card button, never nested inside
+    /// it) is centered on this so it can only ever occupy the reserved slot.
+    @State private var titleMidY: CGFloat?
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Button(action: action) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(ticket.key)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .textSelection(.enabled)
-                    Spacer(minLength: 4)
-                    if let priority = ticket.priority {
-                        Text(priority)
-                            .font(.caption2)
-                            .foregroundStyle(priorityTint)
-                    }
-                }
-
-                Text(ticket.summary)
-                    .font(.footnote.weight(.medium))
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(2, reservesSpace: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    if let status = ticket.status {
-                        Text(status)
-                            .font(.caption2)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Color(nsColor: .quaternarySystemFill)))
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 4)
-                    if let updated = ticket.updatedText {
-                        Text(updated)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
+                cardRows
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 7))
-        }
-        .buttonStyle(.plain)
-        .focusable(true)
-        .focusEffectDisabled(false)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(cardAccessibilityLabel)
-        .accessibilityAction(named: "Open in JIRA", action)
-        .accessibilityIdentifier(accessibilityIdentifier)
+            .buttonStyle(.plain)
+            .focusable(true)
+            .focusEffectDisabled(false)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(cardAccessibilityLabel)
+            .accessibilityAction(named: "Open in JIRA", action)
+            .accessibilityIdentifier(accessibilityIdentifier)
 
             // Secondary launch affordance, a sibling of the open button so
-            // the card keeps its single primary action.
+            // the card keeps its single primary action. It lives entirely
+            // inside the 16pt slot reserved by row two.
             if let onStartSession {
                 Button(action: onStartSession) {
                     Image(systemName: "terminal")
-                        .font(.caption2.weight(.medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Color.accentColor)
-                        .padding(5)
-                        .background(Circle().fill(Color(nsColor: .controlBackgroundColor)))
-                        .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
+                        .frame(width: HomeCardMetrics.actionSlotWidth)
                 }
                 .buttonStyle(.plain)
+                .frame(height: 18)
+                .opacity(hovering ? 1 : 0.3)
+                .padding(.top, startButtonTopInset)
                 .help("Start a Claude session for this ticket")
                 .accessibilityLabel("Start Claude session")
                 .accessibilityIdentifier("JiraTicketCard.StartSession")
             }
+        }
+        .coordinateSpace(name: Self.slotSpace)
+        .onPreferenceChange(TitleRowCenterKey.self) { titleMidY = $0 }
+        .onHover { hovering = $0 }
+    }
+
+    private static let slotSpace = "JiraTicketCardSlot"
+
+    private var cardRows: some View {
+        VStack(alignment: .leading, spacing: HomeCardMetrics.rowGap) {
+            HStack(spacing: 5) {
+                if let caretTint = priorityCaretTint {
+                    Image(systemName: "arrowtriangle.up.fill")
+                        .font(.system(size: 7))
+                        .foregroundStyle(caretTint)
+                }
+
+                Circle()
+                    .fill(statusChannel.color)
+                    .frame(width: 6, height: 6)
+
+                Text(ticket.key)
+                    .font(HomeCardMetrics.identityFont)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .textSelection(.enabled)
+
+                if let status = ticket.status {
+                    Text(status)
+                        .font(HomeCardMetrics.stateFont)
+                        .foregroundStyle(statusChannel.color)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 4)
+
+                ageText
+            }
+
+            Text(ticket.summary)
+                .font(HomeCardMetrics.titleFont)
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.leading)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                // Reserve the 16pt action slot plus breathing room, so the
+                // title can never run under the session button.
+                .padding(.trailing, HomeCardMetrics.actionSlotWidth + 4)
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: TitleRowCenterKey.self,
+                            value: geometry.frame(in: .named(Self.slotSpace)).midY
+                        )
+                    }
+                }
+        }
+        .padding(HomeCardMetrics.padding)
+        .frame(maxWidth: .infinity, minHeight: HomeCardMetrics.minHeight, alignment: .leading)
+        .homeCardSurface(hovering: hovering)
+    }
+
+    private var startButtonTopInset: CGFloat {
+        let fallback = HomeCardMetrics.padding.top + 7
+        return max(HomeCardMetrics.padding.top, (titleMidY ?? fallback) - 9)
+    }
+
+    private var statusChannel: AttentionChannel {
+        AttentionChannel.forTicketStatus(ticket.status)
+    }
+
+    @ViewBuilder
+    private var ageText: some View {
+        // No updated text at all: omit rather than guess (§6).
+        if let age = RelativeAge.compact(from: ticket.updatedText) {
+            Text(age)
+                .font(HomeCardMetrics.ageFont.monospacedDigit())
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        }
+    }
+
+    /// Priority demoted to a leading caret for High and Highest only. Medium
+    /// and below are omitted entirely — twelve rows reading "Low" teach
+    /// nothing and the field stops competing for the trailing corner. This is
+    /// a deliberate extension of the omit-unavailable-fields rule (§6).
+    private var priorityCaretTint: Color? {
+        switch ticket.priority?.lowercased() {
+        case "highest":
+            return .red
+        case "high":
+            return .orange
+        default:
+            return nil
         }
     }
 
@@ -467,16 +522,15 @@ private struct JiraTicketCard: View {
         if let updated = ticket.updatedText { parts.append(updated) }
         return parts.joined(separator: ", ")
     }
+}
 
-    private var priorityTint: Color {
-        switch ticket.priority?.lowercased() {
-        case "highest":
-            return .red
-        case "high":
-            return .orange
-        default:
-            return .secondary
-        }
+/// The vertical center of the title row, measured so the sibling session
+/// button lands exactly in the reserved slot regardless of wrapping or type
+/// growth.
+private struct TitleRowCenterKey: PreferenceKey {
+    static var defaultValue: CGFloat?
+    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
+        value = value ?? nextValue()
     }
 }
 

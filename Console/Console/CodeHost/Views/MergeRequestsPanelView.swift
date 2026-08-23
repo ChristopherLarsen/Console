@@ -126,8 +126,8 @@ struct MergeRequestsPanelView: View {
                 cardsList(items)
             case .empty:
                 emptyState
-            case .stale(let items, _, let reason):
-                cardsList(items, staleNotice: reason.reasonText)
+            case .stale(let items, let refreshedAt, let reason):
+                cardsList(items, staleNotice: reason.reasonText, refreshedAt: refreshedAt)
             case .unsupportedPage:
                 unsupportedState
             case .extractionFailed:
@@ -138,73 +138,99 @@ struct MergeRequestsPanelView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// The panel's one 28pt header: title, service and count as a quiet run,
+    /// then icon-only actions.
     private var chromeHeader: some View {
-        HStack(spacing: 8) {
-            Text("\(kind.displayTitle) · \(controller.itemCount)")
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-
-            if controller.isRefreshing {
-                ProgressView()
-                    .controlSize(.mini)
-                    .help("Refreshing")
-            }
-
-            Spacer(minLength: 4)
-
-            Button {
-                controller.refresh()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.borderless)
-            .controlSize(.small)
-            .disabled(!hasConfiguredURL)
-            .help("Refresh from \(provider.displayName)")
-            .accessibilityIdentifier("\(idPrefix)RefreshButton")
-
-            if controller.presentation == .cards {
-                Button("Show \(provider.displayName)") {
-                    controller.showBrowser()
+        HomePanelHeader(
+            title: kind.displayTitle,
+            detail: {
+                HomePanelDetail(provider.displayName, "\(controller.itemCount)")
+            },
+            accessory: {
+                if controller.isRefreshing {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .help("Refreshing")
                 }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-                .help("Show the live \(provider.displayName) page")
-                .accessibilityIdentifier("\(idPrefix)Show\(provider == .gitlab ? "GitLab" : "GitHub")Button")
+
+                Button {
+                    controller.refresh()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(!hasConfiguredURL)
+                .help("Refresh from \(provider.displayName)")
+                .accessibilityIdentifier("\(idPrefix)RefreshButton")
+
+                if controller.presentation == .cards {
+                    Button {
+                        controller.showBrowser()
+                    } label: {
+                        Image(systemName: "macwindow.on.rectangle")
+                    }
+                    .help("Show the live \(provider.displayName) page")
+                    .accessibilityIdentifier("\(idPrefix)Show\(provider == .gitlab ? "GitLab" : "GitHub")Button")
+                }
             }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        )
     }
 
     @ViewBuilder
-    private func cardsList(_ items: [MergeRequestSummary], staleNotice: String? = nil) -> some View {
+    private func cardsList(
+        _ items: [MergeRequestSummary],
+        staleNotice: String? = nil,
+        refreshedAt: Date? = nil
+    ) -> some View {
         VStack(spacing: 0) {
             if let staleNotice {
-                Label(staleNotice, systemImage: "clock.arrow.circlepath")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color(nsColor: .windowBackgroundColor))
-                    .accessibilityIdentifier("\(idPrefix)StaleNotice")
+                staleStrip(notice: staleNotice, refreshedAt: refreshedAt)
                 Divider()
             }
 
             ScrollView(.vertical) {
-                LazyVStack(spacing: 6) {
+                LazyVStack(spacing: HomeCardMetrics.listGap) {
                     ForEach(items) { item in
-                        MergeRequestCardView(item: item) {
+                        MergeRequestCardView(item: item, kind: kind) {
                             controller.open(item)
                         }
                     }
                 }
                 .padding(8)
             }
+            .background(Color(nsColor: .windowBackgroundColor))
         }
+    }
+
+    /// Amber strip naming the age of what you are looking at, plus a way out.
+    /// Cards below stay at full strength — they are old, not wrong.
+    private func staleStrip(notice: String, refreshedAt: Date?) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 9, weight: .medium))
+            Text(staleText(refreshedAt: refreshedAt))
+                .font(.system(size: 10))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Button("Retry") {
+                controller.refresh()
+            }
+            .disabled(controller.isRefreshing)
+            .accessibilityIdentifier("\(idPrefix)StaleRetryButton")
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .foregroundStyle(Color.orange)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 3)
+        .background(Color.orange.opacity(0.12))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Showing previous results (\(notice))")
+        .accessibilityIdentifier("\(idPrefix)StaleNotice")
+    }
+
+    private func staleText(refreshedAt: Date?) -> String {
+        guard let refreshedAt else { return "Showing previous results" }
+        return "Showing results from \(refreshedAt.formatted(date: .omitted, time: .shortened))"
     }
 
     // MARK: - Panel states
@@ -221,14 +247,16 @@ struct MergeRequestsPanelView: View {
     }
 
     private var loadingState: some View {
-        VStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-            Text("Loading \(provider.displayName)…")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        VStack(spacing: HomeCardMetrics.listGap) {
+            ForEach(0..<4, id: \.self) { index in
+                HomeSkeletonCard()
+                    .opacity(index == 3 ? 0.5 : 1)
+            }
+            Spacer()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(8)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loading \(provider.displayName)")
         .accessibilityIdentifier("\(idPrefix)LoadingState")
     }
 

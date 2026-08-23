@@ -293,19 +293,24 @@ While the raw page is shown:
 Suggested card-mode header:
 
 ```text
-My Tickets · <count>                         Refresh  Show JIRA
+My Tickets  JIRA · <count>                    [refresh]  [Show JIRA]
 ```
 
-Suggested compact card content:
+One 28pt header per panel, owned by the panel: 13pt semibold title, then the service and count as one quiet 10pt run, then icon-only actions. "Show JIRA" is the `macwindow.on.rectangle` glyph with a tooltip.
+
+Suggested compact card content (shared Home card grammar, Design/HomeCards/DESIGN_PROMPT.md §3):
 
 ```text
-PROJECT-123   Ticket summary                         In Progress
-              High · updated 38m ago
+▲ ● SCRUM-19  In Progress                              38m
+  Terminal bridge drops the first prompt after a
+  cold launch                                     [terminal]
 ```
 
-Show key, summary, status, priority, and last-updated text when those columns are available. Missing optional fields must not prevent a card from appearing. Preserve the JIRA list order rather than applying a second Console sort.
+Row one: 6pt status dot, key in 10pt monospace, status as tinted text (never a filled capsule), relative age right-aligned. The leading caret appears only for High/Highest priority; Medium and below are omitted entirely. Row two: the summary as the 13pt medium title at the dashboard's fixed x-origin, two lines maximum, with the 16pt action slot reserved at the trailing edge. Cards are 44pt minimum, growing to content.
 
-Do not add a nonfunctional Start Agent button in this phase. Leave enough card layout room for a future action supplied by the Agent panel.
+Show key, summary, status, priority, and last-updated when those columns are available; the scraped `updatedText` is parsed to a relative age locally (`RelativeAge`) and falls back verbatim when it will not parse. Missing optional fields must not prevent a card from appearing. Preserve the JIRA list order rather than applying a second Console sort.
+
+The Start Agent button exists and is wired to `SessionLaunchCoordinator`: it is the terminal glyph living in the row-two reserved action slot, a sibling of the card's open button (never nested inside it), identifier `JiraTicketCard.StartSession`. The slot is permanently reserved so the button can never occlude another field.
 
 ### Home integration
 
