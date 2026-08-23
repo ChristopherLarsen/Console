@@ -144,14 +144,20 @@ final class CodeHostListPanelController {
         presentation = .browser
     }
 
-    /// Card mode is available whenever the last extraction produced a definite
-    /// answer (items, empty list, or retained stale cards).
+    /// Browser-bar entry point. Restores the card surface immediately when a
+    /// definite answer exists; while work is in flight it just reveals the
+    /// progress; after a failure state it returns to cards and retries the
+    /// configured list so the button always makes progress instead of dying
+    /// silently with no way back out of browser mode.
     func showCardsIfAvailable() {
         switch state {
-        case .loaded, .empty, .stale:
+        case .loaded, .empty, .stale, .loadingPage, .extracting:
             presentation = .cards
-        default:
+        case .unconfigured:
             break
+        case .authenticationRequired, .unsupportedPage, .extractionFailed:
+            presentation = .cards
+            refresh()
         }
     }
 

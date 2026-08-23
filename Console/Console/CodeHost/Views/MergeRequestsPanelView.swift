@@ -55,7 +55,7 @@ struct MergeRequestsPanelView: View {
                 MergeRequestsNavigationBar(
                     page: sessionStore.page(for: kind),
                     showCardsAction: { controller.showCardsIfAvailable() },
-                    showCardsAvailable: controller.state.hasPresentableCards
+                    showCardsAvailable: controller.state != .unconfigured
                 )
                 .transition(.opacity)
             }
@@ -319,17 +319,5 @@ struct MergeRequestsPanelView: View {
         !effectiveConfiguredURLString
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .isEmpty
-    }
-}
-
-extension MergeRequestListPanelState {
-    /// Whether Show Cards may restore the opaque card surface right now.
-    var hasPresentableCards: Bool {
-        switch self {
-        case .loaded, .empty, .stale:
-            return true
-        default:
-            return false
-        }
     }
 }
