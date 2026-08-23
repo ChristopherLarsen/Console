@@ -354,6 +354,28 @@ struct ConsoleApp: App {
             }
             #endif
             CommandGroup(replacing: .windowArrangement) { }
+            CommandMenu("Go") {
+                Button("Home") {
+                    ConsoleNavigation.showHome()
+                }
+                .keyboardShortcut("`", modifiers: .control)
+                Divider()
+                // Items stay enabled even without a matching session: the
+                // ⌃N contract is "open Sessions, select the Nth session or
+                // none", so the shortcut must never be swallowed.
+                ForEach(1...ConsoleNavigation.maxSessionHotkeyNumber, id: \.self) { number in
+                    Button("Session \(number)") {
+                        openHotkeySession(number)
+                    }
+                    .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .control)
+                }
+                Divider()
+                Button("Sessions (No Selection)") {
+                    sessionStore.clearSelection()
+                    ConsoleNavigation.showSessions()
+                }
+                .keyboardShortcut("0", modifiers: .control)
+            }
         }
 
         Window("About Console", id: "about") {
@@ -380,6 +402,17 @@ struct ConsoleApp: App {
         } catch {
             printDebug("Launch at login failed: \(error.localizedDescription)")
         }
+    }
+
+    /// ⌃N: jump to the Nth session in store order, or open Sessions with no
+    /// session selected when no session corresponds to that number.
+    private func openHotkeySession(_ number: Int) {
+        if let id = ConsoleNavigation.hotkeySessionID(number: number, in: sessionStore.sessions) {
+            sessionStore.select(sessionID: id)
+        } else {
+            sessionStore.clearSelection()
+        }
+        ConsoleNavigation.showSessions()
     }
 
     private func initializeServices() {

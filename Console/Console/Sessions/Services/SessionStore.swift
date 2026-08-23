@@ -331,6 +331,12 @@ final class SessionStore {
         selectedSessionID = sessionID
     }
 
+    /// Drops the selection so the Sessions destination shows its empty pane.
+    /// Used by the ⌃0 / out-of-range session hotkeys.
+    func clearSelection() {
+        selectedSessionID = nil
+    }
+
     /// Graceful stop (SIGTERM). The UI's Terminate flow (`terminateSession`)
     /// confirms first for Working / Needs Approval / Needs Input sessions and
     /// calls this afterwards; plain stops retain the exited session row.

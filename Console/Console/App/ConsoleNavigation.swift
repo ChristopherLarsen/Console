@@ -79,4 +79,18 @@ enum ConsoleNavigation {
     static func showHome() {
         show(.home)
     }
+
+    // MARK: - Session hotkeys (⌃1…⌃9)
+
+    /// Highest session hotkey number (Ctrl+1…Ctrl+9).
+    static let maxSessionHotkeyNumber = 9
+
+    /// The session targeted by the ⌃N session hotkey: the Nth session in
+    /// store order, or nil when no session corresponds to that number.
+    /// Pure so the mapping stays unit-testable without live sessions.
+    static func hotkeySessionID(number: Int, in sessions: [ConsoleSession]) -> UUID? {
+        guard number >= 1, number <= maxSessionHotkeyNumber else { return nil }
+        guard sessions.indices.contains(number - 1) else { return nil }
+        return sessions[number - 1].id
+    }
 }
