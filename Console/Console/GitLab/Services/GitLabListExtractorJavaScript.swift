@@ -21,7 +21,12 @@ enum GitLabListExtractorJavaScript {
       'ul.mr-list',
       '.merge-request-list'
     ];
-    const EMPTY_SELECTORS = ['.empty-state', '[data-testid="empty-state"]'];
+    const EMPTY_SELECTORS = [
+      '.empty-state',
+      '[data-testid="empty-state"]',
+      // Pajamas EmptyState, used by current GitLab group/project list pages.
+      '.gl-empty-state'
+    ];
     const TITLE_SELECTORS = [
       '[data-testid="merge-request-title-text"]',
       '.merge-request-title-text',
@@ -213,7 +218,7 @@ enum GitLabListExtractorJavaScript {
       (
         document.querySelector('a[href*="/-/merge_requests/"]') ||
         document.querySelector('ul[data-testid="merge-request-list"], ul.merge_requests-list, #merge_requests_list, ul.mr-list, .merge-request-list') ||
-        document.querySelector('.empty-state, [data-testid="empty-state"]') ||
+        document.querySelector('.empty-state, [data-testid="empty-state"], .gl-empty-state') ||
         document.querySelector('form#new_user, input[name="user[login]"], form[action*="users/sign_in"]')
       );
     return Boolean(ready);

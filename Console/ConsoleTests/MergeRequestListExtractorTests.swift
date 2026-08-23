@@ -59,6 +59,16 @@ final class MergeRequestListExtractorTests: XCTestCase {
         """
     }
 
+    /// Current GitLab renders the Pajamas EmptyState component on list pages
+    /// that have no rows yet; it must still read as a valid empty list.
+    private var modernEmptyListHTML: String {
+        """
+        <html><body>
+        <div class="gl-empty-state"><h4>No merge requests</h4></div>
+        </body></html>
+        """
+    }
+
     private var authPageHTML: String {
         """
         <html><body>
@@ -197,6 +207,11 @@ final class MergeRequestListExtractorTests: XCTestCase {
 
     func testEmptyListIsPositivelyIdentified() async throws {
         let result = try await extract(from: emptyListHTML)
+        XCTAssertEqual(result, .empty)
+    }
+
+    func testModernGitLabEmptyStateIsPositivelyIdentified() async throws {
+        let result = try await extract(from: modernEmptyListHTML)
         XCTAssertEqual(result, .empty)
     }
 
