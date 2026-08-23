@@ -302,6 +302,57 @@ final class CodeHostListPanelControllerTests: XCTestCase {
         XCTAssertEqual(controller.presentation, .cards)
     }
 
+    func testShowCardsFromFailureStateReturnsToCardsAndRetries() async {
+        let loads = CounterBox()
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in
+                loads.increment()
+                return true
+            },
+            executor: { _ in "{\"outcome\":\"unsupported\",\"items\":[]}" }
+        )
+
+        controller.startIfNeeded()
+        await waitForSettled(controller)
+        XCTAssertEqual(controller.state, .unsupportedPage)
+
+        controller.showBrowser()
+        XCTAssertEqual(loads.value, 1)
+
+        controller.showCardsIfAvailable()
+
+        XCTAssertEqual(controller.presentation, .cards, "A failure state must still return to the card surface")
+        XCTAssertTrue(controller.isRefreshing, "The failed list must be re-extracted")
+        await waitForSettled(controller)
+
+        XCTAssertEqual(loads.value, 2, "Exactly one recovery pass ran")
+        XCTAssertEqual(controller.state, .unsupportedPage)
+    }
+
+    func testShowCardsDuringInFlightWorkRevealsProgressWithoutRestarting() async {
+        let loads = CounterBox()
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in
+                loads.increment()
+                return true
+            },
+            executor: { _ in "{\"outcome\":\"items\",\"items\":[{\"url\":\"https://gitlab.example.test/p0/-/merge_requests/0\",\"iid\":\"0\",\"title\":\"Fixture 0\"}]}" }
+        )
+
+        controller.refresh()
+        XCTAssertEqual(controller.state, .loadingPage, "Extraction has not settled yet")
+
+        controller.showBrowser()
+        controller.showCardsIfAvailable()
+
+        XCTAssertEqual(controller.presentation, .cards, "In-flight work is revealed as progress in card mode")
+        await waitForSettled(controller)
+
+        XCTAssertEqual(loads.value, 1, "Revealing progress must not restart extraction")
+    }
+
     func testCancelPendingWorkStopsRefreshingFlag() {
         let controller = makeController(
             page: makePage(),
