@@ -52,8 +52,8 @@ final class HomeSessionsUITests: XCTestCase {
 
         // Sibling panels are untouched.
         XCTAssertTrue(element("HomePanelJiraTickets").exists, "JIRA panel still present")
-        XCTAssertTrue(element("HomePanelGitLabMRsToReview").exists, "GitLab review placeholder still present")
-        XCTAssertTrue(element("HomePanelGitLabMyMRs").exists, "GitLab authored placeholder still present")
+        XCTAssertTrue(element("HomePanelGitLabMRsToReview").exists, "GitLab review panel still present")
+        XCTAssertTrue(element("HomePanelGitLabMyMRs").exists, "GitLab authored panel still present")
     }
 
     // MARK: - Radar with injected sessions

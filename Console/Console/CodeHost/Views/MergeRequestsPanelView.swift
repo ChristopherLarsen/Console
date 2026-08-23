@@ -1,9 +1,8 @@
 import SwiftUI
 import WebKit
 
-/// Shared Home merge-request panel (reviews bottom-left / authored placeholder
-/// successor): native cards over the live, authenticated list page of one
-/// specific code host.
+/// Shared Home merge-request panel (reviews and authored quadrants): native
+/// cards over the live, authenticated list page of one specific code host.
 ///
 /// A `ZStack` keeps the shared list `WebView` permanently attached while an
 /// opaque native card surface covers it. In card mode the covered WebView has
@@ -247,12 +246,19 @@ struct MergeRequestsPanelView: View {
     private var emptyState: some View {
         panelMessage(
             systemImage: "checkmark.seal",
-            title: "No merge requests waiting for your review.",
+            title: emptyStateTitle,
             detail: nil,
             actionTitle: nil,
             action: nil,
             accessibilityIdentifier: "\(idPrefix)EmptyState"
         )
+    }
+
+    private var emptyStateTitle: String {
+        switch kind {
+        case .reviewsRequested: return "No merge requests waiting for your review."
+        case .authored: return "No open merge requests authored by you."
+        }
     }
 
     private var unsupportedState: some View {

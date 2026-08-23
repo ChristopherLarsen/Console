@@ -18,16 +18,6 @@ enum HomePanel: Int, CaseIterable, Identifiable {
         }
     }
 
-    /// What this placeholder panel will eventually contain.
-    var futurePurpose: String {
-        switch self {
-        case .jiraTickets: return "Your JIRA tickets will appear here."
-        case .sessions: return "Agent sessions will appear here."
-        case .gitLabReviews: return "Merge requests awaiting your review will appear here."
-        case .gitLabAuthored: return "Merge requests you authored will appear here."
-        }
-    }
-
     var accessibilityIdentifier: String {
         switch self {
         case .jiraTickets: return "HomePanelJiraTickets"
@@ -36,9 +26,6 @@ enum HomePanel: Int, CaseIterable, Identifiable {
         case .gitLabAuthored: return "HomePanelGitLabMyMRs"
         }
     }
-
-    /// One-based panel number used by the placeholder empty state.
-    var number: Int { rawValue + 1 }
 }
 
 /// Four-panel Home dashboard frame: JIRA tickets, sessions, and both hosted
@@ -126,11 +113,8 @@ struct HomeView: View {
                 HomeSessionsPanelView()
             case .gitLabReviews:
                 MergeRequestsPanelView(provider: activeProvider, kind: .reviewsRequested)
-            default:
-                HomePanelPlaceholder(
-                    panelNumber: panel.number,
-                    purpose: panel.futurePurpose
-                )
+            case .gitLabAuthored:
+                MergeRequestsPanelView(provider: activeProvider, kind: .authored)
             }
         }
         .frame(
