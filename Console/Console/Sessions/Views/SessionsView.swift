@@ -32,13 +32,13 @@ struct SessionsView: View {
             SessionIntentPickerView()
         }
         .confirmationDialog(
-            stopConfirmationTitle,
+            terminateConfirmationTitle,
             isPresented: stopConfirmationBinding,
             titleVisibility: .visible
         ) {
-            Button("Stop Session", role: .destructive) {
+            Button("Terminate Session", role: .destructive) {
                 if let id = pendingStopConfirmationID {
-                    store.stopSession(id: id)
+                    store.terminateSession(id: id)
                 }
                 pendingStopConfirmationID = nil
             }
@@ -47,7 +47,7 @@ struct SessionsView: View {
                 pendingStopConfirmationID = nil
             }
         } message: {
-            Text("This session is still active. Stopping will terminate its Claude process.")
+            Text("This session is still active. Terminating ends its Claude process and closes the terminal.")
                 .accessibilityIdentifier("Sessions.StopConfirmation")
         }
         .alert(
@@ -62,7 +62,7 @@ struct SessionsView: View {
                 Button("Wait", role: .cancel) {}
             },
             message: {
-                Text("The graceful stop timed out. Force Stop kills the process immediately; scrollback is kept.")
+                Text("The graceful termination timed out. Force Stop kills the process immediately; the session then closes.")
             }
         )
     }
@@ -115,7 +115,7 @@ struct SessionsView: View {
                         ),
                         isSelected: session.id == store.selectedSessionID,
                         onSelect: { store.select(sessionID: session.id) },
-                        onStop: { requestStop(session) },
+                        onTerminate: { requestTerminate(session) },
                         onRemove: { store.removeSession(id: session.id) }
                     )
                 }
@@ -134,7 +134,7 @@ struct SessionsView: View {
                     activity: session.activity,
                     attention: session.attention
                 ),
-                onRequestStop: { requestStop(session) },
+                onTerminate: { requestTerminate(session) },
                 onSendStarterPrompt: {
                     _ = coordinator.manuallySendStarterPrompt(to: session.id)
                 }
@@ -152,24 +152,24 @@ struct SessionsView: View {
         }
     }
 
-    // MARK: - Stop flow
+    // MARK: - Terminate flow
 
-    private func requestStop(_ session: ConsoleSession) {
+    private func requestTerminate(_ session: ConsoleSession) {
         let state = displayedSessionState(activity: session.activity, attention: session.attention)
         switch state {
         case .working, .needsApproval, .needsInput:
             pendingStopConfirmationID = session.id
         default:
-            store.stopSession(id: session.id)
+            store.terminateSession(id: session.id)
         }
     }
 
-    private var stopConfirmationTitle: String {
+    private var terminateConfirmationTitle: String {
         guard let id = pendingStopConfirmationID,
               let session = store.session(withID: id) else {
-            return "Stop Session?"
+            return "Terminate Session?"
         }
-        return "Stop “\(session.name)”?"
+        return "Terminate “\(session.name)”?"
     }
 
     private var stopConfirmationBinding: Binding<Bool> {

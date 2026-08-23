@@ -6,6 +6,7 @@ struct AIProviderView: View {
     @AppStorage("selectedAIProvider") private var selectedAIProvider: String = AIProvider.none.rawValue
     @AppStorage("hasGrantedKeychainAccess") private var hasGrantedKeychainAccess = false
     @State private var showKeychainAccessPopup = false
+    @State private var showLaunchErrorPopup = false
 
     var body: some View {
         ZStack {
@@ -27,6 +28,21 @@ struct AIProviderView: View {
                             .onChange(of: selectedAIProvider) { _, newValue in
                                 if let provider = AIProvider(rawValue: newValue) {
                                     aiProviderManager.selectedProvider = provider
+                                }
+                            }
+
+                            if selectedAIProvider == AIProvider.lmStudio.rawValue {
+                                HStack {
+                                    Spacer()
+                                    CapsuleButton(
+                                        "Launch LM Studio",
+                                        systemImage: "rocket",
+                                        style: .primary
+                                    ) {
+                                        launchLMStudio()
+                                    }
+                                    .accessibilityIdentifier("Launch LM Studio")
+                                    .controlSize(.small)
                                 }
                             }
 
@@ -65,6 +81,11 @@ struct AIProviderView: View {
             }
             .formStyle(.grouped)
             .allowsHitTesting(!showKeychainAccessPopup)
+            .alert("LM Studio Not Installed", isPresented: $showLaunchErrorPopup) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("LM Studio could not be found on this Mac. Install it from lmstudio.ai and try again.")
+            }
 
             if showKeychainAccessPopup {
                 keychainAccessOverlay
@@ -77,6 +98,15 @@ struct AIProviderView: View {
             }
             DispatchQueue.main.async {
                 NSApp.keyWindow?.makeFirstResponder(nil)
+            }
+        }
+    }
+
+    private func launchLMStudio() {
+        Task { @MainActor in
+            let launched = await LMStudioAppLauncher.launchInBackground()
+            if !launched {
+                showLaunchErrorPopup = true
             }
         }
     }

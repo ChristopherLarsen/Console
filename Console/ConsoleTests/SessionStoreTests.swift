@@ -5,21 +5,14 @@ import SwiftTerm
 @MainActor
 final class SessionStoreTests: XCTestCase {
 
-    private var storedOverrideBefore: String?
+    /// Isolated so tests never touch the hosted app's real defaults; a
+    /// crashed or interrupted run must not leak `/bin/echo` into Console.
+    private var defaults: UserDefaults!
 
     override func setUp() {
         super.setUp()
-        storedOverrideBefore = UserDefaults.standard.string(forKey: ClaudeExecutableLocator.settingsKey)
-        UserDefaults.standard.set("/bin/echo", forKey: ClaudeExecutableLocator.settingsKey)
-    }
-
-    override func tearDown() {
-        if let storedOverrideBefore {
-            UserDefaults.standard.set(storedOverrideBefore, forKey: ClaudeExecutableLocator.settingsKey)
-        } else {
-            UserDefaults.standard.removeObject(forKey: ClaudeExecutableLocator.settingsKey)
-        }
-        super.tearDown()
+        defaults = UserDefaults(suiteName: "SessionStoreTests-\(UUID().uuidString)")
+        defaults.set("/bin/echo", forKey: ClaudeExecutableLocator.settingsKey)
     }
 
     // MARK: - Fakes
@@ -52,7 +45,10 @@ final class SessionStoreTests: XCTestCase {
 
     private func makeStore() -> (SessionStore, FakeLauncher) {
         let launcher = FakeLauncher()
-        let store = SessionStore(launcher: launcher)
+        let store = SessionStore(
+            launcher: launcher,
+            locator: ClaudeExecutableLocator(defaults: defaults)
+        )
         return (store, launcher)
     }
 
@@ -122,10 +118,11 @@ final class SessionStoreTests: XCTestCase {
     }
 
     func testCreationWithoutClaudeThrowsActionableError() throws {
-        UserDefaults.standard.removeObject(forKey: ClaudeExecutableLocator.settingsKey)
+        defaults.removeObject(forKey: ClaudeExecutableLocator.settingsKey)
         let notFound = ClaudeExecutableLocator(
             shellRunner: { _ in nil },
-            candidateProvider: { [] }
+            candidateProvider: { [] },
+            defaults: defaults
         )
         let store = SessionStore(launcher: FakeLauncher(), locator: notFound)
 
@@ -180,6 +177,47 @@ final class SessionStoreTests: XCTestCase {
 
         store.removeSession(id: id)
         XCTAssertEqual(store.sessions.count, 0, "explicit removal clears exited sessions")
+    }
+
+    func testTerminateIdleSessionClosesImmediatelyWhenNoProcess() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Idle", workingDirectory: tmpDirectory("Idle"))
+        store.terminateSession(id: id)
+
+        XCTAssertTrue(store.sessions.isEmpty, "terminated sessions close instead of lingering")
+        XCTAssertNil(store.selectedSessionID)
+        XCTAssertNil(store.session(withID: id))
+    }
+
+    func testTerminateAlreadyExitedSessionClosesIt() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Done", workingDirectory: tmpDirectory("D"))
+        store.stopSession(id: id)
+        XCTAssertEqual(store.sessions.count, 1)
+
+        store.terminateSession(id: id)
+        XCTAssertTrue(store.sessions.isEmpty, "terminating an exited session removes it")
+    }
+
+    func testProcessTerminatedAfterTerminateClosesSession() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Live", workingDirectory: tmpDirectory("L"))
+
+        // Simulate the graceful-stop path: flag for close, then the process
+        // delegate reports termination.
+        store.terminateSession(id: id)
+        store.handleProcessTerminated(sessionID: id)
+
+        XCTAssertTrue(store.sessions.isEmpty, "process exit after terminate closes the session")
+    }
+
+    func testProcessTerminatedWithoutTerminateRetainsSession() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Live", workingDirectory: tmpDirectory("L"))
+        store.handleProcessTerminated(sessionID: id)
+
+        XCTAssertEqual(store.sessions.count, 1, "natural process exit keeps the exited row")
+        XCTAssertEqual(store.session(withID: id)?.activity, .exited)
     }
 
     func testRemoveRefusesNonExitedSessions() throws {

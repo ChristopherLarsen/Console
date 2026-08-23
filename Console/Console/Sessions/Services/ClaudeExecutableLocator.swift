@@ -13,28 +13,33 @@ final class ClaudeExecutableLocator {
     private let fileManager: FileManager
     private let shellRunner: (String) -> String?
     private let candidateProvider: () -> [String]
+    /// Injectable so hosted unit tests never write the app's real defaults
+    /// (a leaked `/bin/echo` override here once silently broke all launches).
+    private let defaults: UserDefaults
 
     init(
         fileManager: FileManager = .default,
         shellRunner: @escaping (String) -> String? = { ClaudeExecutableLocator.defaultShellRunner(command: $0) },
-        candidateProvider: @escaping () -> [String] = { ClaudeExecutableLocator.commonPaths() }
+        candidateProvider: @escaping () -> [String] = { ClaudeExecutableLocator.commonPaths() },
+        defaults: UserDefaults = .standard
     ) {
         self.fileManager = fileManager
         self.shellRunner = shellRunner
         self.candidateProvider = candidateProvider
+        self.defaults = defaults
     }
 
     /// The persisted Settings override, if any. This is the only value Console
     /// persists for this feature.
     var storedOverride: String? {
-        UserDefaults.standard.string(forKey: Self.settingsKey)
+        defaults.string(forKey: Self.settingsKey)
     }
 
     func storeOverride(_ path: String?) {
         if let path, !path.isEmpty {
-            UserDefaults.standard.set(path, forKey: Self.settingsKey)
+            defaults.set(path, forKey: Self.settingsKey)
         } else {
-            UserDefaults.standard.removeObject(forKey: Self.settingsKey)
+            defaults.removeObject(forKey: Self.settingsKey)
         }
     }
 

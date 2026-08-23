@@ -3,7 +3,7 @@ import SwiftData
 import AppKit
 import ServiceManagement
 
-// Intercepts window close to hide instead of destroy (menu-bar app pattern)
+// Minimizes to the Dock on window close instead of destroying the window
 private struct WindowCloseInterceptor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
@@ -26,7 +26,7 @@ private struct WindowCloseInterceptor: NSViewRepresentable {
         }
 
         func windowShouldClose(_ sender: NSWindow) -> Bool {
-            sender.orderOut(nil)
+            sender.miniaturize(nil)
             return false
         }
 

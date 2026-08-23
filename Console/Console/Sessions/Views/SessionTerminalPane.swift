@@ -7,7 +7,7 @@ import SwiftTerm
 struct SessionTerminalPane: View {
     let session: ConsoleSession
     let displayedState: DisplayedSessionState
-    let onRequestStop: () -> Void
+    let onTerminate: () -> Void
     var onSendStarterPrompt: (() -> Void)?
 
     var body: some View {
@@ -54,12 +54,14 @@ struct SessionTerminalPane: View {
 
             Spacer()
 
-            Button(action: onRequestStop) {
-                Image(systemName: "stop.circle")
+            Button(action: onTerminate) {
+                Text("Terminate")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.red)
             }
             .buttonStyle(.plain)
-            .help("Stop Session")
-            .accessibilityLabel("Stop Session")
+            .help("Terminate Session")
+            .accessibilityLabel("Terminate Session")
             .accessibilityIdentifier("StopSessionButton")
         }
         .padding(.horizontal, 12)

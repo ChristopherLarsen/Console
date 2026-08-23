@@ -4,24 +4,20 @@ import XCTest
 @MainActor
 final class ClaudeExecutableLocatorTests: XCTestCase {
 
-    private var savedOverride: String?
+    /// Isolated so tests never touch the hosted app's real defaults; a
+    /// crashed or interrupted run must not leak an override into Console.
+    private var defaults: UserDefaults!
 
     override func setUp() {
         super.setUp()
-        savedOverride = UserDefaults.standard.string(forKey: ClaudeExecutableLocator.settingsKey)
-    }
-
-    override func tearDown() {
-        if let savedOverride {
-            UserDefaults.standard.set(savedOverride, forKey: ClaudeExecutableLocator.settingsKey)
-        } else {
-            UserDefaults.standard.removeObject(forKey: ClaudeExecutableLocator.settingsKey)
-        }
-        super.tearDown()
+        defaults = UserDefaults(suiteName: "ClaudeExecutableLocatorTests-\(UUID().uuidString)")
     }
 
     func testValidOverrideWinsOverCommonPaths() {
-        let locator = ClaudeExecutableLocator(shellRunner: { _ in "/bin/echo" })
+        let locator = ClaudeExecutableLocator(
+            shellRunner: { _ in "/bin/echo" },
+            defaults: defaults
+        )
         locator.storeOverride("/usr/bin/true")
         XCTAssertEqual(locator.locate(), "/usr/bin/true")
         XCTAssertEqual(locator.displayPath(), "/usr/bin/true")
@@ -30,7 +26,8 @@ final class ClaudeExecutableLocatorTests: XCTestCase {
     func testInvalidOverrideIsIgnoredAndFallsBack() {
         let locator = ClaudeExecutableLocator(
             shellRunner: { _ in nil },
-            candidateProvider: { [] }
+            candidateProvider: { [] },
+            defaults: defaults
         )
         locator.storeOverride("/nonexistent/claude-binary")
         XCTAssertFalse(locator.isValidExecutable("/nonexistent/claude-binary"))
@@ -42,7 +39,10 @@ final class ClaudeExecutableLocatorTests: XCTestCase {
     }
 
     func testResetToAutomaticClearsOverride() {
-        let locator = ClaudeExecutableLocator(shellRunner: { _ in nil })
+        let locator = ClaudeExecutableLocator(
+            shellRunner: { _ in nil },
+            defaults: defaults
+        )
         locator.storeOverride("/usr/bin/true")
         XCTAssertNotNil(locator.storedOverride)
         locator.storeOverride(nil)
@@ -56,7 +56,8 @@ final class ClaudeExecutableLocatorTests: XCTestCase {
                 received = command
                 return "/bin/echo"
             },
-            candidateProvider: { [] }
+            candidateProvider: { [] },
+            defaults: defaults
         )
         XCTAssertEqual(locator.locate(), "/bin/echo")
         XCTAssertEqual(received, "command -v claude")

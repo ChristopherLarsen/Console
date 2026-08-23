@@ -45,6 +45,14 @@ struct SidebarView: View {
                         }
 
                         SidebarRow(
+                            label: SidebarSelection.sessions.label,
+                            icon: SidebarSelection.sessions.icon,
+                            isSelected: selection == .sessions
+                        ) {
+                            selection = .sessions
+                        }
+
+                        SidebarRow(
                             label: activeProvider.displayName,
                             icon: activeProvider.sidebarIcon,
                             isSelected: selection == .mergeRequests
@@ -74,16 +82,6 @@ struct SidebarView: View {
                             isSelected: selection == .aiProvider
                         ) {
                             selection = .aiProvider
-                        }
-
-                        SidebarSeparator()
-
-                        SidebarRow(
-                            label: SidebarSelection.sessions.label,
-                            icon: SidebarSelection.sessions.icon,
-                            isSelected: selection == .sessions
-                        ) {
-                            selection = .sessions
                         }
                     }
                 }

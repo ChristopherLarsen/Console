@@ -25,6 +25,9 @@ final class SessionStore {
     private(set) var sessions: [ConsoleSession] = []
     private(set) var selectedSessionID: UUID?
     private(set) var awaitingForceStopSessionID: UUID?
+    /// Sessions the user terminated; closed (removed) as soon as their
+    /// process exits instead of lingering as dead terminals.
+    @ObservationIgnored private var closeOnExitIDs: Set<UUID> = []
 
     @ObservationIgnored let locator: ClaudeExecutableLocator
     @ObservationIgnored private var launcher: any SessionProcessLaunching
@@ -328,8 +331,9 @@ final class SessionStore {
         selectedSessionID = sessionID
     }
 
-    /// Graceful stop (SIGTERM). UI confirms first for Working / Needs Approval /
-    /// Needs Input sessions; this entry point runs after that confirmation.
+    /// Graceful stop (SIGTERM). The UI's Terminate flow (`terminateSession`)
+    /// confirms first for Working / Needs Approval / Needs Input sessions and
+    /// calls this afterwards; plain stops retain the exited session row.
     func stopSession(id: UUID) {
         guard let session = session(withID: id), session.activity != .exited else { return }
         awaitingForceStopSessionID = nil
@@ -353,6 +357,20 @@ final class SessionStore {
             return
         }
         kill(pid, SIGKILL)
+    }
+
+    /// User-initiated termination from the Sessions UI: stops the process
+    /// like `stopSession` and, unlike a plain stop, closes the session once
+    /// its process is gone so the pane returns to the empty state instead of
+    /// a dead terminal view.
+    func terminateSession(id: UUID) {
+        guard let session = session(withID: id) else { return }
+        guard session.activity != .exited else {
+            closeSession(id: id)
+            return
+        }
+        closeOnExitIDs.insert(id)
+        stopSession(id: id)
     }
 
     /// Closes the pending force-stop offer without killing the process.
@@ -423,15 +441,27 @@ final class SessionStore {
     /// Removes an exited session (and its retained scrollback) from the list.
     func removeSession(id: UUID) {
         guard let session = session(withID: id), session.activity == .exited else { return }
+        closeSession(id: id)
+    }
+
+    /// Drops a session and its plumbing entirely. The terminal view, process
+    /// handle, and scrollback are released with it.
+    private func closeSession(id: UUID) {
         sessions.removeAll(where: { $0.id == id })
         sessionTokens.removeValue(forKey: id)
         router.forget(sessionID: id)
+        closeOnExitIDs.remove(id)
         if selectedSessionID == id {
             selectedSessionID = sessions.first?.id
         }
     }
 
     func handleProcessTerminated(sessionID: UUID) {
+        if closeOnExitIDs.remove(sessionID) != nil {
+            lifecycleObserver?(sessionID, .processTerminated)
+            closeSession(id: sessionID)
+            return
+        }
         applyEvent(.processTerminated, to: sessionID)
     }
 

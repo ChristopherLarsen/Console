@@ -10,14 +10,16 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
 
     private var defaults: UserDefaults!
     private var suiteName: String!
-    private var storedOverrideBefore: String?
+    private var locatorDefaults: UserDefaults!
     private var tmpRoot: URL!
 
     override func setUpWithError() throws {
         suiteName = "SessionLaunchCoordinatorTests-\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)!
-        storedOverrideBefore = UserDefaults.standard.string(forKey: ClaudeExecutableLocator.settingsKey)
-        UserDefaults.standard.set("/bin/echo", forKey: ClaudeExecutableLocator.settingsKey)
+        // Isolated locator defaults so tests never touch the hosted app's
+        // real settings; a crashed run must not leak `/bin/echo` into Console.
+        locatorDefaults = UserDefaults(suiteName: "SessionLaunchCoordinatorLocator-\(UUID().uuidString)")!
+        locatorDefaults.set("/bin/echo", forKey: ClaudeExecutableLocator.settingsKey)
 
         tmpRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("coordinator-tests-\(UUID().uuidString)", isDirectory: true)
@@ -25,13 +27,8 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
-        if let storedOverrideBefore {
-            UserDefaults.standard.set(storedOverrideBefore, forKey: ClaudeExecutableLocator.settingsKey)
-        } else {
-            UserDefaults.standard.removeObject(forKey: ClaudeExecutableLocator.settingsKey)
-        }
-        defaults.removePersistentDomain(forName: suiteName)
-        try? FileManager.default.removeItem(at: tmpRoot)
+        defaults.removePersistentDomain(forName: suiteName!)
+        try? FileManager.default.removeItem(at: tmpRoot!)
     }
 
     // MARK: - Fixtures
@@ -67,7 +64,10 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
 
     private func makeStack() -> Stack {
         let launcher = FakeLauncher()
-        let store = SessionStore(launcher: launcher)
+        let store = SessionStore(
+            launcher: launcher,
+            locator: ClaudeExecutableLocator(defaults: locatorDefaults)
+        )
         let workspaces = SessionWorkspaceStore(defaults: defaults!)
         let coordinator = SessionLaunchCoordinator(store: store, workspaceStore: workspaces)
         return Stack(store: store, workspaces: workspaces, coordinator: coordinator, launcher: launcher)

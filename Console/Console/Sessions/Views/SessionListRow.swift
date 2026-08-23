@@ -8,7 +8,7 @@ struct SessionListRow: View {
     let displayedState: DisplayedSessionState
     let isSelected: Bool
     let onSelect: () -> Void
-    let onStop: () -> Void
+    let onTerminate: () -> Void
     let onRemove: () -> Void
 
     var body: some View {
@@ -84,7 +84,7 @@ struct SessionListRow: View {
         .contextMenu {
             Button("Select", action: onSelect)
             if session.activity != .exited {
-                Button("Stop Session…", action: onStop)
+                Button("Terminate…", action: onTerminate)
             } else {
                 Button("Remove", action: onRemove)
             }
