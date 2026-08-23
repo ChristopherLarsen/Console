@@ -62,10 +62,10 @@ struct SessionListRow: View {
             .accessibilityIdentifier("SessionRow.\(session.id.uuidString)")
 
             if showsAttentionBadge {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.orange)
-                    .accessibilityLabel("Needs attention")
+                AttentionBadge(
+                    pointSize: 13,
+                    accessibilityLabel: "Needs attention"
+                )
             }
 
             if session.activity == .exited {

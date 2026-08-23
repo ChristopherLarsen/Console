@@ -32,9 +32,15 @@ struct MergeRequestCardView: View {
     private var cardBody: some View {
         VStack(alignment: .leading, spacing: HomeCardMetrics.rowGap) {
             HStack(spacing: 5) {
-                Circle()
-                    .fill(resolvedChannel.color)
-                    .frame(width: 6, height: 6)
+                // The state dot becomes the red attention badge when this MR
+                // demands a human; the leading x never moves.
+                if showsAttentionBadge {
+                    AttentionBadge()
+                } else {
+                    Circle()
+                        .fill(resolvedChannel.color)
+                        .frame(width: 6, height: 6)
+                }
 
                 if let iid = item.iidText {
                     Text("!\(iid)")
@@ -102,6 +108,17 @@ struct MergeRequestCardView: View {
         resolvedState?.channel ?? .parked
     }
 
+    /// Every row of the reviews-requested list wants Christopher's review;
+    /// authored rows only when their resolved condition is needs-you.
+    private var showsAttentionBadge: Bool {
+        AttentionChannel.mergeRequestWantsBadge(
+            kind: kind,
+            isDraft: item.isDraft,
+            pipelineDisplayState: item.pipelineDisplayState,
+            reviewDisplayState: item.reviewDisplayState
+        )
+    }
+
     @ViewBuilder
     private var ageText: some View {
         if let age = RelativeAge.compact(from: item.updatedText) {
@@ -166,6 +183,7 @@ struct MergeRequestCardView: View {
         if item.isDraft { parts.append("Draft") }
         if let pipeline = item.pipelineDisplayState { parts.append("Pipeline \(pipeline)") }
         if let updated = item.updatedText { parts.append("updated \(updated)") }
+        if showsAttentionBadge { parts.append("Needs attention") }
         return parts.joined(separator: ", ")
     }
 }

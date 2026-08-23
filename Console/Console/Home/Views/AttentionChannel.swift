@@ -78,12 +78,49 @@ enum AttentionChannel: Sendable, Equatable {
     }
 
     /// Host conditions that outrank Draft. Returns nil when the string does
-    /// not name one of them.
+    /// not name one of them. "Changes requested" is the review state that
+    /// means the author still owes work, so it reads as needs-you.
     private static func urgentConditionChannel(_ state: String) -> AttentionChannel? {
         switch normalized(state) {
-        case "failed", "blocked": return .needsYou
+        case "failed", "blocked", "changes requested", "discussion": return .needsYou
         case "running", "pending": return .inFlight
         default: return nil
+        }
+    }
+
+    // MARK: - Red attention badge
+
+    /// Whether one JIRA ticket warrants the red badge: High/Highest priority,
+    /// or a blocked status.
+    static func ticketWantsBadge(priority: String?, status: String?) -> Bool {
+        switch normalized(priority) {
+        case "high", "highest":
+            return true
+        default:
+            break
+        }
+        return forTicketStatus(status) == .needsYou
+    }
+
+    /// Whether one merge request warrants the red badge. Every row of the
+    /// reviews-requested list wants Christopher's review by definition; an
+    /// authored row only when its resolved condition is needs-you (failed
+    /// pipeline, blocked, or changes requested).
+    static func mergeRequestWantsBadge(
+        kind: CodeHostListKind,
+        isDraft: Bool,
+        pipelineDisplayState: String?,
+        reviewDisplayState: String?
+    ) -> Bool {
+        switch kind {
+        case .reviewsRequested:
+            return true
+        case .authored:
+            return forMergeRequest(
+                isDraft: isDraft,
+                pipelineDisplayState: pipelineDisplayState,
+                reviewDisplayState: reviewDisplayState
+            )?.channel == .needsYou
         }
     }
 

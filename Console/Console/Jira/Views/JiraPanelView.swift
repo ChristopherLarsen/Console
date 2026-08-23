@@ -434,9 +434,15 @@ private struct JiraTicketCard: View {
                         .foregroundStyle(caretTint)
                 }
 
-                Circle()
-                    .fill(statusChannel.color)
-                    .frame(width: 6, height: 6)
+                // The state dot becomes the red attention badge when this
+                // ticket demands a human; the leading x never moves.
+                if showsAttentionBadge {
+                    AttentionBadge()
+                } else {
+                    Circle()
+                        .fill(statusChannel.color)
+                        .frame(width: 6, height: 6)
+                }
 
                 Text(ticket.key)
                     .font(HomeCardMetrics.identityFont)
@@ -488,6 +494,12 @@ private struct JiraTicketCard: View {
         AttentionChannel.forTicketStatus(ticket.status)
     }
 
+    /// High/Highest priority or a blocked status. While the badge shows it
+    /// carries the urgency signal, so the priority caret stands down.
+    private var showsAttentionBadge: Bool {
+        AttentionChannel.ticketWantsBadge(priority: ticket.priority, status: ticket.status)
+    }
+
     @ViewBuilder
     private var ageText: some View {
         // No updated text at all: omit rather than guess (§6).
@@ -502,8 +514,11 @@ private struct JiraTicketCard: View {
     /// Priority demoted to a leading caret for High and Highest only. Medium
     /// and below are omitted entirely — twelve rows reading "Low" teach
     /// nothing and the field stops competing for the trailing corner. This is
-    /// a deliberate extension of the omit-unavailable-fields rule (§6).
+    /// a deliberate extension of the omit-unavailable-fields rule (§6). When
+    /// the attention badge is up it already says "urgent", so the caret
+    /// yields rather than doubling the signal.
     private var priorityCaretTint: Color? {
+        guard !showsAttentionBadge else { return nil }
         switch ticket.priority?.lowercased() {
         case "highest":
             return .red
@@ -520,6 +535,7 @@ private struct JiraTicketCard: View {
         if let status = ticket.status { parts.append(status) }
         if let priority = ticket.priority { parts.append(priority) }
         if let updated = ticket.updatedText { parts.append(updated) }
+        if showsAttentionBadge { parts.append("Needs attention") }
         return parts.joined(separator: ", ")
     }
 }
