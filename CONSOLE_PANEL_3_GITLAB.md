@@ -304,17 +304,19 @@ In browser mode:
 - Provide **Show Cards** after a successful extraction.
 - Preserve back, forward, and reload controls.
 
-Suggested header and card:
+Suggested header and card (shared Home card grammar, Design/HomeCards/DESIGN_PROMPT.md §3):
 
 ```text
-Reviews Requested · <count>                 Refresh  Show GitLab
+MRs to Review  GitLab · <count>               [refresh]  [Show GitLab]
 
-Project Name · !123
-Merge request title                                      Draft
-Author Name · Pipeline passed · updated 2h ago
+● !5  Pipeline failed                                   4h
+  Console fixture delta: updated-today card         [open]
+  (DR) Dana Reyes · console-ios
 ```
 
-Omit unavailable optional fields rather than guessing. Preserve GitLab order.
+One 28pt header per panel, owned by the panel. Row one: 6pt dot, `!iid` as the 10pt monospace identity token, one resolved state as tinted text, relative age right-aligned. The single state follows the precedence rule failed > blocked > running > draft > passed; Draft and a pipeline state no longer compete for the same corner. Row two: the title at 13pt medium with a permanently reserved 16pt trailing action slot carrying the open-in-host glyph. Row three (optional): author and project — present in the reviews-requested list where the author is the routing signal, dropped entirely in the authored list. Cards are 44pt minimum, growing to content.
+
+Omit unavailable optional fields rather than guessing. The scraped `updatedText` is parsed to a relative age locally (`RelativeAge`) and falls back verbatim when it will not parse. Preserve GitLab order.
 
 ## Home Integration
 

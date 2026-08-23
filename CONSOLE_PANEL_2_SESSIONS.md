@@ -146,21 +146,20 @@ Loading/error: there is no network. The panel always reflects `SessionStore.sess
 
 ## User Interface
 
-Match JIRA card density so the 2×2 grid stays even with the bottom terminal expanded. Aim for roughly a 64–72pt card.
+Match JIRA card density so the 2×2 grid stays even with the bottom terminal expanded. The card floor is **44pt, growing to content** (shared `HomeCardMetrics`; Design/HomeCards/DESIGN_PROMPT.md §3). A summary-less session with no artifacts is a two-line card.
 
 ### Header
 
 ```text
-Sessions · 3    · 1 needs you                    [+]  [Open Sessions]
+Sessions  3 · 1 needs you                        [+]  [window]
 ```
 
 - Title uses the existing panel name `Sessions`. No service subtitle (unlike JIRA/GitLab).
 - Count is the total session count, including exited rows still in the store.
-- `· N needs you` appears only when `needsYouCount > 0`.
-- `+` opens `NewClaudeSessionSheet` (help: “New Claude Session”).
-- **Open Sessions** is a small borderless control, parallel to JIRA’s “Show JIRA”. Use `macwindow.on.rectangle` or a text button labeled “Open Sessions”; keep hit target and accessibility label explicit.
-
-Reuse JIRA header metrics where they already look right: `.subheadline.weight(.semibold)` title, `.borderless` / `.small` controls, 10pt horizontal padding.
+- `· N needs you` appears only when `needsYouCount > 0`, in the needs-you red.
+- `+` opens the intent picker (help: “New Claude Session”).
+- **Open Sessions** is the icon-only `macwindow.on.rectangle` glyph (help + accessibility label: “Open Sessions”), parallel to JIRA’s “Show JIRA” and the MR panels’ “Show GitLab”. Keep the accessibility label explicit.
+- One header per panel, owned by the panel itself; the container renders no header. 28pt, one row: title, then the quiet count run, then icon-only actions.
 
 ### Empty state
 
@@ -174,30 +173,35 @@ Accessibility identifier: `HomePanelSessions.EmptyState`.
 
 ### Row
 
+Drawn to the shared Home card grammar (Design/HomeCards/DESIGN_PROMPT.md §3). Needs-approval card with artifacts:
+
 ```text
-● Needs Approval    AntivirusGodot
-  Asking to run git push to origin
-  [PROJ-412]  [!88]
+● Needs Approval                          ›
+  AntivirusGodot
+  Asking to run git push to origin   [PROJ-412] [!88]
 ```
 
 Working, no summary, name equals folder:
 
 ```text
-● Working           Pufferfishh
+● Working                                 ›
+  Pufferfishh
 ```
 
 Working, no summary, name differs from folder (`Folder 2`):
 
 ```text
-● Working           Folder 2
+● Working                                 ›
+  Pufferfishh
   Folder
 ```
 
-- Leading state dot uses the shared tint.
-- Name: `.footnote.weight(.medium)`, one line.
-- State label: caption2, tinted, trailing or immediately after the name — keep it visible at the 160pt minimum width (truncate the name, not the state).
-- Subtitle: caption, secondary, one line, tail truncation.
-- Artifact chips: caption capsules, max two, then `+N`. Do not make chips independently tappable in this phase; the whole card is one button.
+- Leading 6pt state dot uses the shared `AttentionChannel` tint; the state label is tinted text beside it (semibold when `needsYou` is true) — the state label doubles as the identity token because sessions have no key.
+- Name: the card title, 13pt medium, at the dashboard's fixed x-origin, two lines maximum. Never right-aligned.
+- Row three merges folder-or-summary (10pt monospace, leading) with the artifact chips (trailing). Omitted entirely when there is nothing to say.
+- Artifact chips: filled capsules, max two, then `+N`. Capsules mean a linked object. Do not make chips independently tappable in this phase; the whole card is one button.
+- The reserved 16pt trailing slot on the title row carries the jump chevron at 30% opacity (100% on hover). It is decoration inside the single card button — never a nested control.
+- States for which `needsYou` is true get a one-point red inset on the card.
 - The card is one `Button` → select + `showSessions()`.
 - One coherent accessibility element: name, folder if shown, state, summary if shown, “needs attention” when `needsYou` is true.
 - Identifier: `HomeSessionCard.<session.name>` (parallel to `SessionRow.<session.name>`).

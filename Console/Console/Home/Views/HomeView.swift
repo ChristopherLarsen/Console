@@ -101,9 +101,9 @@ struct HomeView: View {
         HomePanelContainer(
             title: panel.title,
             subtitle: serviceLabel(for: panel),
-            // JIRA and Sessions own custom headers with actions; the container
-            // supplies only the card chrome and accessibility identifier.
-            showsHeader: panel != .jiraTickets && panel != .sessions,
+            // Every panel renders exactly one header of its own; the
+            // container supplies only the card chrome and accessibility
+            // identifier.
             accessibilityIdentifier: panel.accessibilityIdentifier
         ) {
             switch panel {
