@@ -2,7 +2,7 @@ import Foundation
 
 /// Wire protocol shared by Console and the embedded `ConsoleTermBridge` helper.
 /// Newline-delimited Codable JSON with an 8 KiB maximum envelope.
-enum BridgeProtocol {
+nonisolated enum BridgeProtocol {
     static let currentVersion = 1
     static let maxEnvelopeBytes = 8 * 1024
     static let maxMessageLength = 400

@@ -2,7 +2,7 @@ import Foundation
 
 /// A subset of GitHub's documented Release payload fields.
 /// https://docs.github.com/en/rest/releases/releases?apiVersion=latest
-struct GitHubRelease: Hashable, Decodable, Sendable {
+nonisolated struct GitHubRelease: Hashable, Decodable, Sendable {
 
     let tagName: String
     let name: String?
@@ -86,14 +86,14 @@ protocol GitHubReleaseFetching: Sendable {
 /// No credentials are embedded or required; the endpoint is public.
 struct GitHubReleaseClient: GitHubReleaseFetching {
 
-    static let defaultEndpoint = URL(
+    nonisolated static let defaultEndpoint = URL(
         string: "https://api.github.com/repos/ChristopherLarsen/Console/releases"
     )!
 
     private let session: URLSession
     private let endpoint: URL
 
-    init(session: URLSession = .shared, endpoint: URL = GitHubReleaseClient.defaultEndpoint) {
+    nonisolated init(session: URLSession = .shared, endpoint: URL = GitHubReleaseClient.defaultEndpoint) {
         self.session = session
         self.endpoint = endpoint
     }

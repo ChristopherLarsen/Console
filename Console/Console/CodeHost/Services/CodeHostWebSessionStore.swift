@@ -40,13 +40,19 @@ final class CodeHostWebSessionStore {
     /// not reload a page that already shows the configured list.
     private var lastLoadedURLStrings: [CodeHostListKind: String] = [:]
 
+    /// Builds the two pages bound to one data store. Always main-actor
+    /// isolated, matching `WebPage`'s own isolation.
+    typealias PageProvider = @MainActor (WKWebsiteDataStore) -> WebPage
+
     init(
-        dataStore: WKWebsiteDataStore = WKWebsiteDataStore.default(),
-        pageProvider: @escaping (WKWebsiteDataStore) -> WebPage = CodeHostWebSessionStore.makePage
+        dataStore: WKWebsiteDataStore? = nil,
+        pageProvider: PageProvider? = nil
     ) {
-        self.websiteDataStore = dataStore
-        self.reviewsPage = pageProvider(dataStore)
-        self.authoredPage = pageProvider(dataStore)
+        let resolvedDataStore = dataStore ?? WKWebsiteDataStore.default()
+        let resolvedPageProvider = pageProvider ?? Self.makePage
+        self.websiteDataStore = resolvedDataStore
+        self.reviewsPage = resolvedPageProvider(resolvedDataStore)
+        self.authoredPage = resolvedPageProvider(resolvedDataStore)
     }
 
     func page(for kind: CodeHostListKind) -> WebPage {

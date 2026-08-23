@@ -93,7 +93,7 @@ struct SessionLifecycleState: Equatable, Sendable {
                 summary = message
             }
 
-        case .artifactLinked(let artifact):
+        case .artifactLinked:
             // Applied by the store (needs list mutation); nothing here.
             break
 

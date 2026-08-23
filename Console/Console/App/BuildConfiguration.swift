@@ -1,6 +1,6 @@
 import Foundation
 
-enum BuildConfiguration {
+nonisolated enum BuildConfiguration {
 
     static var current: String {
         "Direct Download Edition"

@@ -8,7 +8,7 @@ import Darwin
 ///
 /// Runs entirely off the main actor on a private serial queue. Accepted and
 /// validated lines are delivered to a main-thread callback. No HTTP, no TCP.
-nonisolated final class SessionBridgeSocketServer {
+nonisolated final class SessionBridgeSocketServer: @unchecked Sendable {
     static let maxLineBytes = BridgeProtocol.maxEnvelopeBytes + 1
 
     private var listenFD: Int32 = -1

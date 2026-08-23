@@ -77,7 +77,7 @@ struct MergeRequestsPanelView: View {
         .onChange(of: effectiveConfiguredURLString) {
             controller.configurationChanged()
         }
-        .onChange(of: allConfiguredURLs) { _ in
+        .onChange(of: allConfiguredURLs) {
             controller.configurationChanged()
         }
     }

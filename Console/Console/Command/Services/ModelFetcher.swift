@@ -1,6 +1,6 @@
 import Foundation
 
-struct AvailableModel: Identifiable, Sendable {
+nonisolated struct AvailableModel: Identifiable, Sendable {
     let id: String
     let displayName: String
     let description: String?

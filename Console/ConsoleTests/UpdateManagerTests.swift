@@ -6,7 +6,7 @@ final class UpdateManagerTests: XCTestCase {
 
     // MARK: - Stubs
 
-    private final class StubReleaseFetcher: GitHubReleaseFetching {
+    private final class StubReleaseFetcher: GitHubReleaseFetching, @unchecked Sendable {
         var releases: [GitHubRelease] = []
         var error: Error?
         var delay: Duration?
@@ -20,7 +20,7 @@ final class UpdateManagerTests: XCTestCase {
         }
     }
 
-    private final class StubCheckout: SourceCheckouting {
+    private final class StubCheckout: SourceCheckouting, @unchecked Sendable {
         var result: Result<PreparedSource, Error> = .success(
             PreparedSource(directoryPath: "/tmp/Console-v2.0.0", xcodeProjectPath: nil)
         )

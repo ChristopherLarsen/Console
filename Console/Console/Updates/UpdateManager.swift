@@ -189,6 +189,8 @@ protocol ProjectOpening: Sendable {
 }
 
 struct WorkspaceProjectOpener: ProjectOpening {
+    nonisolated init() {}
+
     func open(path: String) {
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }
