@@ -471,6 +471,20 @@ struct ConsoleApp: App {
         pingLocalProviderIfNeeded()
         runStartupUpdateCheckIfNeeded()
         sessionStore.startBridgeIfNeeded()
+        prepareMorningBriefIfNeeded()
+    }
+
+    /// Prepares today's Morning Brief at launch so the report is ready
+    /// before the user opens the Brief destination for their morning
+    /// meeting. Skipped with no registered workspaces so a stub is never
+    /// cached over a real one.
+    private func prepareMorningBriefIfNeeded() {
+        guard !Self.isRunningUnitTests else { return }
+        let paths = workspaceStore.availableWorkspaces.map(\.directoryPath)
+        guard !paths.isEmpty else { return }
+        Task {
+            _ = await BriefGenerationService().ensureBrief(for: Date(), workspacePaths: paths)
+        }
     }
 
     /// One automatic check per process, only in non-test Release builds.

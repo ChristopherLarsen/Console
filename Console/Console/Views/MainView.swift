@@ -13,6 +13,7 @@ struct MainView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PermissionsManager.self) private var permissionsManager
     @Environment(SessionLaunchCoordinator.self) private var launchCoordinator
+    @Environment(SessionWorkspaceStore.self) private var workspaceStore
 
     private static let terminalMinExpandedHeight: CGFloat = 150
     private static let terminalDefaultExpandedHeight: CGFloat = 250
@@ -188,6 +189,10 @@ struct MainView: View {
         switch sidebarSelection {
         case .home:
             HomeView()
+        case .brief:
+            BriefView(workspacePathsProvider: {
+                workspaceStore.availableWorkspaces.map(\.directoryPath)
+            })
         case .jira:
             JiraView()
         case .mergeRequests:

@@ -37,6 +37,14 @@ struct SidebarView: View {
                         }
 
                         SidebarRow(
+                            label: SidebarSelection.brief.label,
+                            icon: SidebarSelection.brief.icon,
+                            isSelected: selection == .brief
+                        ) {
+                            selection = .brief
+                        }
+
+                        SidebarRow(
                             label: SidebarSelection.jira.label,
                             icon: SidebarSelection.jira.icon,
                             isSelected: selection == .jira
