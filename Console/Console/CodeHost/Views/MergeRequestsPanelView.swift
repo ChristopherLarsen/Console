@@ -22,7 +22,9 @@ struct MergeRequestsPanelView: View {
     @AppStorage(AppSettings.webViewGitHubMyPullRequestsURLKey) private var webViewGitHubMyPRsURL: String = ""
     @AppStorage("sidebarSelection") private var sidebarSelection: SidebarSelection = .home
 
-    @State private var controller: CodeHostListPanelController
+    private var controller: CodeHostListPanelController {
+        MergeRequestListSession.shared(for: provider).controller(for: kind)
+    }
 
     private var effectiveConfiguredURLString: String {
         CodeHostConfiguration.effectiveURLString(for: kind, provider: provider)
@@ -34,16 +36,6 @@ struct MergeRequestsPanelView: View {
 
     private var idPrefix: String {
         provider == .gitlab ? "GitLabPanel" : "GitHubPanel"
-    }
-
-    init(provider: CodeHostProvider, kind: CodeHostListKind) {
-        self.provider = provider
-        self.kind = kind
-        _controller = State(initialValue: CodeHostListPanelController(
-            kind: kind,
-            page: CodeHostWebSessionStore.shared(for: provider).page(for: kind),
-            configuredURLStringProvider: { CodeHostConfiguration.effectiveURLString(for: kind, provider: provider) }
-        ))
     }
 
     var body: some View {

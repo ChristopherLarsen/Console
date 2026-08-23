@@ -17,7 +17,10 @@ struct MergeRequestsView: View {
     @AppStorage(AppSettings.webViewGitHubReviewsURLKey) private var webViewGitHubReviewsURL: String = ""
     @AppStorage(AppSettings.webViewGitHubMyPullRequestsURLKey) private var webViewGitHubMyPRsURL: String = ""
 
-    @State private var selectedKind: CodeHostListKind = .authored
+    /// Starts on the list a pending Next-card deep link targets, so the link
+    /// lands on the visible page.
+    @State private var selectedKind: CodeHostListKind =
+        MergeRequestDeepLink.shared.consumeKindHint() ?? .authored
 
     private var activeProvider: CodeHostProvider {
         CodeHostProvider(rawValue: codeHostProviderRaw) ?? .gitlab
@@ -36,11 +39,13 @@ struct MergeRequestsView: View {
                 }
                 .onAppear {
                     loadSelectedList(url: url)
+                    consumePendingDeepLink()
                 }
                 .onChange(of: selectedKind) { _, newKind in
                     if let updated = configuredURL(for: newKind) {
                         sessionStore.loadIfNeeded(newKind, url: updated, force: false)
                     }
+                    consumePendingDeepLink()
                 }
                 .onChange(of: codeHostProviderRaw) { _, _ in reloadIfConfigured() }
                 .onChange(of: webViewGitLabReviewsURL) { _, _ in reloadIfConfigured() }
@@ -91,6 +96,13 @@ struct MergeRequestsView: View {
 
     private func loadSelectedList(url: URL) {
         sessionStore.loadIfNeeded(selectedKind, url: url, force: false)
+    }
+
+    /// Loads the merge request a Next-card tap queued for this list, after
+    /// the ordinary list bookkeeping so it wins.
+    private func consumePendingDeepLink() {
+        guard let url = MergeRequestDeepLink.shared.consume(matching: selectedKind) else { return }
+        sessionStore.page(for: selectedKind).load(URLRequest(url: url))
     }
 
     private func reloadIfConfigured() {

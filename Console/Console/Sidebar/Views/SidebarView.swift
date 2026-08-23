@@ -96,6 +96,10 @@ struct SidebarView: View {
 
                 Spacer(minLength: 0)
 
+                NextTaskCardView(selection: $selection)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+
                 SidebarSeparator()
 
                 SidebarRow(
