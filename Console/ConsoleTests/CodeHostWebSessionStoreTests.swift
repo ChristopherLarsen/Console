@@ -8,8 +8,7 @@ import WebKit
 ///    `WKWebsiteDataStore` (so a normal sign-in in one page is visible to the
 ///    other through shared website data).
 /// 2. Their back-forward navigation histories stay independent.
-/// 3. Each code host owns its own store instance while both instances share
-///    WebKit's default persistent website data store.
+/// 3. The store is one stable process-wide instance.
 ///
 /// The cookie probe below uses one synthetic, valueless cookie on an invented
 /// host inside a NON-persistent store. No real credentials, cookies, or site
@@ -20,29 +19,21 @@ final class CodeHostWebSessionStoreTests: XCTestCase {
     // MARK: - Structure
 
     func testSharedSingletonUsesTheDefaultPersistentDataStore() {
-        let store = CodeHostWebSessionStore.shared(for: .gitlab)
+        let store = CodeHostWebSessionStore.shared
         XCTAssertTrue(store.websiteDataStore.isPersistent, "The shared store must be persistent")
         XCTAssertTrue(store.websiteDataStore === WKWebsiteDataStore.default(), "Production pages share the default persistent store")
     }
 
     func testBothPagesAreDistinctInstances() {
-        let store = CodeHostWebSessionStore.shared(for: .gitlab)
+        let store = CodeHostWebSessionStore.shared
         XCTAssertFalse(store.reviewsPage === store.authoredPage, "Each list kind owns its own page and history")
     }
 
-    func testEachProviderOwnsOneStableInstanceOnTheSameDefaultDataStore() {
-        let gitlabFirst = CodeHostWebSessionStore.shared(for: .gitlab)
-        let githubFirst = CodeHostWebSessionStore.shared(for: .github)
-        let gitlabAgain = CodeHostWebSessionStore.shared(for: .gitlab)
-
-        XCTAssertTrue(gitlabFirst === gitlabAgain, "A provider's store must be a stable process-wide instance")
-        XCTAssertFalse(gitlabFirst === githubFirst, "Different hosts own different page pairs")
-
-        XCTAssertTrue(gitlabFirst.websiteDataStore === WKWebsiteDataStore.default())
-        XCTAssertTrue(githubFirst.websiteDataStore === WKWebsiteDataStore.default(),
-                      "Both hosts share WebKit's persistent store; cookies coexist per domain")
-        XCTAssertTrue(gitlabFirst.reviewsPage !== githubFirst.reviewsPage)
-        XCTAssertTrue(gitlabFirst.authoredPage !== githubFirst.authoredPage)
+    func testSharedIsOneStableProcessWideInstance() {
+        let first = CodeHostWebSessionStore.shared
+        let again = CodeHostWebSessionStore.shared
+        XCTAssertTrue(first === again, "The shared store must be a stable process-wide instance")
+        XCTAssertTrue(first.websiteDataStore === WKWebsiteDataStore.default())
     }
 
     func testInjectedPagesReceiveExactlyOneSharedDataStore() {

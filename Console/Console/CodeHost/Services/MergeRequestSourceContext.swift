@@ -1,12 +1,10 @@
 import Foundation
 
-/// Host-neutral merge-request URL parsing. Detects whether a URL is a GitLab
-/// merge request (`/-/merge_requests/<iid>`) or a GitHub pull request
-/// (`/{owner}/{repo}/pull/<n>`) by shape, and exposes one identity scheme so
-/// workspace associations resolve identically for both hosts.
+/// Host-neutral merge-request URL parsing. Detects a GitLab merge request
+/// (`/-/merge_requests/<iid>`) by shape, and exposes one identity scheme so
+/// workspace associations resolve consistently.
 nonisolated enum MergeRequestSourceContext {
     struct ParsedMergeRequest: Equatable {
-        let host: CodeHostProvider
         let iid: String
         let projectIdentity: String
         let projectURL: URL
@@ -23,23 +21,12 @@ nonisolated enum MergeRequestSourceContext {
     }
 
     static func parse(fromURL url: URL) -> ParsedMergeRequest? {
-        if let gitlab = GitLabSourceContext.parseMergeRequest(fromURL: url) {
-            return ParsedMergeRequest(
-                host: .gitlab,
-                iid: gitlab.iid,
-                projectIdentity: gitlab.projectIdentity,
-                projectURL: gitlab.projectURL
-            )
-        }
-        if let github = GitHubSourceContext.parsePullRequest(fromURL: url) {
-            return ParsedMergeRequest(
-                host: .github,
-                iid: github.number,
-                projectIdentity: github.projectIdentity,
-                projectURL: github.projectURL
-            )
-        }
-        return nil
+        guard let gitlab = GitLabSourceContext.parseMergeRequest(fromURL: url) else { return nil }
+        return ParsedMergeRequest(
+            iid: gitlab.iid,
+            projectIdentity: gitlab.projectIdentity,
+            projectURL: gitlab.projectURL
+        )
     }
 
     /// Normalized project identity (`host/project/path`) for any supported
@@ -52,14 +39,14 @@ nonisolated enum MergeRequestSourceContext {
     /// showing, or nil when that page does not display a merge request.
     static func launchSource(forURL url: URL, pageTitle: String?) -> SessionLaunchSource? {
         guard let parsed = parse(fromURL: url) else { return nil }
-        return .mergeRequest(host: parsed.host, iid: parsed.iid, title: pageTitle, url: url)
+        return .mergeRequest(iid: parsed.iid, title: pageTitle, url: url)
     }
 
     /// Normalizes HTTPS (`https://host/path.git`) and SSH
     /// (`git@host:path.git`, `ssh://git@host/path.git`) remote URLs to
-    /// lowercase host plus project path without `.git`. Merge-request and
-    /// pull-request tails collapse onto the project identity so remotes and
-    /// list URLs match one another.
+    /// lowercase host plus project path without `.git`. Merge-request tails
+    /// collapse onto the project identity so remotes and list URLs match one
+    /// another.
     static func normalizeRemoteURL(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -79,13 +66,10 @@ nonisolated enum MergeRequestSourceContext {
 
         host = host.lowercased()
 
-        // MR/PR URLs and remotes must collapse to one identity: drop any
+        // MR URLs and remotes must collapse to one identity: drop any
         // request tail before trimming `.git`.
         if let mrTail = path.range(of: "/-/merge_requests/[0-9]+", options: .regularExpression) {
             path = String(path[path.startIndex..<mrTail.lowerBound])
-        }
-        if let prTail = path.range(of: "/pull/[0-9]+", options: .regularExpression) {
-            path = String(path[path.startIndex..<prTail.lowerBound])
         }
 
         var segments = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)

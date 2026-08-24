@@ -2,7 +2,7 @@ import XCTest
 @testable import Console
 
 /// Pure launch-flow rules: automatic naming, starter-prompt generation,
-/// Jira, GitLab, and GitHub source parsing, remote normalization, and remote matching.
+/// Jira and GitLab source parsing, remote normalization, and remote matching.
 @MainActor
 final class SessionLaunchNamingTests: XCTestCase {
 
@@ -36,7 +36,6 @@ final class SessionLaunchNamingTests: XCTestCase {
 
     func testReviewUsesTheMergeRequestIID() {
         let source = SessionLaunchSource.mergeRequest(
-            host: .gitlab,
             iid: "42",
             title: nil,
             url: URL(string: "https://gitlab.com/grp/proj/-/merge_requests/42")!
@@ -94,7 +93,7 @@ final class SessionLaunchNamingTests: XCTestCase {
     func testReviewPromptIncludesOnlyIIDTitleAndURL() {
         let prompt = StarterPromptBuilder.prompt(
             for: .review,
-            source: .mergeRequest(host: .gitlab, iid: "42", title: "Add SSO", url: mrURL)
+            source: .mergeRequest(iid: "42", title: "Add SSO", url: mrURL)
         )
 
         XCTAssertEqual(
@@ -188,7 +187,7 @@ final class SessionLaunchNamingTests: XCTestCase {
         let jira = SessionLaunchSource.jira(key: "eng-123", title: "Secret title", url: jiraURL)
         XCTAssertEqual(jira.routingIdentity, "ENG")
 
-        let mr = SessionLaunchSource.mergeRequest(host: .gitlab, iid: "42", title: "Secret MR title", url: mrURL)
+        let mr = SessionLaunchSource.mergeRequest(iid: "42", title: "Secret MR title", url: mrURL)
         XCTAssertEqual(mr.routingIdentity, "gitlab.com/grp/proj")
     }
 

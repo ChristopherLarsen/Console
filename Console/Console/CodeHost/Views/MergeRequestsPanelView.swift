@@ -2,40 +2,34 @@ import SwiftUI
 import WebKit
 
 /// Shared Home merge-request panel (reviews and authored quadrants): native
-/// cards over the live, authenticated list page of one specific code host.
+/// cards over the live, authenticated GitLab list page.
 ///
 /// A `ZStack` keeps the shared list `WebView` permanently attached while an
 /// opaque native card surface covers it. In card mode the covered WebView has
 /// hit testing disabled and is hidden from accessibility, but the page stays
-/// alive so Show <Host> / Show Cards never loses authentication or history.
-///
-/// The panel is instantiated per concrete host; switching hosts swaps to the
-/// other host's retained pages and configuration without touching them.
+/// alive so Show GitLab / Show Cards never loses authentication or history.
 struct MergeRequestsPanelView: View {
-    let provider: CodeHostProvider
     let kind: CodeHostListKind
 
     @AppStorage(AppSettings.webViewGitLabReviewsURLKey) private var webViewGitLabReviewsURL: String = ""
     @AppStorage(AppSettings.webViewGitLabMyMergeRequestsURLKey) private var webViewGitLabMyMRsURL: String = ""
     @AppStorage(AppSettings.webViewMergeRequestsURLLegacyKey) private var legacyWebViewMergeRequestsURL: String = ""
-    @AppStorage(AppSettings.webViewGitHubReviewsURLKey) private var webViewGitHubReviewsURL: String = ""
-    @AppStorage(AppSettings.webViewGitHubMyPullRequestsURLKey) private var webViewGitHubMyPRsURL: String = ""
     @AppStorage("sidebarSelection") private var sidebarSelection: SidebarSelection = .home
 
     private var controller: CodeHostListPanelController {
-        MergeRequestListSession.shared(for: provider).controller(for: kind)
+        MergeRequestListSession.shared.controller(for: kind)
     }
 
     private var effectiveConfiguredURLString: String {
-        CodeHostConfiguration.effectiveURLString(for: kind, provider: provider)
+        CodeHostConfiguration.effectiveURLString(for: kind)
     }
 
     private var sessionStore: CodeHostWebSessionStore {
-        CodeHostWebSessionStore.shared(for: provider)
+        CodeHostWebSessionStore.shared
     }
 
     private var idPrefix: String {
-        provider == .gitlab ? "GitLabPanel" : "GitHubPanel"
+        "GitLabPanel"
     }
 
     var body: some View {
@@ -80,8 +74,6 @@ struct MergeRequestsPanelView: View {
             webViewGitLabReviewsURL,
             webViewGitLabMyMRsURL,
             legacyWebViewMergeRequestsURL,
-            webViewGitHubReviewsURL,
-            webViewGitHubMyPRsURL,
         ]
         .joined(separator: "\n")
     }
@@ -136,7 +128,7 @@ struct MergeRequestsPanelView: View {
         HomePanelHeader(
             title: kind.displayTitle,
             detail: {
-                HomePanelDetail(provider.displayName, "\(controller.itemCount)")
+                HomePanelDetail("GitLab", "\(controller.itemCount)")
             },
             accessory: {
                 if controller.isRefreshing {
@@ -151,7 +143,7 @@ struct MergeRequestsPanelView: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .disabled(!hasConfiguredURL)
-                .help("Refresh from \(provider.displayName)")
+                .help("Refresh from GitLab")
                 .accessibilityIdentifier("\(idPrefix)RefreshButton")
 
                 if controller.presentation == .cards {
@@ -160,8 +152,8 @@ struct MergeRequestsPanelView: View {
                     } label: {
                         Image(systemName: "macwindow.on.rectangle")
                     }
-                    .help("Show the live \(provider.displayName) page")
-                    .accessibilityIdentifier("\(idPrefix)Show\(provider == .gitlab ? "GitLab" : "GitHub")Button")
+                    .help("Show the live GitLab page")
+                    .accessibilityIdentifier("\(idPrefix)ShowGitLabButton")
                 }
             }
         )
@@ -230,7 +222,7 @@ struct MergeRequestsPanelView: View {
     private var unconfiguredState: some View {
         panelMessage(
             systemImage: "link.badge.plus",
-            title: "Set your \(provider.displayName) review list URL in Settings.",
+            title: "Set your GitLab review list URL in Settings.",
             detail: kind.listExpectationText,
             actionTitle: "Open Settings",
             action: { sidebarSelection = .settings },
@@ -248,16 +240,16 @@ struct MergeRequestsPanelView: View {
         }
         .padding(8)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Loading \(provider.displayName)")
+        .accessibilityLabel("Loading GitLab")
         .accessibilityIdentifier("\(idPrefix)LoadingState")
     }
 
     private var authenticationState: some View {
         panelMessage(
             systemImage: "lock.shield",
-            title: "Sign in to \(provider.displayName) to load your review list.",
-            detail: "Use Show \(provider.displayName) to sign in; Console never sees your credentials.",
-            actionTitle: "Show \(provider.displayName)",
+            title: "Sign in to GitLab to load your review list.",
+            detail: "Use Show GitLab to sign in; Console never sees your credentials.",
+            actionTitle: "Show GitLab",
             action: { controller.showBrowser() },
             accessibilityIdentifier: "\(idPrefix)AuthenticationState"
         )
@@ -286,7 +278,7 @@ struct MergeRequestsPanelView: View {
             systemImage: "questionmark.square.dashed",
             title: "This page is not a merge-request list.",
             detail: kind.listExpectationText,
-            actionTitle: "Show \(provider.displayName)",
+            actionTitle: "Show GitLab",
             action: { controller.showBrowser() },
             accessibilityIdentifier: "\(idPrefix)UnsupportedState"
         )
@@ -296,7 +288,7 @@ struct MergeRequestsPanelView: View {
         panelMessage(
             systemImage: "exclamationmark.triangle",
             title: "Console could not read the rendered list.",
-            detail: "Try Refresh, or use Show \(provider.displayName) for the raw page.",
+            detail: "Try Refresh, or use Show GitLab for the raw page.",
             actionTitle: "Refresh",
             action: { controller.refresh() },
             accessibilityIdentifier: "\(idPrefix)ExtractionFailedState"

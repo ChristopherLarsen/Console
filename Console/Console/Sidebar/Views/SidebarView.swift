@@ -4,12 +4,6 @@ import SwiftUI
 struct SidebarView: View {
     @Binding var selection: SidebarSelection
     @Environment(ThemeManager.self) private var themeManager
-    @AppStorage(AppSettings.codeHostProviderKey) private var codeHostProviderRaw: String = CodeHostProvider.gitlab.rawValue
-
-    /// The code host whose name and icon the merge-requests destination shows.
-    private var activeProvider: CodeHostProvider {
-        CodeHostProvider(rawValue: codeHostProviderRaw) ?? .gitlab
-    }
 
     var body: some View {
         ZStack {
@@ -61,8 +55,8 @@ struct SidebarView: View {
                         }
 
                         SidebarRow(
-                            label: activeProvider.displayName,
-                            icon: activeProvider.sidebarIcon,
+                            label: "GitLab",
+                            icon: "arrow.triangle.merge",
                             isSelected: selection == .mergeRequests
                         ) {
                             selection = .mergeRequests

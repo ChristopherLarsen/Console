@@ -26,7 +26,7 @@ struct MergeRequestCardView: View {
         .onHover { hovering = $0 }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint("Open merge request in \(AppSettings().codeHostProvider.displayName)")
+        .accessibilityHint("Open merge request in GitLab")
     }
 
     private var cardBody: some View {

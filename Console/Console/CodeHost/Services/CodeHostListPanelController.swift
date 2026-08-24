@@ -234,10 +234,10 @@ final class CodeHostListPanelController {
         return false
     }
 
-    /// Production extraction: run the active code host's DOM inspector via
+    /// Production extraction: run the GitLab DOM inspector via
     /// callJavaScript and return the JSON payload string.
     private static func defaultExecuteExtraction(_ page: WebPage) async throws -> String? {
-        try await page.callJavaScript(AppSettings().codeHostProvider.extractorJavaScriptSource) as? String
+        try await page.callJavaScript(GitLabListExtractorJavaScript.source) as? String
     }
 
     private func extractOnce() async -> MergeRequestListExtractionResult? {

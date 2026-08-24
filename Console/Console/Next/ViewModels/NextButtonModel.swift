@@ -21,7 +21,6 @@ final class NextButtonModel {
 
     /// Runs one Check pass: refresh MR lists, snapshot everything, ask the AI.
     func check(
-        provider: CodeHostProvider,
         sessionStore: SessionStore,
         jiraController: JiraPanelController,
         aiProviderManager: AIProviderManager?
@@ -37,12 +36,11 @@ final class NextButtonModel {
 
         checkTask = Task { [weak self] in
             guard let self else { return }
-            await MergeRequestListSession.shared(for: provider).refreshBoth()
+            await MergeRequestListSession.shared.refreshBoth()
 
             if Task.isCancelled { return }
 
             let snapshot = Self.gatherSnapshot(
-                provider: provider,
                 sessionStore: sessionStore,
                 jiraController: jiraController
             )
@@ -74,11 +72,10 @@ final class NextButtonModel {
 
     /// Pure-ish gather step; separated for clarity and future test seams.
     static func gatherSnapshot(
-        provider: CodeHostProvider,
         sessionStore: SessionStore,
         jiraController: JiraPanelController
     ) -> NextContextSnapshot {
-        let session = MergeRequestListSession.shared(for: provider)
+        let session = MergeRequestListSession.shared
         return NextContextSnapshot(
             reviewItems: session.items(for: .reviewsRequested),
             authoredItems: session.items(for: .authored),

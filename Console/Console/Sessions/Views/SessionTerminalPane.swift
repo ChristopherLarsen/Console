@@ -166,7 +166,7 @@ struct SessionInfoStrip: View {
     private func icon(for kind: SessionArtifactKind) -> String {
         switch kind {
         case .jiraIssue: return "ticket"
-        case .gitlabMergeRequest, .githubPullRequest: return "arrow.triangle.pull"
+        case .gitlabMergeRequest: return "arrow.triangle.merge"
         }
     }
 }

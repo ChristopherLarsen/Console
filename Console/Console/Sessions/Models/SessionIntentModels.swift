@@ -48,19 +48,19 @@ enum SessionPurpose: String, Codable, CaseIterable {
             if case let .jira(key, _, _) = source { return key }
             return "Existing Ticket"
         case .review:
-            if case let .mergeRequest(host, iid, _, _) = source {
-                return host.reviewNamePrefix + "\(iid)"
+            if case let .mergeRequest(iid, _, _) = source {
+                return "Review !\(iid)"
             }
             return "Review"
         }
     }
 }
 
-/// Memory-only context about the Jira ticket or code-host merge request a
+/// Memory-only context about the Jira ticket or GitLab merge request a
 /// launch came from. Never persisted and never leaves the process.
 nonisolated enum SessionLaunchSource: Equatable, Sendable {
     case jira(key: String, title: String?, url: URL?)
-    case mergeRequest(host: CodeHostProvider, iid: String, title: String?, url: URL)
+    case mergeRequest(iid: String, title: String?, url: URL)
 
     /// Stable routing identity used for hashed workspace associations.
     /// Titles are deliberately excluded. The identity is derived from the
@@ -70,7 +70,7 @@ nonisolated enum SessionLaunchSource: Equatable, Sendable {
         switch self {
         case let .jira(key, _, _):
             return JiraSourceContext.projectKeyPrefix(of: key)?.uppercased()
-        case let .mergeRequest(_, _, _, url):
+        case let .mergeRequest(_, _, url):
             return MergeRequestSourceContext.projectIdentity(inURL: url)
         }
     }
@@ -78,29 +78,21 @@ nonisolated enum SessionLaunchSource: Equatable, Sendable {
     var artifactLabel: String {
         switch self {
         case let .jira(key, _, _): return key
-        case let .mergeRequest(host, iid, _, _):
-            switch host {
-            case .gitlab: return "MR !\(iid)"
-            case .github: return "PR #\(iid)"
-            }
+        case let .mergeRequest(iid, _, _): return "MR !\(iid)"
         }
     }
 
     var artifactKind: SessionArtifactKind {
         switch self {
         case .jira: return .jiraIssue
-        case let .mergeRequest(host, _, _, _):
-            switch host {
-            case .gitlab: return .gitlabMergeRequest
-            case .github: return .githubPullRequest
-            }
+        case .mergeRequest: return .gitlabMergeRequest
         }
     }
 
     var artifactURL: URL? {
         switch self {
         case let .jira(_, _, url): return url
-        case let .mergeRequest(_, _, _, url): return url
+        case let .mergeRequest(_, _, url): return url
         }
     }
 }
@@ -248,55 +240,5 @@ nonisolated enum GitLabSourceContext {
         let segments = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
         guard segments.count >= 2 else { return nil }
         return ([host.lowercased()] + segments.map { $0.lowercased() }).joined(separator: "/")
-    }
-}
-
-/// Parses GitHub pull-request URLs (`https://github.com/{owner}/{repo}/pull/{n}`)
-/// out of strings the retained WebView already rendered. Results live only in
-/// memory.
-nonisolated enum GitHubSourceContext {
-    struct PullRequestInfo: Equatable {
-        let number: String
-        let projectIdentity: String
-        let projectURL: URL
-    }
-
-    static func parsePullRequest(from raw: String) -> PullRequestInfo? {
-        guard let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https",
-              url.host != nil else {
-            return nil
-        }
-        return parsePullRequest(fromURL: url)
-    }
-
-    static func parsePullRequest(fromURL url: URL) -> PullRequestInfo? {
-        guard let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https",
-              url.host != nil,
-              let numberMatch = url.path.firstMatch(of: /\/pull\/(\d+)/) else {
-            return nil
-        }
-        let number = String(numberMatch.1)
-        let projectPath = String(url.path[..<numberMatch.range.lowerBound])
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-        components.path = projectPath.hasSuffix("/") ? String(projectPath.dropLast()) : projectPath
-        components.query = nil
-        components.fragment = nil
-        guard let projectURL = components.url else { return nil }
-        // A GitHub pull request lives at exactly {owner}/{repo}/pull/{n};
-        // anything else is not a project we can match remotes against.
-        let segments = projectPath.split(separator: "/")
-        guard segments.count == 2 else { return nil }
-        guard let identity = GitLabSourceContext.projectIdentity(fromProjectHost: url.host ?? "", path: components.path) else {
-            return nil
-        }
-        return PullRequestInfo(number: number, projectIdentity: identity, projectURL: projectURL)
-    }
-
-    /// Normalized PR URL identity: lowercase host plus `{owner}/{repo}`.
-    static func projectIdentity(fromPullRequestURL url: URL) -> String? {
-        parsePullRequest(fromURL: url)?.projectIdentity
     }
 }

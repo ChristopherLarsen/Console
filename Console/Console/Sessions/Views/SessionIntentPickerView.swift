@@ -262,13 +262,13 @@ struct SessionIntentPickerView: View {
     private var mergeRequestContextStep: some View {
         inlineContextStep(
             title: "Start Review",
-            caption: "Paste the GitLab merge-request or GitHub pull-request URL.",
+            caption: "Paste the GitLab merge-request URL.",
             placeholder: "https://gitlab.example.com/group/project/-/merge_requests/42",
             purpose: .review,
             identifierPrefix: "Sessions.Launcher.MergeRequest"
         ) { raw in
             guard let info = MergeRequestSourceContext.parse(from: raw) else { return nil }
-            return .mergeRequest(host: info.host, iid: info.iid, title: nil, url: info.projectURL)
+            return .mergeRequest(iid: info.iid, title: nil, url: info.projectURL)
         }
     }
 

@@ -99,11 +99,11 @@ final class SessionLaunchCoordinator {
         return .jira(key: key, title: JiraWebSession.shared.page.title, url: url)
     }
 
-    /// Source parsed from whichever retained page (To Review or My list) of
-    /// the active code host is currently displaying a merge request.
+    /// Source parsed from whichever retained page (To Review or My list) is
+    /// currently displaying a merge request.
     /// Memory-only; nothing is fetched.
     func retainedMergeRequestSource() -> SessionLaunchSource? {
-        let store = CodeHostWebSessionStore.active
+        let store = CodeHostWebSessionStore.shared
         for page in [store.reviewsPage, store.authoredPage] {
             guard !page.isLoading, let url = page.url else { continue }
             if let source = MergeRequestSourceContext.launchSource(forURL: url, pageTitle: page.title) {
@@ -120,8 +120,8 @@ final class SessionLaunchCoordinator {
         startContextualLaunch(draft(purpose: .existingTicket, source: source))
     }
 
-    func beginMergeRequestReview(host: CodeHostProvider, iid: String, title: String?, url: URL) {
-        let source = SessionLaunchSource.mergeRequest(host: host, iid: iid, title: title, url: url)
+    func beginMergeRequestReview(iid: String, title: String?, url: URL) {
+        let source = SessionLaunchSource.mergeRequest(iid: iid, title: title, url: url)
         startContextualLaunch(draft(purpose: .review, source: source))
     }
 
@@ -231,7 +231,7 @@ final class SessionLaunchCoordinator {
         }
 
         // 3. Unique code-host remote match for review sources.
-        if case let .mergeRequest(_, _, _, url) = source,
+        if case let .mergeRequest(_, _, url) = source,
            let identity = MergeRequestSourceContext.projectIdentity(inURL: url) {
             switch resolver.match(projectIdentity: identity, in: workspaceStore.resolvableWorkspaces(purpose: purpose)) {
             case let .unique(workspace):

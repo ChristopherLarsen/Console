@@ -24,7 +24,6 @@ enum SessionAttention: String, Codable, Sendable, Equatable {
 enum SessionArtifactKind: String, Codable, Sendable, Equatable {
     case jiraIssue = "jira_issue"
     case gitlabMergeRequest = "gitlab_merge_request"
-    case githubPullRequest = "github_pull_request"
 }
 
 /// An informational artifact chip produced by the agent. Never fetched.

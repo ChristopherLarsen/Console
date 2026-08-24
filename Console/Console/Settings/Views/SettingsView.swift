@@ -12,15 +12,6 @@ struct SettingsView: View {
     @AppStorage("webViewMergeRequestsURL") private var webViewMergeRequestsURL: String = ""
     @AppStorage(AppSettings.webViewGitLabReviewsURLKey) private var webViewGitLabReviewsURL: String = ""
     @AppStorage(AppSettings.webViewGitLabMyMergeRequestsURLKey) private var webViewGitLabMyMergeRequestsURL: String = ""
-    @AppStorage(AppSettings.webViewGitHubReviewsURLKey) private var webViewGitHubReviewsURL: String = ""
-    @AppStorage(AppSettings.webViewGitHubMyPullRequestsURLKey) private var webViewGitHubMyPullRequestsURL: String = ""
-    @AppStorage(AppSettings.codeHostProviderKey) private var codeHostProviderRaw: String = CodeHostProvider.gitlab.rawValue
-
-    /// The code host whose URL fields Settings shows. Both hosts keep their
-    /// configured values; switching the selection never clears anything.
-    private var activeCodeHostProvider: CodeHostProvider {
-        CodeHostProvider(rawValue: codeHostProviderRaw) ?? .gitlab
-    }
 
     @AppStorage("cueTriggerRecognized") private var cueTriggerRecognized: String = AppSettings.CueSound.fishListening.rawValue
     @AppStorage("cueCommandRecognized") private var cueCommandRecognized: String = AppSettings.CueSound.happyFish.rawValue
@@ -53,8 +44,6 @@ struct SettingsView: View {
     @FocusState private var isMergeRequestsURLFocused: Bool
     @FocusState private var isGitLabReviewsURLFocused: Bool
     @FocusState private var isGitLabMyMRsURLFocused: Bool
-    @FocusState private var isGitHubReviewsURLFocused: Bool
-    @FocusState private var isGitHubMyPRsURLFocused: Bool
     @State private var importExportMessage: String?
     @State private var importExportSucceeded = false
     @State private var showImportExportAlert = false
@@ -321,16 +310,6 @@ struct SettingsView: View {
 
     private var urlsSection: some View {
         Section("URL's") {
-            Picker("Code Host", selection: $codeHostProviderRaw) {
-                ForEach(CodeHostProvider.allCases) { provider in
-                    Text(provider.displayName).tag(provider.rawValue)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 220)
-            .help("Which code host Console targets; only one is active at a time. Switching preserves both hosts' settings and sessions.")
-            .accessibilityIdentifier("CodeHostProviderPicker")
-
             defaultURLField(
                 title: "Web View JIRA URL",
                 prompt: "https://your-domain.atlassian.net",
@@ -342,50 +321,30 @@ struct SettingsView: View {
 
             defaultURLField(
                 title: "Web View Merge Requests URL",
-                prompt: "https://github.com/pulls",
+                prompt: "https://gitlab.com/dashboard/merge_requests",
                 caption: "The Merge Requests sidebar WebView opens this URL",
                 text: $webViewMergeRequestsURL,
                 isFocused: $isMergeRequestsURLFocused,
                 accessibilityIdentifier: "WebViewMergeRequestsURLField"
             )
 
-            if activeCodeHostProvider == .gitlab {
-                defaultURLField(
-                    title: "Web View GitLab Reviews URL",
-                    prompt: "https://gitlab.com/dashboard/merge_requests",
-                    caption: "Exact GitLab list of merge requests awaiting your review (Home MRs to Review panel)",
-                    text: $webViewGitLabReviewsURL,
-                    isFocused: $isGitLabReviewsURLFocused,
-                    accessibilityIdentifier: "WebViewGitLabReviewsURLField"
-                )
+            defaultURLField(
+                title: "Web View GitLab Reviews URL",
+                prompt: "https://gitlab.com/dashboard/merge_requests",
+                caption: "Exact GitLab list of merge requests awaiting your review (Home MRs to Review panel)",
+                text: $webViewGitLabReviewsURL,
+                isFocused: $isGitLabReviewsURLFocused,
+                accessibilityIdentifier: "WebViewGitLabReviewsURLField"
+            )
 
-                defaultURLField(
-                    title: "Web View GitLab My MRs URL",
-                    prompt: "https://gitlab.com/dashboard/merge_requests?state=opened",
-                    caption: "Exact GitLab list of merge requests you authored",
-                    text: $webViewGitLabMyMergeRequestsURL,
-                    isFocused: $isGitLabMyMRsURLFocused,
-                    accessibilityIdentifier: "WebViewGitLabMyMRsURLField"
-                )
-            } else {
-                defaultURLField(
-                    title: "Web View GitHub Reviews URL",
-                    prompt: "https://github.com/pulls/review-requested",
-                    caption: "Exact GitHub list of pull requests awaiting your review (Home PRs to Review panel)",
-                    text: $webViewGitHubReviewsURL,
-                    isFocused: $isGitHubReviewsURLFocused,
-                    accessibilityIdentifier: "WebViewGitHubReviewsURLField"
-                )
-
-                defaultURLField(
-                    title: "Web View GitHub My PRs URL",
-                    prompt: "https://github.com/pulls",
-                    caption: "Exact GitHub list of pull requests you authored",
-                    text: $webViewGitHubMyPullRequestsURL,
-                    isFocused: $isGitHubMyPRsURLFocused,
-                    accessibilityIdentifier: "WebViewGitHubMyPRsURLField"
-                )
-            }
+            defaultURLField(
+                title: "Web View GitLab My MRs URL",
+                prompt: "https://gitlab.com/dashboard/merge_requests?state=opened",
+                caption: "Exact GitLab list of merge requests you authored",
+                text: $webViewGitLabMyMergeRequestsURL,
+                isFocused: $isGitLabMyMRsURLFocused,
+                accessibilityIdentifier: "WebViewGitLabMyMRsURLField"
+            )
         }
     }
 

@@ -29,7 +29,7 @@ enum HomePanel: Int, CaseIterable, Identifiable {
 }
 
 /// Four-panel Home dashboard frame: JIRA tickets, sessions, and both hosted
-/// merge-request lists for whichever code host Console currently targets.
+/// GitLab merge-request lists.
 struct HomeView: View {
     private enum Layout {
         static let edgePadding: CGFloat = 12
@@ -39,13 +39,6 @@ struct HomeView: View {
     }
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @AppStorage(AppSettings.codeHostProviderKey) private var codeHostProviderRaw: String = CodeHostProvider.gitlab.rawValue
-
-    /// The code host whose panels Home renders right now. Switching hosts in
-    /// Settings re-renders these quadrants immediately.
-    private var activeProvider: CodeHostProvider {
-        CodeHostProvider(rawValue: codeHostProviderRaw) ?? .gitlab
-    }
 
     /// Accessibility text sizes need taller rows so placeholder text never clips.
     private var minimumPanelHeight: CGFloat {
@@ -93,7 +86,7 @@ struct HomeView: View {
         switch panel {
         case .jiraTickets: return "JIRA"
         case .sessions: return nil
-        case .gitLabReviews, .gitLabAuthored: return activeProvider.displayName
+        case .gitLabReviews, .gitLabAuthored: return "GitLab"
         }
     }
 
@@ -112,9 +105,9 @@ struct HomeView: View {
             case .sessions:
                 HomeSessionsPanelView()
             case .gitLabReviews:
-                MergeRequestsPanelView(provider: activeProvider, kind: .reviewsRequested)
+                MergeRequestsPanelView(kind: .reviewsRequested)
             case .gitLabAuthored:
-                MergeRequestsPanelView(provider: activeProvider, kind: .authored)
+                MergeRequestsPanelView(kind: .authored)
             }
         }
         .frame(

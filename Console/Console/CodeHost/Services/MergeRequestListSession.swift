@@ -1,8 +1,8 @@
 import Foundation
 import SwiftUI
 
-/// Process-scoped owner of the two merge-request list controllers for one
-/// code host, built on the retained pages from `CodeHostWebSessionStore`.
+/// Process-scoped owner of the two merge-request list controllers, built on
+/// the retained pages from `CodeHostWebSessionStore`.
 ///
 /// Home's panel views previously owned their controllers, so extracted lists
 /// died on every navigation away from Home. Holding the controllers here keeps
@@ -10,23 +10,10 @@ import SwiftUI
 /// current MR data and trigger refreshes without mounting Home.
 @MainActor
 final class MergeRequestListSession {
-    private static var instances: [CodeHostProvider: MergeRequestListSession] = [:]
-
-    /// The process-wide session for `provider`, creating it on first use.
-    static func shared(for provider: CodeHostProvider) -> MergeRequestListSession {
-        if let existing = instances[provider] { return existing }
-        let session = MergeRequestListSession(provider: provider)
-        instances[provider] = session
-        return session
-    }
-
-    let provider: CodeHostProvider
+    /// The process-wide session, creating it on first use.
+    static let shared = MergeRequestListSession()
 
     private var controllers: [CodeHostListKind: CodeHostListPanelController] = [:]
-
-    init(provider: CodeHostProvider) {
-        self.provider = provider
-    }
 
     /// The list controller for `kind`, creating it on first use. The same
     /// instance backs the Home panel and any off-screen reader (Next).
@@ -34,8 +21,8 @@ final class MergeRequestListSession {
         if let existing = controllers[kind] { return existing }
         let created = CodeHostListPanelController(
             kind: kind,
-            page: CodeHostWebSessionStore.shared(for: provider).page(for: kind),
-            configuredURLStringProvider: { CodeHostConfiguration.effectiveURLString(for: kind, provider: self.provider) }
+            page: CodeHostWebSessionStore.shared.page(for: kind),
+            configuredURLStringProvider: { CodeHostConfiguration.effectiveURLString(for: kind) }
         )
         controllers[kind] = created
         return created

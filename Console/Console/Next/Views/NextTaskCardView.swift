@@ -11,11 +11,6 @@ struct NextTaskCardView: View {
     @Environment(AIProviderManager.self) private var aiProviderManager: AIProviderManager?
     @Environment(SessionStore.self) private var sessionStore: SessionStore?
     @State private var model = NextButtonModel()
-    @AppStorage(AppSettings.codeHostProviderKey) private var codeHostProviderRaw: String = CodeHostProvider.gitlab.rawValue
-
-    private var activeProvider: CodeHostProvider {
-        CodeHostProvider(rawValue: codeHostProviderRaw) ?? .gitlab
-    }
 
     var body: some View {
         cardBody
@@ -206,7 +201,6 @@ struct NextTaskCardView: View {
 
     private func runCheck() {
         model.check(
-            provider: activeProvider,
             sessionStore: sessionStore ?? SessionStore(),
             jiraController: JiraWebSession.shared.panelController,
             aiProviderManager: aiProviderManager
@@ -246,7 +240,7 @@ struct NextTaskCardView: View {
     private func navigationHint(for task: NextTask) -> String {
         switch task.kind {
         case .reviewMergeRequest, .addressComments:
-            return "Tap to open \(activeProvider.displayName)"
+            return "Tap to open GitLab"
         case .sessionAttention:
             return "Tap to open session"
         case .newTicket:

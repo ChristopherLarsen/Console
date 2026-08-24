@@ -12,8 +12,8 @@ enum StarterPromptBuilder {
         switch source {
         case let .jira(key, title, url):
             return jiraPrompt(key: key, title: title, url: url)
-        case let .mergeRequest(host, iid, title, url):
-            return mergeRequestPrompt(host: host, iid: iid, title: title, url: url)
+        case let .mergeRequest(iid, title, url):
+            return mergeRequestPrompt(iid: iid, title: title, url: url)
         }
     }
 
@@ -35,8 +35,8 @@ enum StarterPromptBuilder {
         return lines.joined(separator: "\n")
     }
 
-    private static func mergeRequestPrompt(host: CodeHostProvider, iid: String, title: String?, url: URL) -> String {
-        let subject = host.mergeRequestSubjectTerm(iid)
+    private static func mergeRequestPrompt(iid: String, title: String?, url: URL) -> String {
+        let subject = "GitLab merge request \(iid)"
         var lines: [String] = []
         if let title, !title.isEmpty {
             lines.append("Review \(subject): \(title)")
@@ -50,17 +50,6 @@ enum StarterPromptBuilder {
                 + "including regressions, security issues, and missing tests. Do not modify files unless I ask."
         )
         return lines.joined(separator: "\n")
-    }
-}
-
-extension CodeHostProvider {
-    /// Human-readable subject for prompts, e.g. `GitLab merge request 42` or
-    /// `GitHub pull request 42`.
-    fileprivate func mergeRequestSubjectTerm(_ iid: String) -> String {
-        switch self {
-        case .gitlab: return "GitLab merge request \(iid)"
-        case .github: return "GitHub pull request \(iid)"
-        }
     }
 }
 

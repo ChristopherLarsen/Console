@@ -52,9 +52,9 @@ struct MergeRequestsNavigationBar: View {
             .help(page.isLoading ? "Stop" : "Reload")
 
             // One-click review launch when the retained page displays an MR.
-            if case let .mergeRequest(host, iid, title, url) = currentMergeRequestContext {
+            if case let .mergeRequest(iid, title, url) = currentMergeRequestContext {
                 Button {
-                    launchCoordinator.beginMergeRequestReview(host: host, iid: iid, title: title, url: url)
+                    launchCoordinator.beginMergeRequestReview(iid: iid, title: title, url: url)
                 } label: {
                     Label("Start Session", systemImage: "terminal")
                         .labelStyle(.titleAndIcon)

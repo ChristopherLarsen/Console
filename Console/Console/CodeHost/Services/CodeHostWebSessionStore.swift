@@ -1,33 +1,16 @@
 import SwiftUI
 import WebKit
 
-/// Process-scoped owner of the two retained pages for one code host.
+/// Process-scoped owner of the two retained list pages.
 ///
 /// Both pages are constructed with the SAME explicit persistent
-/// `WKWebsiteDataStore`, so signing into the host in one page makes the
+/// `WKWebsiteDataStore`, so signing into GitLab in one page makes the
 /// browser session available to the other. Each page keeps its own
 /// back-forward list.
-///
-/// Each provider owns its own store instance (`shared(for:)`); both
-/// instances share WebKit's default persistent website data store, which
-/// safely holds each host's cookies side by side. Switching hosts never
-/// touches the inactive host's pages or session.
 @MainActor
 final class CodeHostWebSessionStore {
-    private static var instances: [CodeHostProvider: CodeHostWebSessionStore] = [:]
-
-    /// The process-wide store for `provider`, creating it on first use.
-    static func shared(for provider: CodeHostProvider) -> CodeHostWebSessionStore {
-        if let existing = instances[provider] { return existing }
-        let store = CodeHostWebSessionStore()
-        instances[provider] = store
-        return store
-    }
-
-    /// Convenience for the currently configured host.
-    static var active: CodeHostWebSessionStore {
-        shared(for: AppSettings().codeHostProvider)
-    }
+    /// The process-wide store, creating it on first use.
+    static let shared = CodeHostWebSessionStore()
 
     /// The one explicit persistent store both pages are configured with.
     /// Never inspected for cookies, tokens, or other site data by Console.
