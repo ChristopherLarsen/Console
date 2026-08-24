@@ -25,30 +25,31 @@ struct TerminalPanelView: View {
     }
 
     private var controlBar: some View {
-        HStack {
-            Text("Terminal")
-                .font(.headline)
-                .foregroundStyle(.secondary)
+        Button {
+            withAnimation(Self.collapseAnimation) {
+                isExpanded.toggle()
+            }
+        } label: {
+            HStack {
+                Text("Terminal")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
 
-            Spacer()
+                Spacer()
 
-            Button {
-                withAnimation(Self.collapseAnimation) {
-                    isExpanded.toggle()
-                }
-            } label: {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.up")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
                     .contentTransition(.symbolEffect(.replace))
             }
-            .buttonStyle(.plain)
-            .help(isExpanded ? "Collapse Terminal" : "Expand Terminal")
-            .accessibilityIdentifier("ToggleTerminalCollapse")
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .buttonStyle(.plain)
+        .help(isExpanded ? "Collapse Terminal" : "Expand Terminal")
+        .accessibilityIdentifier("ToggleTerminalCollapse")
     }
 
     private var terminalContent: some View {
