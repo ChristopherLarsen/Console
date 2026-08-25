@@ -1,5 +1,9 @@
 # Console — Agent Instructions
 
+Owned by **agent-console** — start at `.opencode/agent/console.md` and
+`docs/agent-console/security-boundaries.md` (canonical restatement of the
+boundaries below).
+
 ## Two JIRA instances. Never confuse them.
 
 Console work touches two entirely separate Atlassian instances. They have
