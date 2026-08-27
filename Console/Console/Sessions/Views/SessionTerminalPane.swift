@@ -24,8 +24,9 @@ struct SessionTerminalPane: View {
                 Divider()
             }
 
-            TerminalHost(terminalView: session.terminalView)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            TerminalSurface {
+                TerminalHost(terminalView: session.terminalView)
+            }
         }
     }
 

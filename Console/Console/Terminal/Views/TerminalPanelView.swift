@@ -53,15 +53,9 @@ struct TerminalPanelView: View {
     }
 
     private var terminalContent: some View {
-        ZStack {
-            Color.black
-
+        TerminalSurface {
             TerminalViewWrapper(sessionManager: sessionManager)
-                .padding(10)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal, 10)
-        .padding(.bottom, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
