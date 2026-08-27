@@ -46,8 +46,11 @@ struct MainView: View {
         .onAppear {
             // Conservative migration from the removed bottom-terminal era.
             ConsoleNavigation.migrateLegacyTerminalNavigation()
-            // Start the persistent login shell even while the drawer is collapsed.
-            _ = terminalSessionManager.getOrCreateTerminalView()
+            // Start the persistent login shell and pre-heat its view off the
+            // critical path so the first drawer expansion is instant.
+            DispatchQueue.main.async {
+                terminalSessionManager.preheatTerminalView()
+            }
         }
         .onChange(of: tabSelection) { _, newValue in
             // Legacy callers may still set tabSelection; map to sidebar.

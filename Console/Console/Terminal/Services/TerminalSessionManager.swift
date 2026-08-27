@@ -51,6 +51,24 @@ final class TerminalSessionManager {
         }
     }
 
+    /// Warms the terminal view's layout, font metrics, and draw machinery
+    /// while the drawer is closed so the first expansion is instant. The view
+    /// is created with a zero frame and never laid out until mounted, which
+    /// is where the first-open lag comes from. Safe to call repeatedly: it
+    /// only runs while the view exists and is not yet in a view hierarchy.
+    func preheatTerminalView() {
+        let terminal = getOrCreateTerminalView()
+        guard terminal.superview == nil, terminal.frame.size == .zero else { return }
+
+        // A realistic drawer-sized frame forces font measurement, cell-grid
+        // sizing, TextKit setup, and one draw pass now instead of on mount.
+        // The shell also receives an early pty resize for a sane grid.
+        terminal.setFrameSize(NSSize(width: 800, height: 500))
+        terminal.layoutSubtreeIfNeeded()
+        terminal.needsDisplay = true
+        terminal.displayIfNeeded()
+    }
+
     // MARK: - Configuration
 
     private func configureAppearance(_ terminalView: LocalProcessTerminalView) {
