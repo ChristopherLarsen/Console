@@ -102,6 +102,14 @@ struct AIProviderConfigSection: View {
                     onRefresh: {
                         Task {
                             ModelCacheManager.shared.invalidateCache(for: provider)
+                            if provider == .lmStudio {
+                                // Retry doubles as the reconnect attempt: ping
+                                // the server, mirror the outcome in the status
+                                // row, and only search models if it connected.
+                                let result = await aiProviderManager.testConnection(for: provider)
+                                testResult = result
+                                guard result.isSuccess else { return }
+                            }
                             await fetchAvailableModels()
                         }
                     }
