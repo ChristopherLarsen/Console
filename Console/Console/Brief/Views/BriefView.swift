@@ -144,8 +144,11 @@ struct BriefView: View {
         let tasks = viewModel.brief?.todayTasks ?? []
         ForEach(tasks.indices, id: \.self) { index in
             HStack(spacing: 6) {
+                // The getter must be bounds-safe: on macOS the underlying
+                // NSTextField evaluates stale bindings while sibling rows
+                // are removed, so `index` can briefly outrun todayTasks.
                 TextField("Task \(index + 1)", text: Binding(
-                    get: { viewModel.brief?.todayTasks[index] ?? "" },
+                    get: { tasks.indices.contains(index) ? tasks[index] : "" },
                     set: { viewModel.updateTask(at: index, text: $0) }
                 ))
                 .textFieldStyle(.plain)
