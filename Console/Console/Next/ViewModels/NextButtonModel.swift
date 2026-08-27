@@ -19,6 +19,12 @@ final class NextButtonModel {
     private(set) var status: Status = .idle
     private var checkTask: Task<Void, Never>?
 
+    /// When the last check pass was started; drives the auto-check staleness rule.
+    private(set) var lastCheckStartedAt: Date?
+
+    /// A ready answer stays valid for this long; after that a re-entry reruns it.
+    static let freshnessWindow: TimeInterval = 5 * 60
+
     /// Runs one Check pass: refresh MR lists, snapshot everything, ask the AI.
     func check(
         sessionStore: SessionStore,
@@ -28,6 +34,7 @@ final class NextButtonModel {
         guard status != .checking else { return }
         checkTask?.cancel()
         status = .checking
+        lastCheckStartedAt = Date()
 
         guard let aiProviderManager else {
             status = .failed("AI provider is unavailable.")
@@ -66,6 +73,26 @@ final class NextButtonModel {
         checkTask?.cancel()
         checkTask = nil
         if status == .checking { status = .idle }
+    }
+
+    /// Auto-check rule for entering the Next view: run a fresh check when no
+    /// task has been identified yet, or when the last check is older than the
+    /// freshness window. A fresh, ready answer is left untouched.
+    func checkIfNeeded(
+        sessionStore: SessionStore,
+        jiraController: JiraPanelController,
+        aiProviderManager: AIProviderManager?
+    ) {
+        if case .ready = status,
+           let startedAt = lastCheckStartedAt,
+           Date().timeIntervalSince(startedAt) < Self.freshnessWindow {
+            return
+        }
+        check(
+            sessionStore: sessionStore,
+            jiraController: jiraController,
+            aiProviderManager: aiProviderManager
+        )
     }
 
     // MARK: - Snapshot

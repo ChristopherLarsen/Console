@@ -192,6 +192,8 @@ struct MainView: View {
         switch sidebarSelection {
         case .home:
             HomeView()
+        case .next:
+            NextView(selection: $sidebarSelection)
         case .brief:
             BriefView(workspacePathsProvider: {
                 workspaceStore.availableWorkspaces.map(\.directoryPath)

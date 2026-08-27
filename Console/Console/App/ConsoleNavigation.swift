@@ -29,7 +29,7 @@ enum ConsoleNavigation {
             UserDefaults.standard.set(TabSelection.myCommands.rawValue, forKey: tabKey)
         case .settings:
             UserDefaults.standard.set(TabSelection.settings.rawValue, forKey: tabKey)
-        case .sessions, .home, .brief, .aiProvider, .jira, .mergeRequests:
+        case .sessions, .home, .next, .brief, .aiProvider, .jira, .mergeRequests:
             break
         }
         UserDefaults.standard.synchronize()
@@ -80,9 +80,25 @@ enum ConsoleNavigation {
         show(.home)
     }
 
-    // MARK: - Session hotkeys (⌃1…⌃9)
+    // MARK: - Sidebar hotkeys (⌃1…⌃9)
 
-    /// Highest session hotkey number (Ctrl+1…Ctrl+9).
+    /// Sidebar destinations addressed by ⌃1…⌃9 in sidebar order.
+    /// Settings deliberately has no number.
+    static let sidebarHotkeyDestinations: [SidebarSelection] = [
+        .home, .next, .brief, .jira,
+        .mergeRequests, .triggers, .commands,
+        .aiProvider, .sessions
+    ]
+
+    /// The sidebar destination targeted by ⌃N; nil when N is out of range.
+    static func sidebarDestination(hotkeyNumber number: Int) -> SidebarSelection? {
+        guard sidebarHotkeyDestinations.indices.contains(number - 1) else { return nil }
+        return sidebarHotkeyDestinations[number - 1]
+    }
+
+    // MARK: - Session hotkeys (⌘1…⌘9)
+
+    /// Highest session hotkey number (Cmd+1…Cmd+9).
     static let maxSessionHotkeyNumber = 9
 
     /// The session targeted by the ⌃N session hotkey: the Nth session in

@@ -12,6 +12,7 @@ struct CapsuleButton: View {
     let systemImage: String?
     let style: Style
     let isDisabled: Bool
+    let controlSize: ControlSize
     let action: () -> Void
 
     init(
@@ -19,12 +20,14 @@ struct CapsuleButton: View {
         systemImage: String? = nil,
         style: Style = .primary,
         isDisabled: Bool = false,
+        controlSize: ControlSize = .large,
         action: @escaping () -> Void
     ) {
         self.title = title
         self.systemImage = systemImage
         self.style = style
         self.isDisabled = isDisabled
+        self.controlSize = controlSize
         self.action = action
     }
 
@@ -42,7 +45,7 @@ struct CapsuleButton: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(backgroundColor)
-        .controlSize(.large)
+        .controlSize(controlSize)
         .disabled(isDisabled)
     }
 
@@ -50,14 +53,14 @@ struct CapsuleButton: View {
         Button(action: action) {
             buttonLabel
                 .foregroundStyle(.primary)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 6)
+                .padding(.horizontal, controlSize == .small ? 12 : 20)
+                .padding(.vertical, controlSize == .small ? 3 : 6)
                 .background(Color(nsColor: .windowBackgroundColor))
                 .clipShape(Capsule())
                 .overlay(Capsule().stroke(Color.primary, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .controlSize(.large)
+        .controlSize(controlSize)
         .disabled(isDisabled)
     }
 

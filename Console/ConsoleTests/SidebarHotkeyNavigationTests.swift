@@ -52,7 +52,35 @@ final class SidebarHotkeyNavigationTests: XCTestCase {
         try store.createSession(name: name, workingDirectory: tmpDirectory(name))
     }
 
-    // MARK: - Hotkey mapping
+    // MARK: - Sidebar hotkeys (⌃1…⌃9)
+
+    func testSidebarHotkeysMapInSidebarOrder() {
+        let expected: [SidebarSelection] = [
+            .home, .next, .brief, .jira,
+            .mergeRequests, .triggers, .commands,
+            .aiProvider, .sessions
+        ]
+
+        for (index, destination) in expected.enumerated() {
+            XCTAssertEqual(
+                ConsoleNavigation.sidebarDestination(hotkeyNumber: index + 1),
+                destination,
+                "⌃\(index + 1) must target the sidebar \(destination.label) tab"
+            )
+        }
+    }
+
+    func testSidebarHotkeyNineIsSessionsAndSettingsIsUnreachable() {
+        XCTAssertEqual(ConsoleNavigation.sidebarDestination(hotkeyNumber: 9), .sessions)
+        XCTAssertNil(ConsoleNavigation.sidebarDestination(hotkeyNumber: 10))
+    }
+
+    func testSidebarHotkeyRejectsOutOfRangeNumbers() {
+        XCTAssertNil(ConsoleNavigation.sidebarDestination(hotkeyNumber: 0))
+        XCTAssertNil(ConsoleNavigation.sidebarDestination(hotkeyNumber: -1))
+    }
+
+    // MARK: - Session hotkeys (⌘1…⌘9)
 
     func testHotkeyNumbersTargetNthSessionInStoreOrder() throws {
         let store = makeStore()
@@ -65,7 +93,7 @@ final class SidebarHotkeyNavigationTests: XCTestCase {
             XCTAssertEqual(
                 ConsoleNavigation.hotkeySessionID(number: number, in: store.sessions),
                 ids[number - 1],
-                "⌃\(number) must target the \(number)\(ordinalSuffix(number)) session"
+                "⌘\(number) must target the \(number)\(ordinalSuffix(number)) session"
             )
         }
     }

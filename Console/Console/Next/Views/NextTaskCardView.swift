@@ -1,12 +1,14 @@
 import SwiftUI
 
-/// The large square Next card at the bottom of the sidebar, just above the
-/// separator over Settings. Shows "Check" until asked; then asks the
-/// configured AI provider what to do next (falling back to a deterministic
-/// local pick) and renders the resulting task. Tapping the ready card takes
-/// the user straight to that work.
+/// The full-width Next card in the Next destination. Shows "Check" until
+/// asked; then asks the configured AI provider what to do next (falling back
+/// to a deterministic local pick) and renders the resulting task. Tapping the
+/// ready card takes the user straight to that work.
 struct NextTaskCardView: View {
     @Binding var selection: SidebarSelection
+
+    /// Content-hugging floor for the full-width panel (Christopher's spec).
+    static let minimumHeight: CGFloat = 150
 
     @Environment(AIProviderManager.self) private var aiProviderManager: AIProviderManager?
     @Environment(SessionStore.self) private var sessionStore: SessionStore?
@@ -14,7 +16,7 @@ struct NextTaskCardView: View {
 
     var body: some View {
         cardBody
-            .aspectRatio(1, contentMode: .fit)
+            .frame(minHeight: Self.minimumHeight)
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(LinearGradient(
@@ -55,11 +57,11 @@ struct NextTaskCardView: View {
                         .foregroundStyle(.white.opacity(0.9))
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
                     footnote("Tap to retry")
                 }
                 .padding(14)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .buttonStyle(.plain)
 
@@ -82,7 +84,7 @@ struct NextTaskCardView: View {
                 .lineLimit(2)
         }
         .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var needsProviderContent: some View {
@@ -101,7 +103,7 @@ struct NextTaskCardView: View {
                 .foregroundStyle(.white.opacity(0.6))
         }
         .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var checkingContent: some View {
@@ -117,7 +119,7 @@ struct NextTaskCardView: View {
                 .lineLimit(2)
         }
         .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("NextTaskChecking")
     }
 
@@ -152,7 +154,7 @@ struct NextTaskCardView: View {
             }
         }
         .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .accessibilityIdentifier("NextTaskReady")
     }
 
@@ -270,6 +272,6 @@ struct NextTaskCardView: View {
     NextTaskCardView(selection: $selection)
         .environment(AIProviderManager())
         .environment(SessionStore())
-        .frame(width: 180)
+        .frame(width: 560)
         .padding()
 }
