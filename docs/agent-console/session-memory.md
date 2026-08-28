@@ -27,6 +27,11 @@ _Rewritten in full at the end of each session by agent-console._
   Legacy ⌃0 "Sessions (No Selection)" menu item REMOVED at Christopher's ask
   (clearSelection() still used by openHotkeySession on miss). Menu shortcuts
   override macOS window-cycling on ⌘`.
+- Menu bar buddy icons regenerated 2026-08-27: four 32x32 black+alpha PNGs
+  drawn via CoreGraphics script (poses: sleeping/bored/awake/attentive),
+  Contents.json now carry template-rendering-intent. RULE: any menubar icon
+  here must be transparent-bg black+alpha — MenuBarManager sets isTemplate,
+  so opaque colored art renders as washed-grey blobs.
 - Morning Brief crash FIXED: BriefView task-row TextField binding getter
   subscripted todayTasks unguarded; NSTextField evaluates stale bindings while
   sibling rows delete → Index out of range. Getter now reads the per-render
