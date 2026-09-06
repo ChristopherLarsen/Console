@@ -3,8 +3,40 @@ import Foundation
 /// One activity item collected from a workspace repository.
 struct CommitActivity: Equatable, Sendable {
     let repositoryName: String
+    let repositoryIdentity: String
+    let commitHash: String
+    let authorEmail: String
+    let authorName: String
     let subject: String
     let committedAt: Date
+
+    init(
+        repositoryName: String,
+        subject: String,
+        committedAt: Date,
+        repositoryIdentity: String = "",
+        commitHash: String = "",
+        authorEmail: String = "",
+        authorName: String = ""
+    ) {
+        self.repositoryName = repositoryName
+        self.repositoryIdentity = repositoryIdentity
+        self.commitHash = commitHash
+        self.authorEmail = authorEmail
+        self.authorName = authorName
+        self.subject = subject
+        self.committedAt = committedAt
+    }
+
+    /// Canonical repository identity plus commit hash when both are known;
+    /// otherwise a display-line key so synthetic fixtures keep working.
+    var attributionKey: String {
+        let identity = repositoryIdentity.isEmpty ? repositoryName : repositoryIdentity
+        if !commitHash.isEmpty {
+            return identity.lowercased() + "\n" + commitHash.lowercased()
+        }
+        return "line:\(BriefComposer.reportLine(for: self))"
+    }
 }
 
 /// Pure composition of `MorningBrief` content from collected activity.
@@ -15,28 +47,68 @@ enum BriefComposer {
 
     // MARK: - Git log parsing
 
-    static let gitLogFormat = "%cI%x09%s"
+    /// Full hash, author email, author name, author date, subject.
+    static let gitLogFormat = "%H%x00%aE%x00%aN%x00%aI%x00%s"
 
-    /// Parses `git log --pretty=format:%cI%x09%s` output into activities.
+    /// Parses `git log --pretty=format:%H%x00%aE%x00%aN%x00%aI%x00%s`.
     /// Never runs git itself.
-    static func parseGitLogOutput(_ output: String, repositoryName: String) -> [CommitActivity] {
-        let formatter = ISO8601DateFormatter()
+    static func parseGitLogOutput(
+        _ output: String,
+        repositoryName: String,
+        repositoryIdentity: String = ""
+    ) -> [CommitActivity] {
+        let identity = repositoryIdentity.isEmpty ? repositoryName : repositoryIdentity
         return output
             .split(whereSeparator: \.isNewline)
             .compactMap { line -> CommitActivity? in
-                let parts = line.split(
-                    separator: "\t",
-                    maxSplits: 1,
+                let parts = String(line).split(
+                    separator: "\0",
+                    maxSplits: 4,
                     omittingEmptySubsequences: false
                 )
-                guard parts.count == 2 else { return nil }
-                guard let date = formatter.date(from: String(parts[0])) else { return nil }
-                let subject = String(parts[1]).trimmingCharacters(in: .whitespaces)
-                guard !subject.isEmpty else { return nil }
-                return CommitActivity(repositoryName: repositoryName,
-                                      subject: subject,
-                                      committedAt: date)
+                guard parts.count == 5 else { return nil }
+                let hash = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                let email = String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let name = String(parts[2]).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let date = parseISODate(String(parts[3])) else { return nil }
+                let subject = String(parts[4]).trimmingCharacters(in: .whitespaces)
+                guard !hash.isEmpty, !subject.isEmpty else { return nil }
+                return CommitActivity(
+                    repositoryName: repositoryName,
+                    subject: subject,
+                    committedAt: date,
+                    repositoryIdentity: identity,
+                    commitHash: hash,
+                    authorEmail: email,
+                    authorName: name
+                )
             }
+    }
+
+    static func matching(_ identity: BriefAuthorIdentity,
+                         in activities: [CommitActivity]) -> [CommitActivity] {
+        guard identity.isUsable else { return [] }
+        return activities.filter {
+            identity.matches(authorEmail: $0.authorEmail, authorName: $0.authorName)
+        }
+    }
+
+    static func occurring(_ activities: [CommitActivity],
+                          in interval: DateInterval) -> [CommitActivity] {
+        activities.filter { activity in
+            activity.committedAt >= interval.start && activity.committedAt < interval.end
+        }
+    }
+
+    /// Keeps the first occurrence of each canonical repository + commit hash.
+    static func deduplicated(_ activities: [CommitActivity]) -> [CommitActivity] {
+        var seen = Set<String>()
+        var unique: [CommitActivity] = []
+        for activity in activities {
+            guard seen.insert(activity.attributionKey).inserted else { continue }
+            unique.append(activity)
+        }
+        return unique
     }
 
     // MARK: - Composition
@@ -44,10 +116,14 @@ enum BriefComposer {
     /// Builds the deterministic local brief for `day`. Yesterday lines come
     /// from commit activity; today tasks carry forward from the most recent
     /// earlier brief so the user keeps their plan across days.
-    static func compose(day: Date,
-                        activities: [CommitActivity],
-                        carriedTasks: [String],
-                        now: Date = Date()) -> MorningBrief {
+    static func compose(
+        day: Date,
+        activities: [CommitActivity],
+        carriedTasks: [String],
+        now: Date = Date(),
+        activityRange: DateInterval? = nil,
+        sourceRepositoryNames: [String] = []
+    ) -> MorningBrief {
         let lines = activities.isEmpty
             ? [Self.quietDayLine]
             : yesterdayLines(from: activities)
@@ -58,19 +134,22 @@ enum BriefComposer {
             todayTasks: tasks,
             generatedAt: now,
             source: .local,
-            tasksManuallyEdited: false
+            tasksManuallyEdited: false,
+            activityRangeStart: activityRange?.start,
+            activityRangeEnd: activityRange?.end,
+            sourceRepositoryNames: Self.uniqueNames(sourceRepositoryNames)
         )
     }
 
-    /// Terse "Repo — subject" lines, most recent first, deduplicated,
-    /// clamped to the report limit.
+    /// Terse "Repo — subject" lines, most recent first, clamped to the
+    /// report limit. Identical commits (same repository identity + hash)
+    /// appear once; same-basename independent repositories stay distinct.
     static func yesterdayLines(from activities: [CommitActivity]) -> [String] {
         var seen = Set<String>()
         var lines: [String] = []
         for activity in activities.sorted(by: { $0.committedAt > $1.committedAt }) {
-            let line = reportLine(for: activity)
-            guard seen.insert(line).inserted else { continue }
-            lines.append(line)
+            guard seen.insert(activity.attributionKey).inserted else { continue }
+            lines.append(reportLine(for: activity))
             if lines.count == MorningBrief.maxYesterdayLines { break }
         }
         return lines
@@ -88,4 +167,23 @@ enum BriefComposer {
     }
 
     static let quietDayLine = "Quiet day — no commits recorded."
+
+    static func uniqueNames(_ names: [String]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for name in names where !name.isEmpty {
+            guard seen.insert(name).inserted else { continue }
+            ordered.append(name)
+        }
+        return ordered
+    }
+
+    private static func parseISODate(_ raw: String) -> Date? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: trimmed) { return date }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: trimmed)
+    }
 }

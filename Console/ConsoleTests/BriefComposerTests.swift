@@ -14,18 +14,43 @@ final class BriefComposerTests: XCTestCase {
         dayFormatter.date(from: string)!
     }
 
+    private func gitLine(
+        hash: String,
+        email: String,
+        name: String,
+        isoDate: String,
+        subject: String
+    ) -> String {
+        [hash, email, name, isoDate, subject].joined(separator: "\0")
+    }
+
+    private func newYorkCalendar() -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        return calendar
+    }
+
     // MARK: - Git log parsing
 
-    func testParseGitLogOutputParsesSubjectsAndDates() {
+    func testParseGitLogOutputParsesHashAuthorSubjectAndDates() {
         let output = """
-        2026-08-22T09:15:00-07:00\tAdd Go-menu session hotkeys
-        2026-08-22T14:40:00-07:00\tFix drawer resize flicker
+        \(gitLine(hash: "aaa111", email: "dev@example.test", name: "Dev", isoDate: "2026-08-22T09:15:00-07:00", subject: "Add Go-menu session hotkeys"))
+        \(gitLine(hash: "bbb222", email: "dev@example.test", name: "Dev", isoDate: "2026-08-22T14:40:00-07:00", subject: "Fix drawer resize flicker"))
 
         """
-        let activities = BriefComposer.parseGitLogOutput(output, repositoryName: "Console")
+        let activities = BriefComposer.parseGitLogOutput(
+            output,
+            repositoryName: "Console",
+            repositoryIdentity: "/tmp/console.git"
+        )
 
         XCTAssertEqual(activities.count, 2)
         XCTAssertEqual(activities[0].repositoryName, "Console")
+        XCTAssertEqual(activities[0].repositoryIdentity, "/tmp/console.git")
+        XCTAssertEqual(activities[0].commitHash, "aaa111")
+        XCTAssertEqual(activities[0].authorEmail, "dev@example.test")
+        XCTAssertEqual(activities[0].authorName, "Dev")
         XCTAssertEqual(activities[0].subject, "Add Go-menu session hotkeys")
         XCTAssertEqual(activities[0].committedAt, date("2026-08-22T09:15:00-0700"))
         XCTAssertEqual(activities[1].subject, "Fix drawer resize flicker")
@@ -33,9 +58,10 @@ final class BriefComposerTests: XCTestCase {
 
     func testParseGitLogOutputSkipsMalformedLines() {
         let output = """
-        not-a-date\tGhost commit
-        2026-08-22T09:15:00-07:00
-        2026-08-22T10:00:00-07:00\t
+        not-enough-fields
+        \(gitLine(hash: "abc", email: "a@b.test", name: "A", isoDate: "not-a-date", subject: "Ghost"))
+        \(gitLine(hash: "", email: "a@b.test", name: "A", isoDate: "2026-08-22T10:00:00-07:00", subject: "Empty hash"))
+        \(gitLine(hash: "def", email: "a@b.test", name: "A", isoDate: "2026-08-22T10:00:00-07:00", subject: ""))
 
         """
         let activities = BriefComposer.parseGitLogOutput(output, repositoryName: "Repo")
@@ -43,10 +69,206 @@ final class BriefComposerTests: XCTestCase {
     }
 
     func testParseGitLogOutputKeepsTabsInsideSubjects() {
-        let output = "2026-08-22T09:15:00-07:00\tSubject with\tan embedded tab\n"
+        let output = gitLine(
+            hash: "abc",
+            email: "dev@example.test",
+            name: "Dev",
+            isoDate: "2026-08-22T09:15:00-07:00",
+            subject: "Subject with\tan embedded tab"
+        ) + "\n"
         let activities = BriefComposer.parseGitLogOutput(output, repositoryName: "Repo")
         XCTAssertEqual(activities.count, 1)
         XCTAssertEqual(activities[0].subject, "Subject with\tan embedded tab")
+    }
+
+    // MARK: - Attribution filter and dedup
+
+    func testMatchingKeepsOnlySelectedAuthor() {
+        let alice = BriefAuthorIdentity(name: "Alice", emails: ["alice@example.test"])
+        let activities = [
+            CommitActivity(
+                repositoryName: "Repo",
+                subject: "Alice work",
+                committedAt: date("2026-09-04T12:00:00-0400"),
+                commitHash: "a1",
+                authorEmail: "alice@example.test",
+                authorName: "Alice"
+            ),
+            CommitActivity(
+                repositoryName: "Repo",
+                subject: "Bob work",
+                committedAt: date("2026-09-04T13:00:00-0400"),
+                commitHash: "b1",
+                authorEmail: "bob@example.test",
+                authorName: "Bob"
+            )
+        ]
+        let matched = BriefComposer.matching(alice, in: activities)
+        XCTAssertEqual(matched.map(\.subject), ["Alice work"])
+    }
+
+    func testMatchingHonorsEmailAliasesAndIgnoresCase() {
+        let identity = BriefAuthorIdentity(
+            name: "Alice",
+            emails: ["alice@example.test", "alice.work@example.test"]
+        )
+        let activities = [
+            CommitActivity(
+                repositoryName: "Repo",
+                subject: "Personal",
+                committedAt: Date(),
+                commitHash: "1",
+                authorEmail: "Alice@example.test",
+                authorName: "Alice"
+            ),
+            CommitActivity(
+                repositoryName: "Repo",
+                subject: "Work",
+                committedAt: Date(),
+                commitHash: "2",
+                authorEmail: "alice.work@example.test",
+                authorName: "Alice"
+            ),
+            CommitActivity(
+                repositoryName: "Repo",
+                subject: "Teammate",
+                committedAt: Date(),
+                commitHash: "3",
+                authorEmail: "bob@example.test",
+                authorName: "Bob"
+            )
+        ]
+        let matched = BriefComposer.matching(identity, in: activities)
+        XCTAssertEqual(Set(matched.map(\.subject)), ["Personal", "Work"])
+    }
+
+    func testDeduplicatedCollapsesLinkedWorktreeHashesAndKeepsIndependentRepos() {
+        let shared = "/private/tmp/shared.git"
+        let linkedDuplicate = [
+            CommitActivity(
+                repositoryName: "Main",
+                subject: "Shared commit",
+                committedAt: date("2026-09-04T12:00:00-0400"),
+                repositoryIdentity: shared,
+                commitHash: "deadbeef",
+                authorEmail: "dev@example.test",
+                authorName: "Dev"
+            ),
+            CommitActivity(
+                repositoryName: "Linked",
+                subject: "Shared commit",
+                committedAt: date("2026-09-04T12:00:00-0400"),
+                repositoryIdentity: shared,
+                commitHash: "DEADBEEF",
+                authorEmail: "dev@example.test",
+                authorName: "Dev"
+            )
+        ]
+        XCTAssertEqual(BriefComposer.deduplicated(linkedDuplicate).count, 1)
+
+        let independent = [
+            CommitActivity(
+                repositoryName: "Console",
+                subject: "Same subject",
+                committedAt: date("2026-09-04T12:00:00-0400"),
+                repositoryIdentity: "/tmp/one/.git",
+                commitHash: "aaaa",
+                authorEmail: "dev@example.test",
+                authorName: "Dev"
+            ),
+            CommitActivity(
+                repositoryName: "Console",
+                subject: "Same subject",
+                committedAt: date("2026-09-04T12:05:00-0400"),
+                repositoryIdentity: "/tmp/two/.git",
+                commitHash: "bbbb",
+                authorEmail: "dev@example.test",
+                authorName: "Dev"
+            )
+        ]
+        XCTAssertEqual(BriefComposer.deduplicated(independent).count, 2)
+        XCTAssertEqual(BriefComposer.yesterdayLines(from: independent).count, 2)
+    }
+
+    // MARK: - Date range
+
+    func testYesterdayRangeUsesPreviousCalendarDay() {
+        let calendar = newYorkCalendar()
+        let monday = date("2026-09-07T09:00:00-0400")
+        let interval = BriefDateRangeSelection.yesterday.interval(relativeTo: monday, calendar: calendar)
+        XCTAssertEqual(interval.start, calendar.startOfDay(for: date("2026-09-06T12:00:00-0400")))
+        XCTAssertEqual(interval.end, calendar.startOfDay(for: monday))
+        XCTAssertEqual(
+            BriefDateRangeSelection.inclusiveEnd(of: interval, calendar: calendar),
+            calendar.startOfDay(for: date("2026-09-06T12:00:00-0400"))
+        )
+    }
+
+    func testCustomRangeIncludesChosenDaysInSelectedTimeZone() {
+        let calendar = newYorkCalendar()
+        let monday = date("2026-09-07T09:00:00-0400")
+        let friday = date("2026-09-04T18:00:00-0400")
+        let sunday = date("2026-09-06T08:00:00-0400")
+        let selection = BriefDateRangeSelection(
+            preset: .custom,
+            customStart: friday,
+            customEnd: sunday
+        )
+        let interval = selection.interval(relativeTo: monday, calendar: calendar)
+        XCTAssertEqual(interval.start, calendar.startOfDay(for: friday))
+        XCTAssertEqual(interval.end, calendar.startOfDay(for: monday))
+
+        let inside = CommitActivity(
+            repositoryName: "Repo",
+            subject: "Friday work",
+            committedAt: date("2026-09-04T00:30:00-0400")
+        )
+        let before = CommitActivity(
+            repositoryName: "Repo",
+            subject: "Thursday work",
+            committedAt: date("2026-09-03T23:30:00-0400")
+        )
+        let after = CommitActivity(
+            repositoryName: "Repo",
+            subject: "Monday work",
+            committedAt: date("2026-09-07T00:00:00-0400")
+        )
+        let inRange = BriefComposer.occurring([before, inside, after], in: interval)
+        XCTAssertEqual(inRange.map(\.subject), ["Friday work"])
+    }
+
+    func testDayBoundariesRespectSelectedTimeZone() {
+        let calendar = newYorkCalendar()
+        let day = calendar.startOfDay(for: date("2026-09-05T12:00:00-0400"))
+        let interval = DateInterval(
+            start: day,
+            end: calendar.date(byAdding: .day, value: 1, to: day)!
+        )
+        let justBefore = CommitActivity(
+            repositoryName: "Repo",
+            subject: "Thursday late",
+            committedAt: date("2026-09-04T23:59:00-0400")
+        )
+        let start = CommitActivity(
+            repositoryName: "Repo",
+            subject: "Friday start",
+            committedAt: date("2026-09-05T00:00:00-0400")
+        )
+        let justBeforeEnd = CommitActivity(
+            repositoryName: "Repo",
+            subject: "Friday late",
+            committedAt: date("2026-09-05T23:59:00-0400")
+        )
+        let nextDay = CommitActivity(
+            repositoryName: "Repo",
+            subject: "Saturday start",
+            committedAt: date("2026-09-06T00:00:00-0400")
+        )
+        let inRange = BriefComposer.occurring(
+            [justBefore, start, justBeforeEnd, nextDay],
+            in: interval
+        )
+        XCTAssertEqual(inRange.map(\.subject), ["Friday start", "Friday late"])
     }
 
     // MARK: - Report lines
@@ -105,6 +327,23 @@ final class BriefComposerTests: XCTestCase {
 
         XCTAssertEqual(brief.todayTasks, ["Task one", "Task two"])
         XCTAssertEqual(brief.yesterdayLines, ["Alpha — Did a thing"])
+    }
+
+    func testComposeRecordsRangeAndSourceRepositories() {
+        let calendar = newYorkCalendar()
+        let monday = calendar.startOfDay(for: date("2026-09-07T09:00:00-0400"))
+        let interval = BriefDateRangeSelection.yesterday.interval(relativeTo: monday, calendar: calendar)
+        let brief = BriefComposer.compose(
+            day: monday,
+            activities: [CommitActivity(repositoryName: "Console", subject: "Work", committedAt: interval.start)],
+            carriedTasks: [],
+            activityRange: interval,
+            sourceRepositoryNames: ["Console", "Console", "Pufferfishh"]
+        )
+        XCTAssertEqual(brief.activityRangeStart, interval.start)
+        XCTAssertEqual(brief.activityRangeEnd, interval.end)
+        XCTAssertEqual(brief.sourceRepositoryNames, ["Console", "Pufferfishh"])
+        XCTAssertFalse(brief.activityRangeDescription(calendar: calendar, locale: Locale(identifier: "en_US_POSIX")).isEmpty)
     }
 
     func testReportLinesProduceFiveLineExecReport() {

@@ -9,21 +9,43 @@ final class BriefViewModel {
     private(set) var isRefining = false
     private(set) var errorMessage: String?
     private(set) var showCopiedFeedback = false
+    private(set) var aliasDrafts: [UUID: String] = [:]
+    private(set) var authorRows: [BriefAuthorDisplayRow] = []
 
     @ObservationIgnored private let generationService: BriefGenerationService
-    @ObservationIgnored private let workspacePathsProvider: () -> [String]
+    @ObservationIgnored private let workspacesProvider: () -> [BriefWorkspaceSnapshot]
     @ObservationIgnored private let injectedRefiner: (any BriefRefining)?
+    @ObservationIgnored private let identityReader: (any BriefIdentityReading)?
     @ObservationIgnored private var copiedFeedbackTask: Task<Void, Never>?
     @ObservationIgnored private var operationTask: Task<Void, Never>?
     @ObservationIgnored private var currentOperation: BriefOperationToken?
     @ObservationIgnored private var preparedDay: Date?
 
+    let attributionStore: BriefAttributionStore
+
     init(generationService: BriefGenerationService? = nil,
          workspacePathsProvider: @escaping () -> [String] = { [] },
-         refiner: (any BriefRefining)? = nil) {
+         workspacesProvider: (() -> [BriefWorkspaceSnapshot])? = nil,
+         refiner: (any BriefRefining)? = nil,
+         attributionStore: BriefAttributionStore? = nil,
+         identityReader: (any BriefIdentityReading)? = nil) {
         self.generationService = generationService ?? BriefGenerationService()
-        self.workspacePathsProvider = workspacePathsProvider
+        self.workspacesProvider = workspacesProvider ?? {
+            workspacePathsProvider().map { path in
+                BriefWorkspaceSnapshot(
+                    id: UUID(),
+                    name: URL(fileURLWithPath: path).lastPathComponent,
+                    directoryPath: path
+                )
+            }
+        }
         self.injectedRefiner = refiner
+        self.attributionStore = attributionStore ?? BriefAttributionStore()
+        self.identityReader = identityReader
+    }
+
+    var dateRange: BriefDateRangeSelection {
+        attributionStore.dateRange
     }
 
     // MARK: - Lifecycle
@@ -45,14 +67,18 @@ final class BriefViewModel {
         }
 
         let token = startOperation(.generate, day: day)
-        let paths = workspacePathsProvider()
         operationTask = Task { [weak self, generationService] in
+            guard let self else { return }
+            let sources = await self.resolvedSources()
+            self.refreshAuthorRows()
+            let range = self.attributionStore.dateRange
             let outcome = await generationService.ensureBrief(
                 for: now,
-                workspacePaths: paths,
+                sources: sources,
+                range: range,
                 token: token
             )
-            self?.applyOutcome(outcome, token: token)
+            self.applyOutcome(outcome, token: token)
         }
     }
 
@@ -61,16 +87,63 @@ final class BriefViewModel {
     func regenerate() {
         guard let current = brief else { return }
         let token = startOperation(.generate, day: current.day)
-        let paths = workspacePathsProvider()
         let day = current.day
         operationTask = Task { [weak self, generationService] in
+            guard let self else { return }
+            let sources = await self.resolvedSources()
+            self.refreshAuthorRows()
+            let range = self.attributionStore.dateRange
             let outcome = await generationService.regenerate(
                 for: day,
-                workspacePaths: paths,
+                sources: sources,
+                range: range,
                 token: token
             )
-            self?.applyOutcome(outcome, token: token)
+            self.applyOutcome(outcome, token: token)
         }
+    }
+
+    func setDateRangePreset(_ preset: BriefDateRangePreset) {
+        var range = attributionStore.dateRange
+        range.preset = preset
+        if preset == .custom {
+            let calendar = Calendar.current
+            let today = BriefStore.startOfDay(for: brief?.day ?? Date(), calendar: calendar)
+            let yesterday = calendar.date(byAdding: .day, value: -1, to: today) ?? today
+            if range.customStart == nil { range.customStart = yesterday }
+            if range.customEnd == nil { range.customEnd = yesterday }
+        }
+        attributionStore.dateRange = range
+    }
+
+    func setCustomStart(_ date: Date) {
+        var range = attributionStore.dateRange
+        range.preset = .custom
+        range.customStart = date
+        attributionStore.dateRange = range
+    }
+
+    func setCustomEnd(_ date: Date) {
+        var range = attributionStore.dateRange
+        range.preset = .custom
+        range.customEnd = date
+        attributionStore.dateRange = range
+    }
+
+    func setAliasDraft(_ text: String, for workspaceID: UUID) {
+        aliasDrafts[workspaceID] = text
+    }
+
+    func addAlias(for workspaceID: UUID) {
+        let draft = aliasDrafts[workspaceID] ?? ""
+        attributionStore.addEmail(draft, for: workspaceID)
+        aliasDrafts[workspaceID] = ""
+        refreshAuthorRows()
+    }
+
+    func confirmAuthor(for workspaceID: UUID) {
+        attributionStore.confirm(workspaceID: workspaceID)
+        refreshAuthorRows()
     }
 
     func refineWithAI(aiProviderManager: AIProviderManager?) {
@@ -178,9 +251,37 @@ final class BriefViewModel {
         return incoming.day == displayed || incoming.day > displayed
     }
 
+    private func resolvedSources() async -> [BriefCollectionSource] {
+        await attributionStore.sources(
+            for: workspacesProvider(),
+            probing: identityReader
+        )
+    }
+
+    private func refreshAuthorRows() {
+        authorRows = workspacesProvider().compactMap { workspace in
+            guard let selection = attributionStore.selection(for: workspace.id) else { return nil }
+            return BriefAuthorDisplayRow(
+                workspaceID: workspace.id,
+                workspaceName: workspace.name,
+                identity: selection.identity,
+                confirmed: selection.confirmed
+            )
+        }
+    }
+
     private func makeRefiner(aiProviderManager: AIProviderManager?) -> (any BriefRefining)? {
         if let injectedRefiner { return injectedRefiner }
         guard let aiProviderManager else { return nil }
         return ProviderBackedBriefRefiner(aiProviderManager: aiProviderManager)
     }
+}
+
+struct BriefAuthorDisplayRow: Identifiable, Equatable {
+    var workspaceID: UUID
+    var workspaceName: String
+    var identity: BriefAuthorIdentity
+    var confirmed: Bool
+
+    var id: UUID { workspaceID }
 }

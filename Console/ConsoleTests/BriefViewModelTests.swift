@@ -6,6 +6,8 @@ final class BriefViewModelTests: XCTestCase {
 
     private var tempDirectory: URL!
     private var store: BriefStore!
+    private var attributionDefaults: UserDefaults!
+    private var attributionSuite: String!
     private let calendar = Calendar.current
 
     override func setUp() {
@@ -13,12 +15,20 @@ final class BriefViewModelTests: XCTestCase {
         tempDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("brief-viewmodel-tests-\(UUID().uuidString)", isDirectory: true)
         store = BriefStore(directory: tempDirectory)
+        attributionSuite = "brief-viewmodel-attr-\(UUID().uuidString)"
+        attributionDefaults = UserDefaults(suiteName: attributionSuite)!
+        attributionDefaults.removePersistentDomain(forName: attributionSuite)
     }
 
     override func tearDown() {
         try? FileManager.default.removeItem(at: tempDirectory)
+        if let attributionSuite {
+            attributionDefaults?.removePersistentDomain(forName: attributionSuite)
+        }
         store = nil
         tempDirectory = nil
+        attributionDefaults = nil
+        attributionSuite = nil
         super.tearDown()
     }
 
@@ -46,7 +56,8 @@ final class BriefViewModelTests: XCTestCase {
         return BriefViewModel(
             generationService: service,
             workspacePathsProvider: { ["/tmp/Repo"] },
-            refiner: refiner
+            refiner: refiner,
+            attributionStore: BriefAttributionStore(defaults: attributionDefaults)
         )
     }
 
