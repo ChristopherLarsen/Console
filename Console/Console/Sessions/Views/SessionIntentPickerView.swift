@@ -241,17 +241,19 @@ struct SessionIntentPickerView: View {
             return
         }
 
-        do {
-            guard try coordinator.launch(draft: resolvedDraft) != nil else {
-                errorMessage = "Choose a workspace folder to continue."
-                showsSettingsRoute = true
-                return
+        Task { @MainActor in
+            do {
+                guard try await coordinator.launch(draft: resolvedDraft) != nil else {
+                    errorMessage = "Choose a workspace folder to continue."
+                    showsSettingsRoute = true
+                    return
+                }
+                dismiss()
+            } catch {
+                let failure = SessionLaunchFailure(error: error)
+                errorMessage = failure.message
+                showsSettingsRoute = failure.offersSettingsRoute
             }
-            dismiss()
-        } catch {
-            let failure = SessionLaunchFailure(error: error)
-            errorMessage = failure.message
-            showsSettingsRoute = failure.offersSettingsRoute
         }
     }
 
@@ -429,17 +431,19 @@ struct SessionIntentPickerView: View {
             resolvedDraft.workspaceID = workspace.id
             resolvedDraft.name = effectiveName(for: resolvedDraft)
             draft = resolvedDraft
-            do {
-                guard try coordinator.launch(draft: resolvedDraft) != nil else {
-                    errorMessage = "The chosen folder could not be used."
-                    showsSettingsRoute = true
-                    return
+            Task { @MainActor in
+                do {
+                    guard try await coordinator.launch(draft: resolvedDraft) != nil else {
+                        errorMessage = "The chosen folder could not be used."
+                        showsSettingsRoute = true
+                        return
+                    }
+                    dismiss()
+                } catch {
+                    let failure = SessionLaunchFailure(error: error)
+                    errorMessage = failure.message
+                    showsSettingsRoute = failure.offersSettingsRoute
                 }
-                dismiss()
-            } catch {
-                let failure = SessionLaunchFailure(error: error)
-                errorMessage = failure.message
-                showsSettingsRoute = failure.offersSettingsRoute
             }
         }
     }

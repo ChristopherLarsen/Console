@@ -54,7 +54,9 @@ struct MergeRequestsNavigationBar: View {
             // One-click review launch when the retained page displays an MR.
             if case let .mergeRequest(iid, title, url) = currentMergeRequestContext {
                 Button {
-                    launchCoordinator.beginMergeRequestReview(iid: iid, title: title, url: url)
+                    Task {
+                        await launchCoordinator.beginMergeRequestReview(iid: iid, title: title, url: url)
+                    }
                 } label: {
                     Label("Start Session", systemImage: "terminal")
                         .labelStyle(.titleAndIcon)

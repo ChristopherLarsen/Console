@@ -1,74 +1,110 @@
 import Foundation
 
-/// Inspects local Git repositories' configured remotes (`.git/config`) to
-/// match a code-host merge request's project against saved workspaces. No
-/// network access ever happens: only local config files are read.
+/// Matches a code-host project identity against the local remotes of saved
+/// workspaces. Lookup is a bounded `git config` read: no network, and only
+/// normalized identities are retained. Linked worktrees, includes, and
+/// relative `gitdir` pointers are resolved by Git itself.
 @MainActor
 final class RepositoryIdentityResolver {
-    typealias ConfigReader = (URL) -> String?
+    nonisolated static let defaultGitExecutablePath = "/usr/bin/git"
+    nonisolated static let defaultLookupTimeout: Duration = .seconds(5)
+    nonisolated static let defaultMaxOutputBytes = 32_768
 
-    private let configReader: ConfigReader
+    private let processRunner: any ProcessRunning
+    private let gitExecutablePath: String
+    private let lookupTimeout: Duration
 
-    init(configReader: @escaping ConfigReader = { directory in
-        RepositoryIdentityResolver.readGitConfig(directory: directory)
-    }) {
-        self.configReader = configReader
+    init(
+        processRunner: any ProcessRunning = SystemProcessRunner(
+            maxOutputBytesPerStream: RepositoryIdentityResolver.defaultMaxOutputBytes
+        ),
+        gitExecutablePath: String = RepositoryIdentityResolver.defaultGitExecutablePath,
+        lookupTimeout: Duration = RepositoryIdentityResolver.defaultLookupTimeout
+    ) {
+        self.processRunner = processRunner
+        self.gitExecutablePath = gitExecutablePath
+        self.lookupTimeout = lookupTimeout
     }
 
     // MARK: - Remote discovery
 
     /// Normalized remote identities for the repository at `directory`.
-    /// Returns an empty set when the folder is not a readable Git repository.
-    func remoteIdentities(forDirectoryAt directory: URL) -> Set<String> {
-        guard SessionWorkspaceStore.isGitRepository(atPath: directory.path),
-              let contents = configReader(directory) else {
+    /// Returns an empty set when the folder is not a readable Git repository,
+    /// Git is missing, or lookup fails.
+    func remoteIdentities(forDirectoryAt directory: URL) async -> Set<String> {
+        guard SessionWorkspaceStore.isGitRepository(atPath: directory.path) else {
             return []
         }
         return Set(
-            Self.remoteURLs(inConfig: contents)
+            await readRemoteURLs(directory: directory)
                 .compactMap(MergeRequestSourceContext.normalizeRemoteURL)
         )
     }
 
-    /// Parses `url = …` values from `[remote "…"]` sections of a git config.
-    static func remoteURLs(inConfig config: String) -> [String] {
+    /// Parses `git config --null --get-regexp` records (`key\nvalue\0`).
+    /// Only `remote.<name>.url` keys are kept; other `url` values are ignored.
+    nonisolated static func remoteURLs(fromNullDelimitedConfigOutput output: String) -> [String] {
         var urls: [String] = []
-        for line in config.split(whereSeparator: \.isNewline) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.lowercased().hasPrefix("url"),
-                  let equals = trimmed.firstIndex(of: "=") else {
+        for record in output.split(separator: "\0", omittingEmptySubsequences: true) {
+            let parts = record.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            let key = parts[0]
+            let value = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard key.hasPrefix("remote."),
+                  key.hasSuffix(".url"),
+                  key != "remote.url",
+                  !value.isEmpty else {
                 continue
             }
-            let value = trimmed[trimmed.index(after: equals)...]
-                .trimmingCharacters(in: .whitespaces)
-            if !value.isEmpty {
-                urls.append(value)
-            }
+            urls.append(String(value))
         }
         return urls
     }
 
-    private nonisolated static func readGitConfig(directory: URL) -> String? {
-        let dotGit = directory.appendingPathComponent(".git", isDirectory: true)
-        var isDirectory: ObjCBool = false
+    private func readRemoteURLs(directory: URL) async -> [String] {
+        let path = directory.standardizedFileURL.path
+        guard !path.isEmpty else { return [] }
 
-        if FileManager.default.fileExists(atPath: dotGit.path, isDirectory: &isDirectory), isDirectory.boolValue {
-            return try? String(contentsOf: dotGit.appendingPathComponent("config"), encoding: .utf8)
-        }
+        let runner = processRunner
+        let executable = gitExecutablePath
+        let arguments = [
+            "-C", path,
+            "config",
+            "--local",
+            "--includes",
+            "--null",
+            "--get-regexp",
+            #"^remote\..*\.url$"#,
+        ]
+        let timeout = lookupTimeout
 
-        // Worktrees/submodules: `.git` is a file pointing at the real gitdir.
-        guard let pointer = try? String(contentsOf: dotGit, encoding: .utf8),
-              pointer.hasPrefix("gitdir:") else {
-            return nil
+        do {
+            let result = try await withThrowingTaskGroup(of: ProcessResult.self) { group in
+                group.addTask {
+                    try await runner.run(
+                        executablePath: executable,
+                        arguments: arguments,
+                        workingDirectory: path
+                    )
+                }
+                group.addTask {
+                    try await Task.sleep(for: timeout)
+                    throw GitRemoteLookupTimeout()
+                }
+                defer { group.cancelAll() }
+                guard let value = try await group.next() else {
+                    throw GitRemoteLookupTimeout()
+                }
+                return value
+            }
+            guard !result.standardOutputTruncated else { return [] }
+            // 0 = matches, 1 = no matching keys. Anything else (missing repo,
+            // bad gitdir, git not usable) is no match.
+            guard result.exitCode == 0 || result.exitCode == 1 else { return [] }
+            return Self.remoteURLs(fromNullDelimitedConfigOutput: result.standardOutput)
+        } catch {
+            return []
         }
-        var gitdir = pointer.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespacesAndNewlines)
-        if gitdir.hasPrefix("~") {
-            gitdir = NSString(string: gitdir).expandingTildeInPath
-        }
-        if !gitdir.hasPrefix("/") {
-            gitdir = directory.appendingPathComponent(gitdir).path
-        }
-        return try? String(contentsOf: URL(fileURLWithPath: gitdir, isDirectory: true).appendingPathComponent("config"), encoding: .utf8)
     }
 
     // MARK: - Matching
@@ -82,9 +118,13 @@ final class RepositoryIdentityResolver {
     /// Matches an MR project identity (`host/project/path`) against the
     /// remotes of each workspace. Exactly one match resolves; zero or several
     /// leave resolution to the next step in the documented order.
-    func match(projectIdentity: String, in workspaces: [SessionWorkspace]) -> MatchOutcome {
-        let matches = workspaces.filter { workspace in
-            remoteIdentities(forDirectoryAt: workspace.directoryURL).contains(projectIdentity)
+    func match(projectIdentity: String, in workspaces: [SessionWorkspace]) async -> MatchOutcome {
+        var matches: [SessionWorkspace] = []
+        for workspace in workspaces {
+            let identities = await remoteIdentities(forDirectoryAt: workspace.directoryURL)
+            if identities.contains(projectIdentity) {
+                matches.append(workspace)
+            }
         }
         switch matches.count {
         case 1:
@@ -96,3 +136,5 @@ final class RepositoryIdentityResolver {
         }
     }
 }
+
+private struct GitRemoteLookupTimeout: Error {}

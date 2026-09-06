@@ -152,14 +152,14 @@ final class SessionLaunchCoordinator {
 
     // MARK: - Typed entry points for browser toolbars / future cards
 
-    func beginJiraTicketLaunch(key: String, title: String?, url: URL?) {
+    func beginJiraTicketLaunch(key: String, title: String?, url: URL?) async {
         let source = SessionLaunchSource.jira(key: key, title: title, url: url)
-        startContextualLaunch(draft(purpose: .existingTicket, source: source))
+        await startContextualLaunch(draft(purpose: .existingTicket, source: source))
     }
 
-    func beginMergeRequestReview(iid: String, title: String?, url: URL) {
+    func beginMergeRequestReview(iid: String, title: String?, url: URL) async {
         let source = SessionLaunchSource.mergeRequest(iid: iid, title: title, url: url)
-        startContextualLaunch(draft(purpose: .review, source: source))
+        await startContextualLaunch(draft(purpose: .review, source: source))
     }
 
     // MARK: - Launch
@@ -171,7 +171,7 @@ final class SessionLaunchCoordinator {
     /// errors itself. Contextual toolbar/card launches go through
     /// `startContextualLaunch`.
     @discardableResult
-    func launch(draft: SessionDraft) throws -> UUID? {
+    func launch(draft: SessionDraft) async throws -> UUID? {
         lastFailure = nil
         pendingChoice = nil
         presentsChoiceSheet = false
@@ -181,7 +181,7 @@ final class SessionLaunchCoordinator {
             return try performLaunch(draft: draft, workspaceID: overrideID, rememberingAssociation: false)
         }
 
-        if let resolved = resolveWorkspace(purpose: draft.purpose, source: draft.source) {
+        if let resolved = await resolveWorkspace(purpose: draft.purpose, source: draft.source) {
             return try performLaunch(draft: draft, workspaceID: resolved.id, rememberingAssociation: true)
         }
 
@@ -273,9 +273,9 @@ final class SessionLaunchCoordinator {
         return nil
     }
 
-    private func startContextualLaunch(_ draft: SessionDraft) {
+    private func startContextualLaunch(_ draft: SessionDraft) async {
         do {
-            _ = try launch(draft: draft)
+            _ = try await launch(draft: draft)
         } catch {
             lastFailure = SessionLaunchFailure(error: error)
         }
@@ -325,7 +325,7 @@ final class SessionLaunchCoordinator {
         return sessionID
     }
 
-    private func resolveWorkspace(purpose: SessionPurpose, source: SessionLaunchSource?) -> SessionWorkspace? {
+    private func resolveWorkspace(purpose: SessionPurpose, source: SessionLaunchSource?) async -> SessionWorkspace? {
         // 2. Remembered association for this ticket/MR project.
         if let identity = source?.routingIdentity,
            let rememberedID = workspaceStore.associatedWorkspaceID(forRoutingIdentity: identity),
@@ -337,7 +337,7 @@ final class SessionLaunchCoordinator {
         // 3. Unique code-host remote match for review sources.
         if case let .mergeRequest(_, _, url) = source,
            let identity = MergeRequestSourceContext.projectIdentity(inURL: url) {
-            switch resolver.match(projectIdentity: identity, in: workspaceStore.resolvableWorkspaces(purpose: purpose)) {
+            switch await resolver.match(projectIdentity: identity, in: workspaceStore.resolvableWorkspaces(purpose: purpose)) {
             case let .unique(workspace):
                 return workspace
             case .ambiguous, .none:

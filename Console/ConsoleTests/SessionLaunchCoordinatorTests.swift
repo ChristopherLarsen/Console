@@ -98,27 +98,60 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         return Stack(store: store, workspaces: workspaces, coordinator: coordinator, launcher: launcher)
     }
 
+    private struct GitFixtureError: Error {}
+
+    private func initializeLocalGitRemote(at directory: URL, remote: String) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["init", "-q"]
+        process.currentDirectoryURL = directory
+        var environment = ProcessInfo.processInfo.environment
+        environment["GIT_CONFIG_NOSYSTEM"] = "1"
+        environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
+        environment["GIT_TERMINAL_PROMPT"] = "0"
+        process.environment = environment
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        process.standardInput = FileHandle.nullDevice
+        try process.run()
+        _ = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { throw GitFixtureError() }
+
+        let add = Process()
+        add.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        add.arguments = ["remote", "add", "origin", remote]
+        add.currentDirectoryURL = directory
+        add.environment = environment
+        let addPipe = Pipe()
+        add.standardOutput = addPipe
+        add.standardError = addPipe
+        add.standardInput = FileHandle.nullDevice
+        try add.run()
+        _ = addPipe.fileHandleForReading.readDataToEndOfFile()
+        add.waitUntilExit()
+        guard add.terminationStatus == 0 else { throw GitFixtureError() }
+    }
+
     @discardableResult
     private func addWorkspace(
         _ stack: Stack,
         named name: String,
         gitRemote remote: String? = nil
-    ) -> SessionWorkspace {
+    ) throws -> SessionWorkspace {
         let directory = tmpRoot!.appendingPathComponent(name, isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         if let remote {
-            let gitDir = directory.appendingPathComponent(".git", isDirectory: true)
-            try? FileManager.default.createDirectory(at: gitDir, withIntermediateDirectories: true)
-            let config = """
-            [core]
-                repositoryformatversion = 0
-            [remote "origin"]
-                url = \(remote)
-
-            """
-            try? config.write(to: gitDir.appendingPathComponent("config"), atomically: true, encoding: .utf8)
+            try initializeLocalGitRemote(at: directory, remote: remote)
         }
         return stack.workspaces.add(name: name, directoryURL: directory)
+    }
+
+    private func requireLaunch(_ stack: Stack, draft: SessionDraft) async throws -> UUID {
+        let sessionID = try await stack.coordinator.launch(draft: draft)
+        return try XCTUnwrap(sessionID)
     }
 
     private enum Sentinel {
@@ -203,7 +236,7 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
 
     // MARK: - Typed creation request
 
-    func testCreateSessionRequestStoresPurposeAndLocalArtifact() throws {
+    func testCreateSessionRequestStoresPurposeAndLocalArtifact() async throws {
         let stack = makeStack()
         let directory = tmpRoot!.appendingPathComponent("Req", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -223,7 +256,7 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         assertSourceMetadataAbsent(from: stack)
     }
 
-    func testLegacyCreateOverloadStillWorksAsCompatibilityWrapper() throws {
+    func testLegacyCreateOverloadStillWorksAsCompatibilityWrapper() async throws {
         let stack = makeStack()
         let directory = tmpRoot!.appendingPathComponent("Legacy", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -237,11 +270,11 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         XCTAssertTrue(stack.store.debugTerminalSendBytes.isEmpty)
     }
 
-    func testReviewLaunchOmitsSourceMetadataFromArgvAndEnvironment() throws {
+    func testReviewLaunchOmitsSourceMetadataFromArgvAndEnvironment() async throws {
         let stack = makeStack()
-        addWorkspace(stack, named: "Private", gitRemote: "https://gitlab.com/grp/proj.git")
+        try addWorkspace(stack, named: "Private", gitRemote: "https://gitlab.com/grp/proj.git")
 
-        _ = try stack.coordinator.launch(draft: stack.coordinator.draft(
+        _ = try await stack.coordinator.launch(draft: stack.coordinator.draft(
             purpose: .review,
             source: mrSource()
         ))
@@ -256,49 +289,49 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
 
     // MARK: - Resolution order
 
-    func testExplicitWorkspaceOverrideBeatsRememberedAssociation() throws {
+    func testExplicitWorkspaceOverrideBeatsRememberedAssociation() async throws {
         let stack = makeStack()
-        let associated = addWorkspace(stack, named: "Associated")
-        let override = addWorkspace(stack, named: "Override")
+        let associated = try addWorkspace(stack, named: "Associated")
+        let override = try addWorkspace(stack, named: "Override")
         stack.workspaces.rememberAssociation(routingIdentity: "ENG", workspaceID: associated.id)
 
         var draft = stack.coordinator.draft(purpose: .existingTicket, source: jiraSource())
         draft.workspaceID = override.id
-        let id = try XCTUnwrap(try stack.coordinator.launch(draft: draft))
+        let id = try await requireLaunch(stack, draft: draft)
 
         XCTAssertEqual(stack.store.session(withID: id)?.workingDirectory.standardizedFileURL.path, override.directoryURL.standardizedFileURL.path)
         // Overrides do not rewrite what was learned about the source.
         XCTAssertEqual(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "ENG"), associated.id)
     }
 
-    func testRememberedAssociationLaunchesOneClickWithoutChoiceSheet() throws {
+    func testRememberedAssociationLaunchesOneClickWithoutChoiceSheet() async throws {
         let stack = makeStack()
-        let home = addWorkspace(stack, named: "Home")
+        let home = try addWorkspace(stack, named: "Home")
 
         // First launch: unresolved → one-time choice.
         var firstDraft = stack.coordinator.draft(purpose: .existingTicket, source: jiraSource())
         firstDraft.workspaceID = home.id
-        _ = try stack.coordinator.launch(draft: firstDraft)
+        _ = try await stack.coordinator.launch(draft: firstDraft)
 
         stack.coordinator.cancelWorkspaceChoice()
 
         // Second launch of the same project resolves through the association.
         let second = stack.coordinator.draft(purpose: .existingTicket, source: jiraSource("ENG-456"))
-        let id = try XCTUnwrap(try stack.coordinator.launch(draft: second))
+        let id = try await requireLaunch(stack, draft: second)
 
         XCTAssertNil(stack.coordinator.pendingChoice, "mapped tickets never ask again")
         XCTAssertEqual(stack.store.session(withID: id)?.workingDirectory.standardizedFileURL.path, home.directoryURL.standardizedFileURL.path)
     }
 
-    func testUniqueRemoteMatchResolvesReviewToTheGitRepository() throws {
+    func testUniqueRemoteMatchResolvesReviewToTheGitRepository() async throws {
         let stack = makeStack()
-        let repo = addWorkspace(stack, named: "Repo", gitRemote: "https://gitlab.com/grp/proj.git")
-        addWorkspace(stack, named: "Plain")
+        let repo = try addWorkspace(stack, named: "Repo", gitRemote: "https://gitlab.com/grp/proj.git")
+        try addWorkspace(stack, named: "Plain")
 
-        let id = try XCTUnwrap(try stack.coordinator.launch(draft: stack.coordinator.draft(
+        let id = try await requireLaunch(stack, draft: stack.coordinator.draft(
             purpose: .review,
             source: mrSource()
-        )))
+        ))
 
         XCTAssertNil(stack.coordinator.pendingChoice)
         XCTAssertEqual(stack.store.session(withID: id)?.workingDirectory.standardizedFileURL.path, repo.directoryURL.standardizedFileURL.path)
@@ -309,15 +342,15 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         )
     }
 
-    func testAmbiguousRemoteMatchAsksOnceAndConfirmLearns() throws {
+    func testAmbiguousRemoteMatchAsksOnceAndConfirmLearns() async throws {
         let stack = makeStack()
-        let alpha = addWorkspace(stack, named: "Alpha", gitRemote: "https://gitlab.com/grp/proj.git")
-        let beta = addWorkspace(stack, named: "Beta", gitRemote: "git@gitlab.com:grp/proj.git")
+        let alpha = try addWorkspace(stack, named: "Alpha", gitRemote: "https://gitlab.com/grp/proj.git")
+        let beta = try addWorkspace(stack, named: "Beta", gitRemote: "git@gitlab.com:grp/proj.git")
         // Remove the automatic first-workspace default so neither repo wins
         // via the fallback steps; only the ambiguous match is in play.
         stack.workspaces.setDefault(id: nil)
 
-        let unresolved = try stack.coordinator.launch(draft: stack.coordinator.draft(
+        let unresolved = try await stack.coordinator.launch(draft: stack.coordinator.draft(
             purpose: .review,
             source: mrSource()
         ))
@@ -330,7 +363,7 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         _ = choice
 
         // Learned: next identical source skips the sheet entirely.
-        _ = try stack.coordinator.launch(draft: stack.coordinator.draft(purpose: .review, source: mrSource()))
+        _ = try await stack.coordinator.launch(draft: stack.coordinator.draft(purpose: .review, source: mrSource()))
         XCTAssertNil(stack.coordinator.pendingChoice)
         XCTAssertEqual(
             stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "gitlab.com/grp/proj"),
@@ -339,66 +372,66 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         _ = alpha
     }
 
-    func testSelectedSessionContainingWorkspaceWinsForGeneralPurpose() throws {
+    func testSelectedSessionContainingWorkspaceWinsForGeneralPurpose() async throws {
         let stack = makeStack()
-        let monorepo = addWorkspace(stack, named: "Monorepo")
-        let other = addWorkspace(stack, named: "Other")
+        let monorepo = try addWorkspace(stack, named: "Monorepo")
+        let other = try addWorkspace(stack, named: "Other")
 
         let nestedDirectory = monorepo.directoryURL.appendingPathComponent("Subproject", isDirectory: true)
         try FileManager.default.createDirectory(at: nestedDirectory, withIntermediateDirectories: true)
         let baseID = try stack.store.createSession(name: "Base", workingDirectory: nestedDirectory)
         stack.store.select(sessionID: baseID)
 
-        let id = try XCTUnwrap(try stack.coordinator.launch(draft: stack.coordinator.draft(purpose: .general, source: nil)))
+        let id = try await requireLaunch(stack, draft: stack.coordinator.draft(purpose: .general, source: nil))
 
         XCTAssertEqual(stack.store.session(withID: id)?.workingDirectory.standardizedFileURL.path, monorepo.directoryURL.standardizedFileURL.path)
         XCTAssertNotEqual(stack.store.session(withID: id)?.workingDirectory.lastPathComponent, other.name)
     }
 
-    func testLastUsedPerPurposeBeatsGlobalDefault() throws {
+    func testLastUsedPerPurposeBeatsGlobalDefault() async throws {
         let stack = makeStack()
-        let defaultHome = addWorkspace(stack, named: "DefaultHome")
-        let reviewHome = addWorkspace(stack, named: "ReviewHome", gitRemote: "https://gitlab.com/elsewhere/repo.git")
+        let defaultHome = try addWorkspace(stack, named: "DefaultHome")
+        let reviewHome = try addWorkspace(stack, named: "ReviewHome", gitRemote: "https://gitlab.com/elsewhere/repo.git")
         stack.workspaces.setDefault(id: defaultHome.id)
         stack.workspaces.noteUse(workspaceID: reviewHome.id, purpose: .review)
 
-        let id = try XCTUnwrap(try stack.coordinator.launch(draft: stack.coordinator.draft(
+        let id = try await requireLaunch(stack, draft: stack.coordinator.draft(
             purpose: .review,
             source: mrSource("99") // no association, no remote match
-        )))
+        ))
 
         XCTAssertEqual(stack.store.session(withID: id)?.workingDirectory.standardizedFileURL.path, reviewHome.directoryURL.standardizedFileURL.path)
     }
 
-    func testDefaultWorkspaceIsTheFinalFallbackBeforeAsking() throws {
+    func testDefaultWorkspaceIsTheFinalFallbackBeforeAsking() async throws {
         let stack = makeStack()
-        let fallback = addWorkspace(stack, named: "Fallback")
+        let fallback = try addWorkspace(stack, named: "Fallback")
         stack.workspaces.setDefault(id: fallback.id)
 
-        let id = try XCTUnwrap(try stack.coordinator.launch(draft: stack.coordinator.draft(purpose: .newTicket, source: nil)))
+        let id = try await requireLaunch(stack, draft: stack.coordinator.draft(purpose: .newTicket, source: nil))
 
         XCTAssertEqual(stack.store.session(withID: id)?.workingDirectory.standardizedFileURL.path, fallback.directoryURL.standardizedFileURL.path)
     }
 
-    func testUnavailableDefaultIsSkippedAndChoiceIsPresented() throws {
+    func testUnavailableDefaultIsSkippedAndChoiceIsPresented() async throws {
         let stack = makeStack()
-        let vanished = addWorkspace(stack, named: "Vanished")
+        let vanished = try addWorkspace(stack, named: "Vanished")
         stack.workspaces.setDefault(id: vanished.id)
         try FileManager.default.removeItem(at: vanished.directoryURL)
 
-        let result = try stack.coordinator.launch(draft: stack.coordinator.draft(purpose: .newTicket, source: nil))
+        let result = try await stack.coordinator.launch(draft: stack.coordinator.draft(purpose: .newTicket, source: nil))
 
         XCTAssertNil(result)
         XCTAssertEqual(stack.coordinator.pendingChoice?.purpose, .newTicket)
     }
 
-    func testReviewSkipsNonGitWorkspacesWhenResolving() throws {
+    func testReviewSkipsNonGitWorkspacesWhenResolving() async throws {
         let stack = makeStack()
-        let plain = addWorkspace(stack, named: "PlainOnly")
+        let plain = try addWorkspace(stack, named: "PlainOnly")
         stack.workspaces.setDefault(id: plain.id)
         stack.workspaces.noteUse(workspaceID: plain.id, purpose: .review)
 
-        let result = try stack.coordinator.launch(draft: stack.coordinator.draft(
+        let result = try await stack.coordinator.launch(draft: stack.coordinator.draft(
             purpose: .review,
             source: mrSource("7")
         ))
@@ -411,11 +444,11 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
 
     // MARK: - Source metadata stays local
 
-    func testToolbarAndCardJiraLaunchKeepsSentinelOutOfClaude() throws {
+    func testToolbarAndCardJiraLaunchKeepsSentinelOutOfClaude() async throws {
         let stack = makeStack()
-        addWorkspace(stack, named: "JiraHome")
+        try addWorkspace(stack, named: "JiraHome")
 
-        stack.coordinator.beginJiraTicketLaunch(
+        await stack.coordinator.beginJiraTicketLaunch(
             key: Sentinel.key,
             title: Sentinel.title,
             url: Sentinel.url
@@ -431,15 +464,15 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         assertSourceMetadataAbsent(from: stack)
     }
 
-    func testToolbarMergeRequestLaunchKeepsSentinelOutOfClaude() throws {
+    func testToolbarMergeRequestLaunchKeepsSentinelOutOfClaude() async throws {
         let stack = makeStack()
-        addWorkspace(
+        try addWorkspace(
             stack,
             named: "ReviewHome",
             gitRemote: "https://sentinel.example.test/grp/proj.git"
         )
 
-        stack.coordinator.beginMergeRequestReview(
+        await stack.coordinator.beginMergeRequestReview(
             iid: Sentinel.mrIID,
             title: Sentinel.mrTitle,
             url: Sentinel.mrURL
@@ -454,15 +487,15 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         assertSourceMetadataAbsent(from: stack)
     }
 
-    func testRetainedPageDraftLaunchKeepsSentinelOutOfClaude() throws {
+    func testRetainedPageDraftLaunchKeepsSentinelOutOfClaude() async throws {
         let stack = makeStack()
-        addWorkspace(stack, named: "Retained")
+        try addWorkspace(stack, named: "Retained")
 
         let draft = stack.coordinator.draft(purpose: .existingTicket, source: sentinelJiraSource())
         XCTAssertEqual(draft.name, Sentinel.key)
         XCTAssertNil(StarterPromptBuilder.prompt(for: draft.purpose, source: draft.source))
 
-        let id = try XCTUnwrap(try stack.coordinator.launch(draft: draft))
+        let id = try await requireLaunch(stack, draft: draft)
         let session = try XCTUnwrap(stack.store.session(withID: id))
         XCTAssertEqual(session.name, Sentinel.key)
 
@@ -471,18 +504,18 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         assertSourceMetadataAbsent(from: stack)
     }
 
-    func testManualPathHasNothingSourceDerivedToSend() throws {
+    func testManualPathHasNothingSourceDerivedToSend() async throws {
         let stack = makeStack()
-        addWorkspace(
+        try addWorkspace(
             stack,
             named: "Manual",
             gitRemote: "https://sentinel.example.test/grp/proj.git"
         )
 
-        let id = try XCTUnwrap(try stack.coordinator.launch(draft: stack.coordinator.draft(
+        let id = try await requireLaunch(stack, draft: stack.coordinator.draft(
             purpose: .review,
             source: sentinelMRSource()
-        )))
+        ))
 
         receiveLifecycleEvent(stack, sessionID: id, event: .sessionStarted, eventID: "evt-manual-idle")
         XCTAssertEqual(stack.store.session(withID: id)?.activity, .idle)
@@ -490,14 +523,14 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         assertSourceMetadataAbsent(from: stack)
     }
 
-    func testGeneralSessionRemainsUsableAndSendsOnlyExplicitPrompts() throws {
+    func testGeneralSessionRemainsUsableAndSendsOnlyExplicitPrompts() async throws {
         let stack = makeStack()
-        addWorkspace(stack, named: "GeneralHome")
+        try addWorkspace(stack, named: "GeneralHome")
 
-        let id = try XCTUnwrap(try stack.coordinator.launch(draft: stack.coordinator.draft(
+        let id = try await requireLaunch(stack, draft: stack.coordinator.draft(
             purpose: .general,
             source: nil
-        )))
+        ))
 
         receiveLifecycleEvent(stack, sessionID: id, event: .sessionStarted, eventID: "evt-general-start")
         XCTAssertEqual(stack.store.session(withID: id)?.activity, .idle)
@@ -513,13 +546,13 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         }
     }
 
-    func testStopStillExitsAContextualSession() throws {
+    func testStopStillExitsAContextualSession() async throws {
         let stack = makeStack()
-        addWorkspace(stack, named: "Stopped")
-        let id = try XCTUnwrap(try stack.coordinator.launch(draft: stack.coordinator.draft(
+        try addWorkspace(stack, named: "Stopped")
+        let id = try await requireLaunch(stack, draft: stack.coordinator.draft(
             purpose: .existingTicket,
             source: sentinelJiraSource()
-        )))
+        ))
 
         stack.store.stopSession(id: id)
 
@@ -527,17 +560,17 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         assertSourceMetadataAbsent(from: stack)
     }
 
-    func testTurnFailureMarksErrorWithoutSendingSource() throws {
+    func testTurnFailureMarksErrorWithoutSendingSource() async throws {
         let stack = makeStack()
-        addWorkspace(
+        try addWorkspace(
             stack,
             named: "Failed",
             gitRemote: "https://sentinel.example.test/grp/proj.git"
         )
-        let id = try XCTUnwrap(try stack.coordinator.launch(draft: stack.coordinator.draft(
+        let id = try await requireLaunch(stack, draft: stack.coordinator.draft(
             purpose: .review,
             source: sentinelMRSource()
-        )))
+        ))
 
         receiveLifecycleEvent(stack, sessionID: id, event: .turnFailed, eventID: "evt-fail-1")
 
@@ -547,7 +580,7 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
 
     // MARK: - Launch failures stay visible and do not learn routing
 
-    func testMissingClaudeOnContextualLaunchSurfacesFailureWithoutLearning() throws {
+    func testMissingClaudeOnContextualLaunchSurfacesFailureWithoutLearning() async throws {
         locatorDefaults.removeObject(forKey: ClaudeExecutableLocator.settingsKey)
         let notFound = ClaudeExecutableLocator(
             shellRunner: { _ in nil },
@@ -555,10 +588,10 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             defaults: locatorDefaults
         )
         let stack = makeStack(locator: notFound)
-        addWorkspace(stack, named: "Home")
+        try addWorkspace(stack, named: "Home")
         let sidebarBefore = UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey)
 
-        stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
+        await stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
 
         XCTAssertTrue(stack.coordinator.lastFailureMessage?.contains("Claude") == true)
         XCTAssertEqual(stack.coordinator.lastFailure?.offersSettingsRoute, true)
@@ -574,24 +607,27 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         )
     }
 
-    func testDisappearingFolderOverrideThrowsActionableError() throws {
+    func testDisappearingFolderOverrideThrowsActionableError() async throws {
         let stack = makeStack()
-        let vanished = addWorkspace(stack, named: "Vanished")
+        let vanished = try addWorkspace(stack, named: "Vanished")
         var draft = stack.coordinator.draft(purpose: .general, source: nil)
         draft.workspaceID = vanished.id
         try FileManager.default.removeItem(at: vanished.directoryURL)
 
-        XCTAssertThrowsError(try stack.coordinator.launch(draft: draft)) { error in
-            XCTAssertEqual(error as? SessionLaunchCoordinator.LaunchError, .workspaceUnavailable)
-            XCTAssertTrue((error as? LocalizedError)?.errorDescription?.contains("Settings") == true)
+        do {
+            _ = try await stack.coordinator.launch(draft: draft)
+            XCTFail("expected disappearing folder to throw")
+        } catch let error as SessionLaunchCoordinator.LaunchError {
+            XCTAssertEqual(error, .workspaceUnavailable)
+            XCTAssertTrue(error.errorDescription?.contains("Settings") == true)
         }
         XCTAssertNil(stack.workspaces.lastUsedWorkspaceID(for: .general))
         XCTAssertEqual(stack.launcher.launchCount, 0)
     }
 
-    func testNonGitReviewOverrideThrowsActionableError() throws {
+    func testNonGitReviewOverrideThrowsActionableError() async throws {
         let stack = makeStack()
-        let plain = addWorkspace(stack, named: "PlainOnly")
+        let plain = try addWorkspace(stack, named: "PlainOnly")
         var draft = stack.coordinator.draft(purpose: .review, source: mrSource("7"))
         draft.workspaceID = plain.id
 
@@ -600,20 +636,23 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             stack.coordinator.workspaceBlockingReason(workspaceID: plain.id, purpose: .review)?
                 .contains("Git") == true
         )
-        XCTAssertThrowsError(try stack.coordinator.launch(draft: draft)) { error in
-            XCTAssertEqual(error as? SessionLaunchCoordinator.LaunchError, .workspaceNotAGitRepository)
+        do {
+            _ = try await stack.coordinator.launch(draft: draft)
+            XCTFail("expected non-git review override to throw")
+        } catch let error as SessionLaunchCoordinator.LaunchError {
+            XCTAssertEqual(error, .workspaceNotAGitRepository)
         }
         XCTAssertNil(stack.workspaces.lastUsedWorkspaceID(for: .review))
         XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "gitlab.com/grp/proj"))
     }
 
-    func testInjectedLauncherFailureSurfacesErrorWithoutLearningOrNavigating() throws {
+    func testInjectedLauncherFailureSurfacesErrorWithoutLearningOrNavigating() async throws {
         let stack = makeStack()
-        addWorkspace(stack, named: "Home")
+        try addWorkspace(stack, named: "Home")
         stack.launcher.errorToThrow = SyntheticLaunchError()
         let sidebarBefore = UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey)
 
-        stack.coordinator.beginJiraTicketLaunch(
+        await stack.coordinator.beginJiraTicketLaunch(
             key: Sentinel.key,
             title: Sentinel.title,
             url: Sentinel.url
@@ -632,18 +671,18 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         assertSourceMetadataAbsent(from: stack)
     }
 
-    func testSuccessfulRetryAfterLauncherFailureClearsErrorAndThenLearns() throws {
+    func testSuccessfulRetryAfterLauncherFailureClearsErrorAndThenLearns() async throws {
         let stack = makeStack()
-        addWorkspace(stack, named: "Home")
+        try addWorkspace(stack, named: "Home")
         stack.launcher.errorToThrow = SyntheticLaunchError()
 
-        stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
+        await stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
         XCTAssertNotNil(stack.coordinator.lastFailureMessage)
         XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "ENG"))
         XCTAssertTrue(stack.store.sessions.isEmpty)
 
         stack.launcher.errorToThrow = nil
-        stack.coordinator.beginJiraTicketLaunch(key: "ENG-456", title: nil, url: nil)
+        await stack.coordinator.beginJiraTicketLaunch(key: "ENG-456", title: nil, url: nil)
 
         XCTAssertNil(stack.coordinator.lastFailureMessage)
         XCTAssertNotNil(stack.store.selectedSession)
@@ -652,30 +691,30 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         XCTAssertEqual(stack.workspaces.lastUsedWorkspaceID(for: .existingTicket), stack.workspaces.workspaces.first?.id)
     }
 
-    func testRepeatedRetryAfterLauncherFailureCreatesAtMostOneSession() throws {
+    func testRepeatedRetryAfterLauncherFailureCreatesAtMostOneSession() async throws {
         let stack = makeStack()
-        addWorkspace(stack, named: "Home")
+        try addWorkspace(stack, named: "Home")
         stack.launcher.errorToThrow = SyntheticLaunchError()
 
-        stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
-        stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
+        await stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
+        await stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
         XCTAssertTrue(stack.store.sessions.isEmpty)
         XCTAssertEqual(stack.coordinator.lastFailureMessage, "Synthetic launcher failed.")
         XCTAssertEqual(stack.coordinator.lastFailure?.offersSettingsRoute, true)
 
         stack.launcher.errorToThrow = nil
-        stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
+        await stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
 
         XCTAssertEqual(stack.store.sessions.count, 1)
         XCTAssertNil(stack.coordinator.lastFailureMessage)
         XCTAssertNotNil(stack.store.selectedSession)
     }
 
-    func testPluginAssemblyFailureStillLaunchesOneUninstrumentedSession() throws {
+    func testPluginAssemblyFailureStillLaunchesOneUninstrumentedSession() async throws {
         let stack = makeStack(pluginAssembler: FakeAssembler())
-        addWorkspace(stack, named: "Home")
+        try addWorkspace(stack, named: "Home")
 
-        stack.coordinator.beginJiraTicketLaunch(
+        await stack.coordinator.beginJiraTicketLaunch(
             key: Sentinel.key,
             title: Sentinel.title,
             url: Sentinel.url
@@ -716,12 +755,12 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         XCTAssertEqual(stack.workspaces.lastUsedWorkspaceID(for: .existingTicket), stack.workspaces.workspaces.first?.id)
     }
 
-    func testCancelClearsPendingChoiceAndFailure() throws {
+    func testCancelClearsPendingChoiceAndFailure() async throws {
         let stack = makeStack()
-        addWorkspace(stack, named: "Home")
+        try addWorkspace(stack, named: "Home")
         stack.workspaces.setDefault(id: nil)
 
-        let unresolved = try stack.coordinator.launch(draft: stack.coordinator.draft(
+        let unresolved = try await stack.coordinator.launch(draft: stack.coordinator.draft(
             purpose: .existingTicket,
             source: jiraSource()
         ))

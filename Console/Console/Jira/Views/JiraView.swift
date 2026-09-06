@@ -131,7 +131,9 @@ struct JiraView: View {
             // One-click session launch when the retained page displays an issue.
             if case let .jira(key, title, url) = currentIssueContext {
                 Button {
-                    launchCoordinator.beginJiraTicketLaunch(key: key, title: title, url: url)
+                    Task {
+                        await launchCoordinator.beginJiraTicketLaunch(key: key, title: title, url: url)
+                    }
                 } label: {
                     Label("Start Session", systemImage: "terminal")
                         .labelStyle(.titleAndIcon)
