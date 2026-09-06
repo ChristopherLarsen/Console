@@ -1,16 +1,17 @@
 import SwiftUI
 
-/// The full-width Next card in the Next destination. Shows "Check" until
-/// asked; then picks the next task locally from live panel snapshots and
-/// renders it. Tapping the ready card takes the user straight to that work.
+/// The full-width Next card in the Next destination. Renders the destination's
+/// shared `NextButtonModel`. Refresh and Open are sibling controls — Refresh
+/// never navigates; Open (the ready result) does.
 struct NextTaskCardView: View {
     @Binding var selection: SidebarSelection
+    var model: NextButtonModel
+    var onRefresh: () -> Void
 
     /// Content-hugging floor for the full-width panel (Christopher's spec).
     static let minimumHeight: CGFloat = 150
 
     @Environment(SessionStore.self) private var sessionStore: SessionStore?
-    @State private var model = NextButtonModel()
 
     var body: some View {
         cardBody
@@ -24,9 +25,7 @@ struct NextTaskCardView: View {
                     ))
             )
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(accessibilityLabel)
-            .accessibilityAddTraits(.isButton)
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("NextTaskCard")
     }
 
@@ -36,32 +35,50 @@ struct NextTaskCardView: View {
     private var cardBody: some View {
         switch model.status {
         case .idle:
-            Button { runCheck() } label: { idleContent }
+            Button(action: onRefresh) { idleContent }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Check next task")
+                .accessibilityIdentifier("NextTaskCheckButton")
 
         case .checking:
             checkingContent
 
         case .failed(let message):
-            Button { runCheck() } label: {
-                VStack(alignment: .leading, spacing: 8) {
-                    titleRow()
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.9))
-                        .lineLimit(3)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                    footnote("Tap to retry")
+            VStack(alignment: .leading, spacing: 8) {
+                titleRow(trailingRefresh: true)
+                Button(action: onRefresh) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.9))
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                        footnote("Tap to retry")
+                    }
                 }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Retry next task. \(message)")
+                .accessibilityIdentifier("NextTaskRetryButton")
             }
-            .buttonStyle(.plain)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
 
         case .ready(let task, let fromAI):
-            Button { navigate(task) } label: { readyContent(task, fromAI: fromAI) }
+            VStack(alignment: .leading, spacing: 7) {
+                titleRow(trailingRefresh: true)
+
+                Button { openReadyTask() } label: {
+                    readyOpenContent(task, fromAI: fromAI)
+                }
                 .buttonStyle(.plain)
+                .accessibilityLabel(openAccessibilityLabel(for: task))
+                .accessibilityIdentifier("NextTaskOpenButton")
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("NextTaskReady")
         }
     }
 
@@ -95,13 +112,12 @@ struct NextTaskCardView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("NextTaskChecking")
     }
 
-    private func readyContent(_ task: NextTask, fromAI: Bool) -> some View {
+    private func readyOpenContent(_ task: NextTask, fromAI: Bool) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            titleRow(trailingRefresh: true)
-
             Text(task.headline)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.white)
@@ -128,9 +144,8 @@ struct NextTaskCardView: View {
                     .foregroundStyle(.white.opacity(0.55))
             }
         }
-        .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .accessibilityIdentifier("NextTaskReady")
+        .contentShape(Rectangle())
     }
 
     // MARK: - Pieces
@@ -153,17 +168,17 @@ struct NextTaskCardView: View {
     }
 
     private var refreshButton: some View {
-        Button {
-            runCheck()
-        } label: {
+        Button(action: onRefresh) {
             Image(systemName: "arrow.clockwise")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.white.opacity(0.9))
-                .padding(5)
+                .padding(8)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("Check again")
+        .disabled(model.isChecking)
+        .accessibilityLabel("Refresh next task")
         .accessibilityIdentifier("NextTaskRefreshButton")
     }
 
@@ -176,41 +191,10 @@ struct NextTaskCardView: View {
 
     // MARK: - Actions
 
-    private func runCheck() {
-        model.check(
-            sessionStore: sessionStore ?? SessionStore(),
-            jiraController: JiraWebSession.shared.panelController
-        )
-    }
-
-    private func navigate(_ task: NextTask) {
-        switch task.kind {
-        case .reviewMergeRequest, .addressComments:
-            if let url = task.targetURL {
-                let kind: CodeHostListKind = task.kind == .reviewMergeRequest
-                    ? .reviewsRequested
-                    : .authored
-                MergeRequestDeepLink.shared.set(url: url, kind: kind)
-                selection = .mergeRequests
-            } else {
-                fallthroughToSessions(task)
-            }
-
-        case .sessionAttention:
-            fallthroughToSessions(task)
-
-        case .newTicket:
-            selection = .jira
+    private func openReadyTask() {
+        if let destination = model.performOpen(sessionStore: sessionStore) {
+            selection = destination
         }
-    }
-
-    private func fallthroughToSessions(_ task: NextTask) {
-        if let name = task.sessionName,
-           let sessionStore,
-           let session = sessionStore.sessions.first(where: { $0.name == name }) {
-            sessionStore.select(sessionID: session.id)
-        }
-        ConsoleNavigation.showSessions()
     }
 
     private func navigationHint(for task: NextTask) -> String {
@@ -224,24 +208,15 @@ struct NextTaskCardView: View {
         }
     }
 
-    private var accessibilityLabel: String {
-        switch model.status {
-        case .idle:
-            return "Next — check what to do"
-        case .checking:
-            return "Next — checking"
-        case .failed(let message):
-            return "Next failed. \(message)"
-        case .ready(let task, _):
-            let lines = task.lines.joined(separator: ", ")
-            return "Next — \(task.headline). \(lines)."
-        }
+    private func openAccessibilityLabel(for task: NextTask) -> String {
+        let lines = task.lines.joined(separator: ", ")
+        return "Open next task. \(task.headline). \(lines)."
     }
 }
 
 #Preview("Idle") {
     @Previewable @State var selection: SidebarSelection = .home
-    NextTaskCardView(selection: $selection)
+    NextTaskCardView(selection: $selection, model: NextButtonModel(), onRefresh: {})
         .environment(SessionStore())
         .frame(width: 560)
         .padding()

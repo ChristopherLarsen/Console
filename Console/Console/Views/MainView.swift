@@ -219,6 +219,7 @@ struct MainView: View {
 #Preview {
     MainView()
         .environment(SessionStore())
+        .environment(NextButtonModel())
         .environment(SessionWorkspaceStore())
         .environment(SessionLaunchCoordinator(store: SessionStore(), workspaceStore: SessionWorkspaceStore()))
         .modelContainer(for: [Command.self, WakeWord.self], inMemory: true)

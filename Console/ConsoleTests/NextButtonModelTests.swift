@@ -291,5 +291,147 @@ final class NextButtonModelTests: XCTestCase {
 
         XCTAssertEqual(model.status, .idle)
         XCTAssertEqual(spy.requests.count, 0)
+        XCTAssertEqual(model.checkStartCount, 1)
+    }
+
+    // MARK: - Shared model / suspended duplicate work
+
+    func testSecondCheckWhileSuspendedDoesNotStartDuplicateWork() async {
+        let model = NextButtonModel()
+        let snapshot = reviewSnapshot()
+        var resumeRefresh: CheckedContinuation<Void, Never>?
+        var refreshStarts = 0
+
+        model.check(
+            refresh: {
+                refreshStarts += 1
+                await withCheckedContinuation { continuation in
+                    resumeRefresh = continuation
+                }
+            },
+            snapshot: { snapshot }
+        )
+
+        let deadline = Date().addingTimeInterval(2)
+        while resumeRefresh == nil && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertNotNil(resumeRefresh)
+        XCTAssertEqual(model.status, .checking)
+        XCTAssertEqual(model.checkStartCount, 1)
+        XCTAssertEqual(refreshStarts, 1)
+
+        // Page Determine and card Refresh share this model; neither may start a
+        // second pass while the first is still in flight.
+        model.check(
+            refresh: { refreshStarts += 1 },
+            snapshot: { snapshot }
+        )
+        model.checkIfNeeded(
+            refresh: { refreshStarts += 1 },
+            snapshot: { snapshot }
+        )
+
+        XCTAssertEqual(model.status, .checking)
+        XCTAssertEqual(model.checkStartCount, 1)
+        XCTAssertEqual(refreshStarts, 1)
+
+        resumeRefresh?.resume()
+        await waitUntilReady(model)
+        XCTAssertEqual(model.checkStartCount, 1)
+        XCTAssertEqual(refreshStarts, 1)
+        XCTAssertEqual(readyTask(model)?.kind, .reviewMergeRequest)
+    }
+
+    func testExplicitRefreshAfterReadyStartsExactlyOneNewCheck() async {
+        let refresh = RefreshProbe()
+        let model = NextButtonModel()
+        let snapshot = reviewSnapshot()
+
+        model.check(
+            refresh: { await refresh.run() },
+            snapshot: { snapshot }
+        )
+        await waitUntilReady(model)
+        XCTAssertEqual(refresh.count, 1)
+        XCTAssertEqual(model.checkStartCount, 1)
+
+        model.check(
+            refresh: { await refresh.run() },
+            snapshot: { snapshot }
+        )
+        await waitUntilReady(model)
+        XCTAssertEqual(refresh.count, 2)
+        XCTAssertEqual(model.checkStartCount, 2)
+        if case .ready = model.status {
+            // same card, updated by the second pass
+        } else {
+            XCTFail("Expected ready status after the second check")
+        }
+    }
+
+    func testCheckIfNeededPreservesCheckStartCountWhenFresh() async {
+        let refresh = RefreshProbe()
+        let model = NextButtonModel()
+        let snapshot = reviewSnapshot()
+
+        model.checkIfNeeded(
+            refresh: { await refresh.run() },
+            snapshot: { snapshot }
+        )
+        await waitUntilReady(model)
+        XCTAssertEqual(model.checkStartCount, 1)
+
+        model.checkIfNeeded(
+            refresh: { await refresh.run() },
+            snapshot: { snapshot }
+        )
+        XCTAssertEqual(refresh.count, 1)
+        XCTAssertEqual(model.checkStartCount, 1)
+    }
+
+    func testGatherSnapshotWithMissingSessionStoreUsesEmptySessions() {
+        let snapshot = NextButtonModel.gatherSnapshot(
+            sessionStore: nil,
+            jiraController: JiraPanelController()
+        )
+        XCTAssertEqual(snapshot.sessions, [])
+    }
+
+    func testProductionCheckWithNilSessionStoreUsesInjectedSnapshot() async {
+        let model = NextButtonModel()
+        let refresh = RefreshProbe()
+        model.refreshHandler = { await refresh.run() }
+        model.snapshotHandler = { self.reviewSnapshot() }
+
+        model.check(sessionStore: nil, jiraController: JiraPanelController())
+        await waitUntilReady(model)
+
+        XCTAssertEqual(readyTask(model)?.kind, .reviewMergeRequest)
+        XCTAssertEqual(refresh.count, 1)
+        XCTAssertEqual(model.checkStartCount, 1)
+    }
+
+    func testPerformOpenNavigatesWithoutStartingAnotherCheck() async {
+        let model = NextButtonModel()
+        let snapshot = reviewSnapshot()
+        model.check(refresh: {}, snapshot: { snapshot })
+        await waitUntilReady(model)
+        let starts = model.checkStartCount
+
+        XCTAssertEqual(model.performOpen(sessionStore: nil), .mergeRequests)
+        XCTAssertEqual(model.checkStartCount, starts)
+        if case .ready = model.status {
+            // Open does not clear or re-check the card
+        } else {
+            XCTFail("Open must not change the ready status")
+        }
+    }
+
+    func testPerformOpenDoesNothingWhenNotReady() {
+        let model = NextButtonModel()
+        XCTAssertNil(model.performOpen(sessionStore: nil))
+        XCTAssertEqual(model.checkStartCount, 0)
+        XCTAssertEqual(model.status, .idle)
     }
 }
