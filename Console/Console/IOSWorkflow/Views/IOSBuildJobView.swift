@@ -8,9 +8,11 @@ struct IOSBuildJobView: View {
     @Environment(IOSProjectProfileStore.self) private var profileStore
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
     @State private var model = IOSBuildJobPanelModel()
+    @State private var simulatorModel = IOSSimulatorLaunchModel()
 
     var body: some View {
         @Bindable var model = model
+        @Bindable var simulatorModel = simulatorModel
         Section {
             if workspaceStore.workspaces.isEmpty && coordinator.jobs.isEmpty {
                 Text("Add a workspace and iOS project profile to run Build or Selected Tests.")
@@ -19,6 +21,12 @@ struct IOSBuildJobView: View {
                 if !workspaceStore.workspaces.isEmpty {
                     workspacePicker
                     actionRow
+                    IOSSimulatorLaunchView(
+                        model: simulatorModel,
+                        workspaceID: model.resolveWorkspaceID(from: workspaceStore),
+                        selectedJob: model.selectedJob(from: coordinator.jobs),
+                        profileStore: profileStore
+                    )
                 }
                 if let message = model.actionMessage {
                     Text(message)

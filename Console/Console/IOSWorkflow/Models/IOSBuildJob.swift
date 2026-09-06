@@ -17,6 +17,17 @@ nonisolated enum IOSBuildJobState: String, Equatable, Sendable {
             return true
         }
     }
+
+    var title: String {
+        switch self {
+        case .queued: return "Queued"
+        case .running: return "Running"
+        case .succeeded: return "Succeeded"
+        case .failed: return "Failed"
+        case .cancelled: return "Cancelled"
+        case .timedOut: return "Timed Out"
+        }
+    }
 }
 
 nonisolated enum IOSBuildJobKind: String, Equatable, Sendable {

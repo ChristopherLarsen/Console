@@ -131,14 +131,7 @@ nonisolated struct IOSBuildJobPresentation: Equatable, Sendable {
     }
 
     static func stateTitle(_ state: IOSBuildJobState) -> String {
-        switch state {
-        case .queued: return "Queued"
-        case .running: return "Running"
-        case .succeeded: return "Succeeded"
-        case .failed: return "Failed"
-        case .cancelled: return "Cancelled"
-        case .timedOut: return "Timed Out"
-        }
+        state.title
     }
 
     static func kindTitle(_ kind: IOSBuildJobKind) -> String {
