@@ -6,14 +6,13 @@ _Rewritten in full at the end of each session by agent-console._
 
 ## Next Intended Move
 
-- Parent should merge `review-10-session-launch-errors` (item 10) from the isolated worktree. Do not push or delete that worktree. Item 16 (bridge assembly failure) depends on this error-presentation path.
+- Parent should merge `review-16-bridge-failure-degrade` (item 16) from the isolated worktree. Do not push or delete that worktree. Do not start item 18 (Sessions layout).
 
 ## Working Findings
 
-- Item 10 done in `/Users/christopherlarsen/orca/workspaces/Console/review-10-session-launch-errors` on `review-10-session-launch-errors`. MainView shows `SessionLaunchErrorBanner` for contextual failures; the workspace chooser keeps the pending draft/folder until success or cancel; Start is disabled for unavailable and non-Git Review folders; associations and last-used are written only after `createSession` succeeds.
-- Intent picker still owns its own thrown-error UI (item 02 metadata rule unchanged; no source-derived prompts, no `--name`).
-- Tests (pass): `SessionLaunchCoordinatorTests`, `SessionWorkspaceChooserTests`. UI: `SessionsUITests/testSyntheticLaunchFailureShowsActionableError` (DEBUG `-uiTestSessionLaunchFailure`). Debug `Console` build succeeded with `-derivedDataPath /tmp/console-review-10-derived`.
-- UI test asserts the banner and Settings route on Home; it does not click through Open Settings (host overlay intercepted the tap). Coordinator tests cover `openSessionsSettings()`.
+- Item 16 done in `/Users/christopherlarsen/orca/workspaces/Console/review-16-bridge-failure-degrade` on `review-16-bridge-failure-degrade`. Plugin assembly is optional: a throwing assembler still launches the resolved Claude executable with `--session-id` only, `bridgeStatus = .unavailable`, and a session-pane warning. Genuine `launcher.launch` failures roll back the row, token, and previous selection. Item 10 launch-error presentation is unchanged. Item 02 source-data rule holds on the uninstrumented path (no `--name`, no argv/env/send leak, no auto-submit).
+- Seams: `ConsoleClaudePluginAssembling` plus existing `SessionProcessLaunching`. `SessionCreationError.pluginAssemblyFailed` remains the warning copy; `createSession` no longer throws it.
+- Tests (pass): `SessionStoreTests`, `SessionsPackagingTests`, `SessionLaunchCoordinatorTests`. Debug `Console` build succeeded with `-derivedDataPath /tmp/console-review-16-derived`.
 
 ## Dead Ends
 

@@ -124,4 +124,42 @@ final class SessionsPackagingTests: XCTestCase {
         XCTAssertFalse(args.contains("--name"))
         XCTAssertFalse(args.contains("My Task"))
     }
+
+    @MainActor
+    func testUninstrumentedLaunchArgumentsAreSessionIdentityOnly() {
+        let args = SessionStore.launchArguments(
+            claudeSessionID: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
+            pluginDirectory: nil
+        )
+
+        XCTAssertEqual(args, [
+            "--session-id", "11111111-2222-3333-4444-555555555555",
+        ])
+        XCTAssertFalse(args.contains("--plugin-dir"))
+        XCTAssertFalse(args.contains("--allowedTools"))
+        XCTAssertFalse(args.contains("--name"))
+        XCTAssertFalse(args.contains { $0.hasPrefix("mcp__plugin_console-bridge_console__") })
+    }
+
+    func testAssemblerSeamThrowsWithoutWritingAPlugin() throws {
+        struct FailingAssembler: ConsoleClaudePluginAssembling {
+            func materialize(in baseDirectory: URL) throws -> URL {
+                throw ConsoleClaudePluginAssembler.AssemblyError.missingResource("synthetic-plugin")
+            }
+        }
+
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("plugin-assembly-fail-\(UUID().uuidString)", isDirectory: true)
+
+        XCTAssertThrowsError(try FailingAssembler().materialize(in: base)) { error in
+            XCTAssertEqual(
+                error as? ConsoleClaudePluginAssembler.AssemblyError,
+                .missingResource("synthetic-plugin")
+            )
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: base.appendingPathComponent("plugins/console-bridge").path),
+            "a failing assembler must not leave a plugin directory"
+        )
+    }
 }

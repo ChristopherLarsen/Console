@@ -1,9 +1,16 @@
 import Foundation
 
+/// Test seam for optional plugin assembly. Production uses
+/// `ConsoleClaudePluginAssembler`; tests inject failures without touching
+/// bundled resources.
+protocol ConsoleClaudePluginAssembling {
+    func materialize(in baseDirectory: URL) throws -> URL
+}
+
 /// Assembles the session-scoped Claude plugin layout from the bundled
 /// ConsoleClaudePlugin resources into the protected ephemeral directory.
-struct ConsoleClaudePluginAssembler {
-    enum AssemblyError: Error {
+struct ConsoleClaudePluginAssembler: ConsoleClaudePluginAssembling {
+    enum AssemblyError: Error, Equatable {
         case missingResource(String)
     }
 
