@@ -309,20 +309,7 @@ struct CommandListView: View {
     }
 
     private func duplicateCommand(_ command: Command) {
-        let copy = Command(
-            name: "\(command.name) Copy",
-            commandDescription: command.commandDescription,
-            triggerPhrases: command.triggerPhrases,
-            actions: command.actions.map {
-                CommandAction(type: $0.type, payload: $0.payload, order: $0.order,
-                              delayAfterMS: $0.delayAfterMS, timeoutMS: $0.timeoutMS,
-                              retryOnFailure: $0.retryOnFailure, maxRetries: $0.maxRetries)
-            },
-            executionMode: command.executionMode,
-            requiresConfirmation: command.requiresConfirmation,
-            shortSummary: command.shortSummary,
-            actionDescription: command.actionDescription
-        )
+        let copy = command.duplicating()
         modelContext.insert(copy)
         persistChanges()
     }

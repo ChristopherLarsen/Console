@@ -53,6 +53,13 @@ struct CommandAction: Codable, Identifiable, Hashable {
     var actionDescription: String {
         "\(type.displayName): \(payload)"
     }
+
+    /// Value-type copy with a new identity. Every behavioral field is preserved.
+    func duplicating(id: UUID = UUID()) -> CommandAction {
+        var copy = self
+        copy.id = id
+        return copy
+    }
 }
 
 struct FallbackAction: Codable, Hashable {
