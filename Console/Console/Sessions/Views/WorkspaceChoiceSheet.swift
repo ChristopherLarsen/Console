@@ -3,14 +3,13 @@ import SwiftUI
 /// Compact chooser shown once when a contextual Jira/MR launch cannot resolve
 /// a workspace. Selecting a workspace saves the association and launches
 /// immediately; subsequent launches of the same source are one click.
+/// Failed Start keeps the draft and selected folder so the user can retry.
 struct WorkspaceChoiceSheet: View {
     let choice: PendingWorkspaceChoice
-    let onConfirm: (UUID) -> Void
-    let onCancel: () -> Void
 
+    @Environment(SessionLaunchCoordinator.self) private var coordinator
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
     @State private var selectedID: UUID?
-    @State private var isAddingFolder = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -28,17 +27,32 @@ struct WorkspaceChoiceSheet: View {
                 workspaceList
             }
 
-            if let error = validationError {
-                Text(error)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .accessibilityIdentifier("Sessions.WorkspaceChoice.Error")
+            if let error = displayedError {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if showsSettingsRoute {
+                        Button("Open Sessions Settings") {
+                            coordinator.openSessionsSettings()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.footnote)
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityIdentifier("Sessions.WorkspaceChoice.OpenSettings")
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("Sessions.WorkspaceChoice.Error")
             }
 
             HStack {
-                Button("Cancel", action: onCancel)
-                    .keyboardShortcut(.cancelAction)
-                    .accessibilityIdentifier("Sessions.WorkspaceChoice.Cancel")
+                Button("Cancel") {
+                    coordinator.cancelWorkspaceChoice()
+                }
+                .keyboardShortcut(.cancelAction)
+                .accessibilityIdentifier("Sessions.WorkspaceChoice.Cancel")
 
                 Spacer()
 
@@ -47,16 +61,21 @@ struct WorkspaceChoiceSheet: View {
 
                 Button("Start Session") {
                     if let selectedID {
-                        onConfirm(selectedID)
+                        _ = try? coordinator.confirmWorkspaceChoice(workspaceID: selectedID)
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(selectedID == nil)
+                .disabled(!coordinator.canConfirmWorkspace(workspaceID: selectedID, purpose: choice.purpose))
                 .accessibilityIdentifier("Sessions.WorkspaceChoice.Start")
             }
         }
         .padding(20)
         .frame(width: 420)
+        .onAppear {
+            if selectedID == nil {
+                selectedID = choice.selectedWorkspaceID
+            }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("SessionWorkspaceChooser")
     }
@@ -85,6 +104,7 @@ struct WorkspaceChoiceSheet: View {
     private func row(for workspace: SessionWorkspace) -> some View {
         Button {
             selectedID = workspace.id
+            coordinator.updatePendingWorkspaceSelection(workspace.id)
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: selectionIcon(for: workspace))
@@ -122,13 +142,20 @@ struct WorkspaceChoiceSheet: View {
         selectedID == workspace.id ? "largecircle.fill.circle" : "circle"
     }
 
-    private var validationError: String? {
-        guard let selectedID,
-              let workspace = workspaceStore.workspace(withID: selectedID),
-              !workspaceStore.isAvailable(workspace) else {
-            return nil
+    private var displayedError: String? {
+        if let selectedID,
+           let reason = coordinator.workspaceBlockingReason(workspaceID: selectedID, purpose: choice.purpose) {
+            return reason
         }
-        return "That folder is no longer available. Choose another or add a new one."
+        return coordinator.lastFailureMessage
+    }
+
+    private var showsSettingsRoute: Bool {
+        if let selectedID,
+           coordinator.workspaceBlockingReason(workspaceID: selectedID, purpose: choice.purpose) != nil {
+            return true
+        }
+        return coordinator.lastFailure?.offersSettingsRoute == true
     }
 
     private func chooseFolder() {
@@ -143,6 +170,7 @@ struct WorkspaceChoiceSheet: View {
             guard response == .OK, let url = panel.url else { return }
             let workspace = workspaceStore.add(name: url.lastPathComponent, directoryURL: url.standardizedFileURL)
             selectedID = workspace.id
+            coordinator.updatePendingWorkspaceSelection(workspace.id)
         }
     }
 }

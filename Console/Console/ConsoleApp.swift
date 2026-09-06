@@ -190,9 +190,13 @@ struct ConsoleApp: App {
 
         let sessionStore = SessionStore()
         _sessionStore = State(initialValue: sessionStore)
-        _launchCoordinator = State(
-            initialValue: SessionLaunchCoordinator(store: sessionStore, workspaceStore: workspaceStore)
-        )
+        let coordinator = SessionLaunchCoordinator(store: sessionStore, workspaceStore: workspaceStore)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-uiTestSessionLaunchFailure") {
+            coordinator.debugPresentSyntheticFailure()
+        }
+        #endif
+        _launchCoordinator = State(initialValue: coordinator)
 
         if !Self.isRunningUnitTests {
             MenuBarManager.shared.installStatusItem()

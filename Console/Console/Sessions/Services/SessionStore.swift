@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import SwiftTerm
 
-enum SessionCreationError: LocalizedError {
+enum SessionCreationError: LocalizedError, Equatable {
     case claudeNotFound
     case pluginAssemblyFailed
 

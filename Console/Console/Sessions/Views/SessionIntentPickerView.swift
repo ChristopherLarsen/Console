@@ -23,6 +23,7 @@ struct SessionIntentPickerView: View {
     @State private var inlineContext = ""
     @State private var inlineError: String?
     @State private var errorMessage: String?
+    @State private var showsSettingsRoute = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -45,11 +46,22 @@ struct SessionIntentPickerView: View {
             }
 
             if let errorMessage {
-                Text(errorMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("Sessions.Launcher.Error")
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if showsSettingsRoute {
+                        Button("Open Sessions Settings") {
+                            ConsoleNavigation.showSettings()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.footnote)
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityIdentifier("Sessions.Launcher.OpenSettings")
+                    }
+                }
+                .accessibilityIdentifier("Sessions.Launcher.Error")
             }
         }
         .padding(16)
@@ -179,6 +191,7 @@ struct SessionIntentPickerView: View {
 
     private func handleIntentTap(_ purpose: SessionPurpose) {
         errorMessage = nil
+        showsSettingsRoute = false
         inlineError = nil
 
         switch purpose {
@@ -220,6 +233,7 @@ struct SessionIntentPickerView: View {
         if let override = overrideWorkspaceID {
             resolvedDraft.workspaceID = override
         }
+        draft = resolvedDraft
 
         if workspaceStore.workspace(withID: resolvedDraft.workspaceID ?? UUID()) == nil,
            workspaceStore.availableWorkspaces.isEmpty {
@@ -230,11 +244,14 @@ struct SessionIntentPickerView: View {
         do {
             guard try coordinator.launch(draft: resolvedDraft) != nil else {
                 errorMessage = "Choose a workspace folder to continue."
+                showsSettingsRoute = true
                 return
             }
             dismiss()
         } catch {
-            errorMessage = error.localizedDescription
+            let failure = SessionLaunchFailure(error: error)
+            errorMessage = failure.message
+            showsSettingsRoute = failure.offersSettingsRoute
         }
     }
 
@@ -324,7 +341,16 @@ struct SessionIntentPickerView: View {
                     submitInlineContext(purpose, parse)
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(inlineContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(
+                    inlineContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || (
+                            overrideWorkspaceID != nil
+                                && !coordinator.canConfirmWorkspace(
+                                    workspaceID: overrideWorkspaceID,
+                                    purpose: purpose
+                                )
+                        )
+                )
                 .accessibilityIdentifier("\(identifierPrefix).StartButton")
             }
         }
@@ -402,14 +428,18 @@ struct SessionIntentPickerView: View {
             var resolvedDraft = coordinator.draft(purpose: purpose, source: source)
             resolvedDraft.workspaceID = workspace.id
             resolvedDraft.name = effectiveName(for: resolvedDraft)
+            draft = resolvedDraft
             do {
                 guard try coordinator.launch(draft: resolvedDraft) != nil else {
                     errorMessage = "The chosen folder could not be used."
+                    showsSettingsRoute = true
                     return
                 }
                 dismiss()
             } catch {
-                errorMessage = error.localizedDescription
+                let failure = SessionLaunchFailure(error: error)
+                errorMessage = failure.message
+                showsSettingsRoute = failure.offersSettingsRoute
             }
         }
     }

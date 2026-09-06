@@ -118,6 +118,36 @@ final class SessionsUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
     }
 
+    // MARK: - Synthetic launch failure
+
+    func testSyntheticLaunchFailureShowsActionableError() throws {
+        app.launchArguments.append("-uiTestSessionLaunchFailure")
+        app.launch()
+
+        let error = element("Sessions.Launch.Error")
+        XCTAssertTrue(
+            error.waitForExistence(timeout: 8),
+            "contextual launch failure must be visible on Home. Tree:\n\(app.debugDescription)"
+        )
+        XCTAssertTrue(
+            element("HomePanelSessions").waitForExistence(timeout: 5),
+            "failed launches stay on Home instead of opening Sessions"
+        )
+        XCTAssertTrue(
+            element("Sessions.Launch.OpenSettings").waitForExistence(timeout: 5),
+            "executable/folder failures expose a Settings route"
+        )
+        let claudeText = app.staticTexts.containing(
+            NSPredicate(format: "value CONTAINS[c] %@", "Claude Code")
+        ).firstMatch
+        XCTAssertTrue(
+            claudeText.exists,
+            "missing-Claude copy must be visible. Tree:\n\(app.debugDescription)"
+        )
+        XCTAssertFalse(element("Sessions.Header").exists, "must not navigate as if the session started")
+        XCTAssertFalse(element("Sessions.EmptyState").exists)
+    }
+
     // MARK: - Previewed rows (two concurrent sessions, switching, retention)
 
     func testTwoConcurrentSessionsListSwitchingAndExitedRetention() throws {

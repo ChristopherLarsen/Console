@@ -37,6 +37,7 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         var launchCount = 0
         var lastArguments: [String]?
         var lastEnvironment: [String: String]?
+        var errorToThrow: Error?
 
         func makeTerminalView() -> LocalProcessTerminalView {
             let view = ConsoleTerminalView()
@@ -54,7 +55,14 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             launchCount += 1
             lastArguments = arguments
             lastEnvironment = environment
+            if let errorToThrow {
+                throw errorToThrow
+            }
         }
+    }
+
+    private struct SyntheticLaunchError: LocalizedError {
+        var errorDescription: String? { "Synthetic launcher failed." }
     }
 
     private struct Stack {
@@ -64,11 +72,11 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         let launcher: FakeLauncher
     }
 
-    private func makeStack() -> Stack {
+    private func makeStack(locator: ClaudeExecutableLocator? = nil) -> Stack {
         let launcher = FakeLauncher()
         let store = SessionStore(
             launcher: launcher,
-            locator: ClaudeExecutableLocator(defaults: locatorDefaults)
+            locator: locator ?? ClaudeExecutableLocator(defaults: locatorDefaults)
         )
         let workspaces = SessionWorkspaceStore(defaults: defaults!)
         let coordinator = SessionLaunchCoordinator(store: store, workspaceStore: workspaces)
@@ -520,5 +528,126 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(stack.store.session(withID: id)?.activity, .error)
         assertSourceMetadataAbsent(from: stack)
+    }
+
+    // MARK: - Launch failures stay visible and do not learn routing
+
+    func testMissingClaudeOnContextualLaunchSurfacesFailureWithoutLearning() throws {
+        locatorDefaults.removeObject(forKey: ClaudeExecutableLocator.settingsKey)
+        let notFound = ClaudeExecutableLocator(
+            shellRunner: { _ in nil },
+            candidateProvider: { [] },
+            defaults: locatorDefaults
+        )
+        let stack = makeStack(locator: notFound)
+        addWorkspace(stack, named: "Home")
+        let sidebarBefore = UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey)
+
+        stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
+
+        XCTAssertTrue(stack.coordinator.lastFailureMessage?.contains("Claude") == true)
+        XCTAssertEqual(stack.coordinator.lastFailure?.offersSettingsRoute, true)
+        XCTAssertNil(stack.coordinator.pendingChoice)
+        XCTAssertFalse(stack.coordinator.presentsChoiceSheet)
+        XCTAssertNil(stack.workspaces.lastUsedWorkspaceID(for: .existingTicket))
+        XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "ENG"))
+        XCTAssertEqual(stack.launcher.launchCount, 0)
+        XCTAssertEqual(
+            UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey),
+            sidebarBefore,
+            "failed contextual launches must not navigate as if successful"
+        )
+    }
+
+    func testDisappearingFolderOverrideThrowsActionableError() throws {
+        let stack = makeStack()
+        let vanished = addWorkspace(stack, named: "Vanished")
+        var draft = stack.coordinator.draft(purpose: .general, source: nil)
+        draft.workspaceID = vanished.id
+        try FileManager.default.removeItem(at: vanished.directoryURL)
+
+        XCTAssertThrowsError(try stack.coordinator.launch(draft: draft)) { error in
+            XCTAssertEqual(error as? SessionLaunchCoordinator.LaunchError, .workspaceUnavailable)
+            XCTAssertTrue((error as? LocalizedError)?.errorDescription?.contains("Settings") == true)
+        }
+        XCTAssertNil(stack.workspaces.lastUsedWorkspaceID(for: .general))
+        XCTAssertEqual(stack.launcher.launchCount, 0)
+    }
+
+    func testNonGitReviewOverrideThrowsActionableError() throws {
+        let stack = makeStack()
+        let plain = addWorkspace(stack, named: "PlainOnly")
+        var draft = stack.coordinator.draft(purpose: .review, source: mrSource("7"))
+        draft.workspaceID = plain.id
+
+        XCTAssertFalse(stack.coordinator.canConfirmWorkspace(workspaceID: plain.id, purpose: .review))
+        XCTAssertTrue(
+            stack.coordinator.workspaceBlockingReason(workspaceID: plain.id, purpose: .review)?
+                .contains("Git") == true
+        )
+        XCTAssertThrowsError(try stack.coordinator.launch(draft: draft)) { error in
+            XCTAssertEqual(error as? SessionLaunchCoordinator.LaunchError, .workspaceNotAGitRepository)
+        }
+        XCTAssertNil(stack.workspaces.lastUsedWorkspaceID(for: .review))
+        XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "gitlab.com/grp/proj"))
+    }
+
+    func testInjectedLauncherFailureSurfacesErrorWithoutLearningOrNavigating() throws {
+        let stack = makeStack()
+        addWorkspace(stack, named: "Home")
+        stack.launcher.errorToThrow = SyntheticLaunchError()
+        let sidebarBefore = UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey)
+
+        stack.coordinator.beginJiraTicketLaunch(
+            key: Sentinel.key,
+            title: Sentinel.title,
+            url: Sentinel.url
+        )
+
+        XCTAssertEqual(stack.coordinator.lastFailureMessage, "Synthetic launcher failed.")
+        XCTAssertEqual(stack.coordinator.lastFailure?.offersSettingsRoute, true)
+        XCTAssertNil(stack.workspaces.lastUsedWorkspaceID(for: .existingTicket))
+        XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "SYN"))
+        XCTAssertEqual(
+            UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey),
+            sidebarBefore
+        )
+        assertSourceMetadataAbsent(from: stack)
+    }
+
+    func testSuccessfulRetryAfterLauncherFailureClearsErrorAndThenLearns() throws {
+        let stack = makeStack()
+        addWorkspace(stack, named: "Home")
+        stack.launcher.errorToThrow = SyntheticLaunchError()
+
+        stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
+        XCTAssertNotNil(stack.coordinator.lastFailureMessage)
+        XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "ENG"))
+
+        stack.launcher.errorToThrow = nil
+        stack.coordinator.beginJiraTicketLaunch(key: "ENG-456", title: nil, url: nil)
+
+        XCTAssertNil(stack.coordinator.lastFailureMessage)
+        XCTAssertNotNil(stack.store.selectedSession)
+        XCTAssertEqual(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "ENG"), stack.workspaces.workspaces.first?.id)
+        XCTAssertEqual(stack.workspaces.lastUsedWorkspaceID(for: .existingTicket), stack.workspaces.workspaces.first?.id)
+    }
+
+    func testCancelClearsPendingChoiceAndFailure() throws {
+        let stack = makeStack()
+        addWorkspace(stack, named: "Home")
+        stack.workspaces.setDefault(id: nil)
+
+        let unresolved = try stack.coordinator.launch(draft: stack.coordinator.draft(
+            purpose: .existingTicket,
+            source: jiraSource()
+        ))
+        XCTAssertNil(unresolved)
+        XCTAssertNotNil(stack.coordinator.pendingChoice)
+        stack.coordinator.cancelWorkspaceChoice()
+
+        XCTAssertNil(stack.coordinator.pendingChoice)
+        XCTAssertFalse(stack.coordinator.presentsChoiceSheet)
+        XCTAssertNil(stack.coordinator.lastFailureMessage)
     }
 }
