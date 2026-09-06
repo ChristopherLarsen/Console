@@ -51,6 +51,16 @@ final class SessionsUITests: XCTestCase {
         }
     }
 
+    private func toggleFocusSessionChrome() {
+        app.activate()
+        let focusMenu = app.menuItems["Focus Session"]
+        if focusMenu.waitForExistence(timeout: 3) {
+            focusMenu.click()
+        } else {
+            app.typeKey("f", modifierFlags: [.command, .shift])
+        }
+    }
+
     // MARK: - Zero-session UI
 
     func testZeroSessionStateShowsEmptyStateAndCreationEntry() throws {
@@ -207,5 +217,83 @@ final class SessionsUITests: XCTestCase {
             alphaRow.frame.minX,
             "terminal pane occupies the left side; the session list sits on the right"
         )
+    }
+
+    // MARK: - Focus Session
+
+    func testFocusSessionHidesListAndRestoresIt() throws {
+        launchSessions(preview: true)
+
+        let alphaRow = sessionRow(named: "Preview Alpha")
+        XCTAssertTrue(alphaRow.waitForExistence(timeout: 5), "first concurrent session row visible")
+        XCTAssertTrue(sessionRow(named: "Preview Beta").exists, "second concurrent session row visible")
+
+        let header = element("Sessions.Header")
+        XCTAssertTrue(header.waitForExistence(timeout: 8), "selected terminal header present")
+
+        let list = element("Sessions.List")
+        XCTAssertTrue(list.waitForExistence(timeout: 5), "session list is visible before focus")
+        XCTAssertTrue(element("NewSessionButton").exists, "list chrome is present before focus")
+
+        let focusToggle = element("Sessions.FocusToggle")
+        XCTAssertTrue(focusToggle.waitForExistence(timeout: 5), "Focus Session control is present")
+
+        let terminalToggle = element("ToggleTerminalCollapse")
+        XCTAssertTrue(terminalToggle.waitForExistence(timeout: 5), "global drawer chrome stays mounted")
+
+        app.activate()
+        toggleFocusSessionChrome()
+
+        XCTAssertTrue(
+            list.waitForNonExistence(timeout: 5),
+            "focus mode unmounts the session list rather than hiding it. Tree:\n\(app.debugDescription)"
+        )
+        XCTAssertFalse(
+            sessionRow(named: "Preview Alpha").exists,
+            "hidden list must not leave session rows in the accessibility tree"
+        )
+        XCTAssertFalse(
+            sessionRow(named: "Preview Beta").exists,
+            "hidden list must not leave duplicate session rows"
+        )
+        XCTAssertFalse(element("NewSessionButton").exists, "list header unmounts with the list")
+        XCTAssertFalse(element("Sessions.ShowListButton").exists, "focus mode does not leave a list rail")
+        XCTAssertTrue(header.waitForExistence(timeout: 5), "selected session terminal remains")
+        XCTAssertTrue(focusToggle.waitForExistence(timeout: 5), "Focus Session toggle stays available")
+        XCTAssertTrue(terminalToggle.exists, "global drawer process chrome stays alive while collapsed")
+
+        toggleFocusSessionChrome()
+
+        let restoredList = element("Sessions.List")
+        XCTAssertTrue(
+            restoredList.waitForExistence(timeout: 5),
+            "exiting focus restores the session list. Tree:\n\(app.debugDescription)"
+        )
+        XCTAssertTrue(
+            sessionRow(named: "Preview Alpha").waitForExistence(timeout: 5),
+            "Alpha row identity is restored"
+        )
+        XCTAssertTrue(
+            sessionRow(named: "Preview Beta").waitForExistence(timeout: 5),
+            "Beta row identity is restored"
+        )
+        XCTAssertTrue(element("NewSessionButton").waitForExistence(timeout: 5))
+        XCTAssertTrue(header.exists, "selected terminal remains after restore")
+        XCTAssertTrue(terminalToggle.exists, "drawer chrome remains after restore")
+
+        app.typeKey("2", modifierFlags: .command)
+        toggleFocusSessionChrome()
+        XCTAssertTrue(
+            element("Sessions.List").waitForNonExistence(timeout: 5),
+            "focus after switching still unmounts the list"
+        )
+        XCTAssertTrue(header.waitForExistence(timeout: 5), "switched session keeps its terminal pane")
+        XCTAssertFalse(sessionRow(named: "Preview Alpha").exists)
+        XCTAssertFalse(sessionRow(named: "Preview Beta").exists)
+
+        toggleFocusSessionChrome()
+        XCTAssertTrue(element("Sessions.List").waitForExistence(timeout: 5))
+        XCTAssertTrue(sessionRow(named: "Preview Alpha").waitForExistence(timeout: 5))
+        XCTAssertTrue(sessionRow(named: "Preview Beta").waitForExistence(timeout: 5))
     }
 }

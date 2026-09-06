@@ -1,30 +1,40 @@
 import SwiftUI
 
 /// The Sessions destination: selected terminal on the left, compact session
-/// list filling the right edge.
+/// list filling the right edge. The list is collapsible and resizable; Focus
+/// Session hides it together with the global drawer without killing either
+/// terminal process.
 struct SessionsView: View {
     @Environment(SessionStore.self) private var store
+    @Environment(SessionWorkspaceLayoutController.self) private var layout
     @State private var showingIntentPicker = false
     @State private var pendingStopConfirmationID: UUID?
-
-    static let listWidth: CGFloat = 260
+    @State private var listResizeStartWidth: CGFloat = SessionWorkspaceLayout.listIdealWidth
+    @State private var isResizingList = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            detailArea
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                detailArea
+                    .frame(minWidth: SessionWorkspaceLayout.detailMinWidth)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            Divider()
-
-            VStack(spacing: 0) {
-                listHeader
-                Divider()
-                if store.sessions.isEmpty {
-                    emptyList
-                } else {
-                    sessionList
+                if layout.showsSessionList {
+                    listResizeHandle(availableWidth: geometry.size.width)
+                    listColumn
+                        .frame(width: layout.listWidth)
+                } else if layout.showsCollapsedListRail {
+                    collapsedListRail
                 }
             }
-            .frame(width: Self.listWidth)
+            .animation(TerminalPanelView.collapseAnimation, value: layout.showsSessionList)
+            .animation(TerminalPanelView.collapseAnimation, value: layout.isFocusMode)
+            .onAppear {
+                layout.relayout(availableWidth: geometry.size.width)
+            }
+            .onChange(of: geometry.size.width) { _, newWidth in
+                layout.relayout(availableWidth: newWidth)
+            }
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .popover(isPresented: $showingIntentPicker, arrowEdge: .leading) {
@@ -64,6 +74,26 @@ struct SessionsView: View {
                 Text("The graceful termination timed out. Force Stop kills the process immediately; the session then closes.")
             }
         )
+        .onChange(of: store.selectedSessionID) { _, newID in
+            if newID == nil, layout.isFocusMode {
+                layout.toggleFocusSession()
+            }
+            store.focusSelectedTerminal()
+        }
+    }
+
+    private var listColumn: some View {
+        VStack(spacing: 0) {
+            listHeader
+            Divider()
+            if store.sessions.isEmpty {
+                emptyList
+            } else {
+                sessionList
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("Sessions.List")
     }
 
     private var listHeader: some View {
@@ -71,6 +101,15 @@ struct SessionsView: View {
             Text("Sessions")
                 .font(.headline)
             Spacer()
+            Button {
+                layout.isListVisible = false
+            } label: {
+                Image(systemName: "sidebar.trailing")
+            }
+            .buttonStyle(.plain)
+            .help("Hide Session List")
+            .accessibilityLabel("Hide Session List")
+            .accessibilityIdentifier("Sessions.HideListButton")
             Button {
                 showingIntentPicker = true
             } label: {
@@ -82,6 +121,48 @@ struct SessionsView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    private var collapsedListRail: some View {
+        Button {
+            layout.isListVisible = true
+        } label: {
+            Image(systemName: "sidebar.trailing")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(width: SessionWorkspaceLayout.listCollapsedRailWidth)
+        .help("Show Session List")
+        .accessibilityLabel("Show Session List")
+        .accessibilityIdentifier("Sessions.ShowListButton")
+    }
+
+    private func listResizeHandle(availableWidth: CGFloat) -> some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: 1)
+            .frame(maxHeight: .infinity)
+            .padding(.horizontal, 3)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if !isResizingList {
+                            isResizingList = true
+                            listResizeStartWidth = layout.listWidth
+                        }
+                        let proposed = listResizeStartWidth - value.translation.width
+                        layout.applyListWidth(proposed, availableWidth: availableWidth)
+                    }
+                    .onEnded { _ in
+                        isResizingList = false
+                    }
+            )
+            .help("Drag to resize session list")
+            .accessibilityHidden(true)
     }
 
     private var emptyList: some View {
@@ -133,6 +214,8 @@ struct SessionsView: View {
                     activity: session.activity,
                     attention: session.attention
                 ),
+                isFocusMode: layout.isFocusMode,
+                onToggleFocus: toggleFocusSession,
                 onTerminate: { requestTerminate(session) }
             )
             .id(session.id)
@@ -146,6 +229,12 @@ struct SessionsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private func toggleFocusSession() {
+        guard store.selectedSession != nil || layout.isFocusMode else { return }
+        layout.toggleFocusSession()
+        store.focusSelectedTerminal()
     }
 
     // MARK: - Terminate flow
@@ -200,8 +289,10 @@ struct SessionsView: View {
 func sessionLauncherPreview(@ViewBuilder content: () -> some View) -> some View {
     let store = SessionStore()
     let workspaces = SessionWorkspaceStore()
+    let layout = SessionWorkspaceLayoutController()
     return content()
         .environment(store)
         .environment(workspaces)
         .environment(SessionLaunchCoordinator(store: store, workspaceStore: workspaces))
+        .environment(layout)
 }

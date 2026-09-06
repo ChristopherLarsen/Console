@@ -14,6 +14,8 @@ struct MainView: View {
     @Environment(PermissionsManager.self) private var permissionsManager
     @Environment(SessionLaunchCoordinator.self) private var launchCoordinator
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
+    @Environment(SessionStore.self) private var sessionStore
+    @Environment(SessionWorkspaceLayoutController.self) private var sessionWorkspaceLayout
 
     private static let terminalMinExpandedHeight: CGFloat = 150
     private static let terminalDefaultExpandedHeight: CGFloat = 250
@@ -54,11 +56,33 @@ struct MainView: View {
             }
         }
         .onChange(of: sidebarSelection) { _, newValue in
+            if newValue != .sessions, sessionWorkspaceLayout.isFocusMode {
+                sessionWorkspaceLayout.toggleFocusSession()
+            }
             if newValue != .settings {
                 launchCoordinator.restoreChoiceSheetIfNeeded()
             }
         }
+        .onChange(of: isTerminalExpanded) { _, expanded in
+            sessionWorkspaceLayout.noteTerminalChrome(
+                expanded: expanded,
+                height: terminalPanelHeight
+            )
+        }
+        .onChange(of: terminalPanelHeight) { _, height in
+            sessionWorkspaceLayout.noteTerminalChrome(
+                expanded: isTerminalExpanded,
+                height: height
+            )
+        }
+        .onChange(of: sessionWorkspaceLayout.isFocusMode) { _, _ in
+            sessionStore.focusSelectedTerminal()
+        }
         .onAppear {
+            sessionWorkspaceLayout.noteTerminalChrome(
+                expanded: isTerminalExpanded,
+                height: terminalPanelHeight
+            )
             // Conservative migration from the removed bottom-terminal era.
             ConsoleNavigation.migrateLegacyTerminalNavigation()
             // Start the persistent login shell and pre-heat its view off the
@@ -140,13 +164,29 @@ struct MainView: View {
         }
     }
 
+    /// The global zsh drawer stays expanded only when the user left it that
+    /// way and Focus Session is not overlaying a collapsed presentation.
+    private var isDrawerVisuallyExpanded: Bool {
+        isTerminalExpanded && !sessionWorkspaceLayout.isFocusMode
+    }
+
+    private var drawerExpandedBinding: Binding<Bool> {
+        Binding(
+            get: { isDrawerVisuallyExpanded },
+            set: { newValue in
+                guard !sessionWorkspaceLayout.isFocusMode else { return }
+                isTerminalExpanded = newValue
+            }
+        )
+    }
+
     private var terminalLayout: some View {
         GeometryReader { geometry in
             let maxTerminalHeight = max(
                 Self.terminalMinExpandedHeight,
                 geometry.size.height - Self.terminalCenterMinHeight
             )
-            let panelHeight = isTerminalExpanded
+            let panelHeight = isDrawerVisuallyExpanded
                 ? min(max(terminalPanelHeight, Self.terminalMinExpandedHeight), maxTerminalHeight)
                 : TerminalPanelView.barHeight
 
@@ -155,19 +195,19 @@ struct MainView: View {
                     .frame(minWidth: 400, minHeight: Self.terminalCenterMinHeight)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                if isTerminalExpanded {
+                if isDrawerVisuallyExpanded {
                     terminalResizeHandle(maxHeight: maxTerminalHeight)
                         .transition(.opacity)
                 }
 
                 TerminalPanelView(
                     sessionManager: terminalSessionManager,
-                    isExpanded: $isTerminalExpanded
+                    isExpanded: drawerExpandedBinding
                 )
                 .frame(height: panelHeight)
                 .frame(maxWidth: .infinity)
             }
-            .animation(TerminalPanelView.collapseAnimation, value: isTerminalExpanded)
+            .animation(TerminalPanelView.collapseAnimation, value: isDrawerVisuallyExpanded)
             .onAppear {
                 terminalPanelHeight = min(
                     max(terminalPanelHeight, Self.terminalDefaultExpandedHeight),
@@ -249,5 +289,6 @@ struct MainView: View {
         .environment(SessionWorkspaceStore())
         .environment(IOSProjectProfileStore())
         .environment(SessionLaunchCoordinator(store: SessionStore(), workspaceStore: SessionWorkspaceStore()))
+        .environment(SessionWorkspaceLayoutController())
         .modelContainer(for: [Command.self, WakeWord.self], inMemory: true)
 }

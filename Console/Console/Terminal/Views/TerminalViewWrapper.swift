@@ -17,7 +17,8 @@ struct TerminalViewWrapper: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
-        sessionManager.focusTerminal()
+        // Do not steal first responder on SwiftUI refreshes. The Sessions
+        // terminal must keep keyboard focus across layout changes.
     }
 
     func makeCoordinator() -> Coordinator {

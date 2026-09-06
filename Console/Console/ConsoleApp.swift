@@ -65,6 +65,7 @@ struct ConsoleApp: App {
     @State private var workspaceStore: SessionWorkspaceStore
     @State private var iosProfileStore: IOSProjectProfileStore
     @State private var launchCoordinator: SessionLaunchCoordinator
+    @State private var sessionWorkspaceLayout = SessionWorkspaceLayoutController()
     private var syntheticTranscriptSource: SyntheticTranscriptSource?
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("tabSelection") private var tabSelection: TabSelection = .triggers
@@ -338,6 +339,7 @@ struct ConsoleApp: App {
             .environment(workspaceStore)
             .environment(iosProfileStore)
             .environment(launchCoordinator)
+            .environment(sessionWorkspaceLayout)
             #if DEBUG
             .environment(developerModeManager)
             #endif
@@ -399,6 +401,13 @@ struct ConsoleApp: App {
                     }
                     .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .command)
                 }
+                Button("Focus Session") {
+                    guard sessionStore.selectedSession != nil || sessionWorkspaceLayout.isFocusMode else { return }
+                    sessionWorkspaceLayout.toggleFocusSession()
+                    sessionStore.focusSelectedTerminal()
+                }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .disabled(sessionStore.selectedSession == nil && !sessionWorkspaceLayout.isFocusMode)
                 #if DEBUG
                 Divider()
                 Button("Refresh Next Task") {

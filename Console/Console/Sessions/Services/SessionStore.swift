@@ -154,6 +154,15 @@ final class SessionStore {
         sessions.first(where: { $0.id == id })
     }
 
+    /// Puts keyboard focus on the selected session's persistent terminal view.
+    /// Safe when the view is temporarily unmounted or has no window yet.
+    func focusSelectedTerminal() {
+        guard let terminalView = selectedSession?.terminalView else { return }
+        DispatchQueue.main.async {
+            terminalView.window?.makeFirstResponder(terminalView)
+        }
+    }
+
     /// Live sessions whose canonical working directory matches `canonicalPath`.
     /// Exited rows are ignored. Unknown/legacy purposes are treated as editing.
     func liveEditingSessions(occupyingCanonicalPath canonicalPath: String) -> [ConsoleSession] {
