@@ -28,8 +28,29 @@ struct ExecutionResult {
     let overallSuccess: Bool
     let totalDurationMs: Int
     var authorizationDenied: Bool = false
+    var alreadyRunning: Bool = false
 
     var failedSteps: [ExecutionLogEntry] {
         logs.filter { !$0.isSuccess }
+    }
+}
+
+struct CommandRun: Identifiable {
+    static let alreadyRunningMessage = "A command is already running"
+
+    let id: UUID
+    let result: ExecutionResult
+
+    static func alreadyRunning(command: Command) -> CommandRun {
+        CommandRun(
+            id: UUID(),
+            result: ExecutionResult(
+                command: command,
+                logs: [],
+                overallSuccess: false,
+                totalDurationMs: 0,
+                alreadyRunning: true
+            )
+        )
     }
 }

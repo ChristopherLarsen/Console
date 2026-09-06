@@ -24,7 +24,7 @@ final class MenuBarViewModel {
     private let settings = AppSettings()
     private let logManager = CommandLogFileManager.shared
     private var commandMode: CommandListeningMode?
-    private var localCommandExecutor: LocalCommandExecutor?
+    private var localCommandExecutor: (any CommandRunning)?
     private var aiProviderManager: AIProviderManager?
     private var commandMatcher: CommandMatcher?
     @ObservationIgnored private var stopListeningObserver: Any?
@@ -103,7 +103,7 @@ final class MenuBarViewModel {
     // MARK: - Listening Control
 
     func setListeningServices(
-        localCommandExecutor: LocalCommandExecutor,
+        localCommandExecutor: any CommandRunning,
         aiProviderManager: AIProviderManager,
         transcriptSource: TranscriptSource? = nil
     ) {
@@ -300,7 +300,11 @@ final class MenuBarViewModel {
 
         let allCommands = fetchEnabledCommands()
         let activeWakeWords = wakeWordManager?.wakeWords.map(\.word) ?? []
-        RecentCommandsController.shared.show(commands: allCommands, wakeWords: activeWakeWords)
+        RecentCommandsController.shared.show(
+            commands: allCommands,
+            wakeWords: activeWakeWords,
+            executor: localCommandExecutor
+        )
         listeningState = .passive
     }
 
@@ -350,33 +354,60 @@ final class MenuBarViewModel {
         listeningState = .passive
     }
 
-    func executeLocalCommand(_ command: Command) {
+    @discardableResult
+    func executeLocalCommand(_ command: Command) async -> CommandRun {
         guard let localCommandExecutor else {
             if listeningState != .off { listeningState = .passive }
-            return
+            return CommandRun(
+                id: UUID(),
+                result: ExecutionResult(
+                    command: command,
+                    logs: [],
+                    overallSuccess: false,
+                    totalDurationMs: 0
+                )
+            )
         }
+
+        if localCommandExecutor.isExecuting {
+            let run = await localCommandExecutor.execute(command, skipAuthorization: false)
+            if listeningState != .off { listeningState = .passive }
+            return run
+        }
+
         let authManager = AuthorizationManager.shared
 
         if authManager.requiresAuthorization(command) {
             listeningState = .awaitingAuthorization
-            Task {
-                let authorized = await authManager.requestAuthorization(for: command)
-                guard authorized else {
-                    if listeningState != .off { listeningState = .passive }
-                    return
-                }
-                listeningState = .executing
-                _ = await localCommandExecutor.execute(command, skipAuthorization: true)
-                recordExecution(command)
+            let authorized = await authManager.requestAuthorization(for: command)
+            guard authorized else {
                 if listeningState != .off { listeningState = .passive }
+                return CommandRun(
+                    id: UUID(),
+                    result: ExecutionResult(
+                        command: command,
+                        logs: [],
+                        overallSuccess: false,
+                        totalDurationMs: 0,
+                        authorizationDenied: true
+                    )
+                )
             }
+            listeningState = .executing
+            let run = await localCommandExecutor.execute(command, skipAuthorization: true)
+            if !run.result.alreadyRunning {
+                recordExecution(command)
+            }
+            if listeningState != .off { listeningState = .passive }
+            return run
         } else {
             listeningState = .executing
-            Task {
-                _ = await localCommandExecutor.execute(command)
+            let run = await localCommandExecutor.execute(command, skipAuthorization: false)
+            if !run.result.alreadyRunning {
                 recordExecution(command)
-                if listeningState != .off { listeningState = .passive }
             }
+            if listeningState != .off { listeningState = .passive }
+            return run
         }
     }
 
@@ -493,23 +524,19 @@ final class MenuBarViewModel {
             SoundFeedbackService.shared.play(.commandIdentified)
             VisualFeedbackService.shared.show(.commandRecognized(match.command.name))
             let executionStart = Date()
-            localCommandExecutor?.onExecutionComplete = { [weak self] result in
-                let duration = Date().timeIntervalSince(executionStart)
-                let errorMsg = result.failedSteps.first?.message
-                let logResult: CommandLogResult = result.overallSuccess ? .success : .failed
-                self?.logCommandExecution(
+            RecentCommandsController.shared.dismiss()
+            Task {
+                let run = await self.executeLocalCommand(match.command)
+                self.recordVoiceExecutionLog(
+                    run: run,
                     triggerWord: triggerWord,
                     rawTranscript: rawTranscript,
                     strippedTranscript: text,
                     matchedCommand: match.command.name,
                     confidence: match.confidence,
-                    result: logResult,
-                    duration: duration,
-                    error: errorMsg
+                    duration: Date().timeIntervalSince(executionStart)
                 )
             }
-            RecentCommandsController.shared.dismiss()
-            executeLocalCommand(match.command)
         } else {
             lastMatchResult = "No match found"
             logCommandExecution(
@@ -529,6 +556,32 @@ final class MenuBarViewModel {
     }
 
     // MARK: - Logging
+
+    @discardableResult
+    func recordVoiceExecutionLog(
+        run: CommandRun,
+        triggerWord: String,
+        rawTranscript: String,
+        strippedTranscript: String,
+        matchedCommand: String,
+        confidence: Double,
+        duration: TimeInterval
+    ) -> Bool {
+        guard !run.result.alreadyRunning else { return false }
+        let errorMsg = run.result.failedSteps.first?.message
+        let logResult: CommandLogResult = run.result.overallSuccess ? .success : .failed
+        logCommandExecution(
+            triggerWord: triggerWord,
+            rawTranscript: rawTranscript,
+            strippedTranscript: strippedTranscript,
+            matchedCommand: matchedCommand,
+            confidence: confidence,
+            result: logResult,
+            duration: duration,
+            error: errorMsg
+        )
+        return true
+    }
 
     private func logCommandExecution(
         triggerWord: String,

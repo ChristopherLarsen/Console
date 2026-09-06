@@ -36,6 +36,26 @@ struct ExecuteCommandIntent: AppIntent {
             throw IntentError.notReady
         }
 
+        let run = try await ExecuteCommandIntentRunner.execute(
+            commandName: commandName,
+            container: container,
+            executor: executor
+        )
+        return .result(value: ExecuteCommandIntentRunner.statusMessage(for: run))
+    }
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Run \(\.$commandName)")
+    }
+}
+
+@MainActor
+enum ExecuteCommandIntentRunner {
+    static func execute(
+        commandName: String,
+        container: ModelContainer,
+        executor: any CommandRunning
+    ) async throws -> CommandRun {
         let context = ModelContext(container)
         let searchName = commandName
         let predicate = #Predicate<Command> { $0.isEnabled && $0.name == searchName }
@@ -46,12 +66,14 @@ struct ExecuteCommandIntent: AppIntent {
             throw IntentError.commandNotFound(commandName)
         }
 
-        let result = await executor.execute(command)
-        let status = result.overallSuccess ? "succeeded" : "failed"
-        return .result(value: "Ran \"\(command.name)\": \(status).")
+        return await executor.execute(command, skipAuthorization: false)
     }
 
-    static var parameterSummary: some ParameterSummary {
-        Summary("Run \(\.$commandName)")
+    static func statusMessage(for run: CommandRun) -> String {
+        if run.result.alreadyRunning {
+            return CommandRun.alreadyRunningMessage
+        }
+        let status = run.result.overallSuccess ? "succeeded" : "failed"
+        return "Ran \"\(run.result.command.name)\": \(status)."
     }
 }

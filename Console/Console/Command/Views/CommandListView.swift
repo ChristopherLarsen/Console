@@ -13,6 +13,7 @@ struct CommandListView: View {
     @Query(sort: \Command.name) private var commands: [Command]
 
     @Environment(AIProviderManager.self) private var aiProviderManager
+    @Environment(LocalCommandExecutor.self) private var commandExecutor
 
     @State private var showCreationSheet = false
     @State private var showNoProviderAlert = false
@@ -297,9 +298,7 @@ struct CommandListView: View {
     }
 
     private func testCommand(_ command: Command) async {
-        let executor = LocalCommandExecutor()
-        executor.modelContext = modelContext
-        _ = await executor.execute(command)
+        _ = await CommandListTesting.test(command, using: commandExecutor)
     }
 
     private func confirmDelete() {
@@ -345,4 +344,12 @@ struct CommandListView: View {
         }
     }
 
+}
+
+@MainActor
+enum CommandListTesting {
+    @discardableResult
+    static func test(_ command: Command, using executor: any CommandRunning) async -> CommandRun {
+        await executor.execute(command, skipAuthorization: false)
+    }
 }

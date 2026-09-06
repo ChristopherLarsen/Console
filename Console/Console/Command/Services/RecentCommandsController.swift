@@ -5,13 +5,21 @@ import SwiftUI
 final class RecentCommandsController {
     static let shared = RecentCommandsController()
     private var panel: NSWindow?
+    private var executor: (any CommandRunning)?
 
-    private init() {}
+    init(executor: (any CommandRunning)? = nil) {
+        self.executor = executor
+    }
 
-    func show(commands: [Command], wakeWords: [String] = []) {
+    func show(
+        commands: [Command],
+        wakeWords: [String] = [],
+        executor: (any CommandRunning)? = nil
+    ) {
         dismiss()
 
         let triggerWord = resolveTriggerWord(from: wakeWords)
+        let resolvedExecutor = executor ?? self.executor ?? AppDependencies.shared.localCommandExecutor
 
         let view = RecentCommandsView(
             commands: commands,
@@ -20,8 +28,7 @@ final class RecentCommandsController {
             onExecute: { [weak self] command in
                 self?.dismiss()
                 Task {
-                    let executor = LocalCommandExecutor()
-                    _ = await executor.execute(command)
+                    _ = await self?.run(command, using: resolvedExecutor)
                 }
             }
         )
@@ -59,6 +66,14 @@ final class RecentCommandsController {
     func dismiss() {
         panel?.orderOut(nil)
         panel = nil
+    }
+
+    @discardableResult
+    func run(_ command: Command, using executor: (any CommandRunning)? = nil) async -> CommandRun? {
+        guard let resolved = executor ?? self.executor ?? AppDependencies.shared.localCommandExecutor else {
+            return nil
+        }
+        return await resolved.execute(command, skipAuthorization: false)
     }
 
     private func resolveTriggerWord(from wakeWords: [String]) -> String {

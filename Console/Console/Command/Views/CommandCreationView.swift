@@ -5,6 +5,7 @@ struct CommandCreationView: View {
     var maxHeight: CGFloat = 650
 
     @Environment(AIProviderManager.self) private var aiProviderManager
+    @Environment(LocalCommandExecutor.self) private var commandExecutor
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
@@ -455,18 +456,12 @@ struct CommandCreationView: View {
         switch viewModel.prepareDraftForExecution() {
         case .invalid:
             return
-        case let .ready(command, skipAuthorization):
+        case .ready:
             isTesting = true
             testResult = nil
             Task {
-                let executor = LocalCommandExecutor()
-                let result = await executor.execute(command, skipAuthorization: skipAuthorization)
-                if result.authorizationDenied {
-                    viewModel.clearDraftAuthorization()
-                } else {
-                    viewModel.rememberDraftAuthorization()
-                }
-                testResult = result
+                let run = await viewModel.testDraft(using: commandExecutor)
+                testResult = run?.result
                 isTesting = false
             }
         }
@@ -561,19 +556,31 @@ private struct TestResultBanner: View {
     let result: ExecutionResult
 
     private var statusIcon: String {
-        result.overallSuccess ? "checkmark.circle.fill" : "xmark.circle.fill"
+        if result.alreadyRunning {
+            return "exclamationmark.triangle.fill"
+        }
+        return result.overallSuccess ? "checkmark.circle.fill" : "xmark.circle.fill"
     }
 
     private var statusColor: Color {
-        result.overallSuccess ? .green : .red
+        if result.alreadyRunning {
+            return .orange
+        }
+        return result.overallSuccess ? .green : .red
     }
 
     private var statusText: String {
-        result.overallSuccess ? "Test passed" : "Test failed"
+        if result.alreadyRunning {
+            return CommandRun.alreadyRunningMessage
+        }
+        return result.overallSuccess ? "Test passed" : "Test failed"
     }
 
     private var bgColor: Color {
-        result.overallSuccess ? Color.green.opacity(0.06) : Color.red.opacity(0.06)
+        if result.alreadyRunning {
+            return Color.orange.opacity(0.08)
+        }
+        return result.overallSuccess ? Color.green.opacity(0.06) : Color.red.opacity(0.06)
     }
 
     var body: some View {
