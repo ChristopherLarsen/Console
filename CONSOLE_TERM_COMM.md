@@ -49,8 +49,10 @@ Official references:
   executable). A shell is never started and `claude` never typed into it.
 - Each creation generates two UUIDs: a Console session UUID and a Claude
   session UUID. Launch arguments include `--session-id <claudeUUID>`,
-  `--name <session name>`, `--plugin-dir <bundled plugin>`, and preapproval of
-  only the three qualified Console MCP tool names via `--allowedTools`.
+  `--plugin-dir <bundled plugin>`, and preapproval of only the three
+  qualified Console MCP tool names via `--allowedTools`. The local Console
+  display name (issue key, MR number, or user override) is not passed as
+  `--name` and must not appear in argv or environment.
 - Switching sessions preserves every terminal process, view, and scrollback
   buffer: each session keeps one persistent `LocalProcessTerminalView`
   instance for its lifetime.
@@ -287,27 +289,34 @@ func submit(prompt: String, to sessionID: UUID) -> SubmissionResult
   descriptor is never written directly.
 - Multiline content is wrapped in bracketed-paste bytes
   (`ESC[200~ … ESC[201~`) followed by Return (`\r`).
-- Starter prompts are the one exception with a delivery pipeline of their own
-  (§7.1); they still travel through these same `send` APIs.
+- Contextual launches do not submit anything on the developer's behalf.
+  Work context is typed into the idle session explicitly (§7.1).
 
-### 7.1 Starter prompt delivery (intent-aware launches)
+### 7.1 Contextual launches (no source-derived prompts)
 
-Existing Ticket and Review launches carry a memory-only starter prompt built by
-`StarterPromptBuilder` from the launch source (identifier, optional visible
-title, optional URL — unavailable pieces are omitted, never placeholdered).
-New Ticket and General never generate one.
+Existing Ticket and Review launches treat WebView-derived ticket/MR
+identifiers, titles, and URLs as **local routing and display data only**.
+They may choose a local workspace folder and open an idle Claude session.
+They never generate or send a source-derived starter prompt — not
+automatically, not via a manual send button, and not through process
+arguments, environment, fallback prompts, or summaries forwarded to
+another provider.
 
-- The prompt is stored on `ConsoleSession.pendingStarterPrompt`. It is never
-  persisted, logged, or placed in process arguments/environment.
-- With **Automatically Start Contextual Work** enabled (default), the
-  `SessionLaunchCoordinator` observes lifecycle events and submits exactly once
-  when the bridge reports `sessionStarted`; clearing before submitting is the
-  exactly-once guarantee.
-- The queued prompt is dropped on stop, process termination, and turn failure.
-- When automatic start is disabled or bridge instrumentation is unavailable,
-  the terminal pane shows a **Send Starter Prompt** banner
-  (`Sessions.StarterPromptBanner`). Manual send bypasses the idle-only gate
-  (`submitStarterPrompt`) because such sessions never report activity changes.
+`StarterPromptBuilder.prompt(for:source:)` is a privacy gate and always
+returns `nil`. The local session name (for example an issue key) is shown
+in Console only. It is not passed to Claude as `--name`. The two UUID
+identities (`ConsoleSession.id` and `claudeSessionID`) are unchanged.
+
+The intent launcher states that work context must be entered explicitly
+by the developer. Memory-only storage inside Console is not a substitute
+for keeping WebView-derived content off the child CLI and off external
+models.
+
+Disabling an automatic-start preference is not sufficient: there is no
+queued prompt and no Send Starter Prompt control that could transmit the
+same data.
+
+New Ticket and General also open idle, with no source context.
 
 ## 8. Sessions UI
 
@@ -316,7 +325,6 @@ New Ticket and General never generate one.
 - The selected terminal header shows the session name and state.
 - An optional compact strip above the terminal shows the latest one-line
   summary/attention message, up to two artifact chips, and an overflow count.
-  When a starter prompt is still pending, a banner replaces the strip.
 - Artifact chips are informational only this milestone — no JIRA/GitLab access,
   no network requests.
 - State and metadata are exposed through one coherent accessibility element;
@@ -331,9 +339,10 @@ New Ticket and General never generate one.
   stop/remove controls.
 - The Sessions "+" opens the intent launcher (`SessionIntentPickerView`):
   four keyboard-accessible intent rows (New Ticket, Existing Ticket, Review,
-  General), a workspace header with active-session counts, and a collapsed
+  General), a workspace header with active-session counts, a notice that
+  work context must be typed into Claude by the developer, and a collapsed
   Customize area for optional name/workspace overrides. No Name field is ever
-  required; automatic names come from `SessionPurpose.defaultName(source:)`.
+  required; automatic local names come from `SessionPurpose.defaultName(source:)`.
 - Workspace resolution lives in `SessionLaunchCoordinator` (override → hashed
   association → unique GitLab remote match → selected-session containment →
   last-used per purpose → default). Unresolved contextual launches host one
@@ -368,10 +377,13 @@ Coverage:
 - Workspace persistence, availability, per-purpose last-used inputs, hashed
   associations, and the persisted-data privacy boundary
   (`SessionWorkspaceStoreTests`).
-- Naming, prompt generation, Jira/GitLab parsing, remote normalization, and
-  remote matching (`SessionLaunchNamingTests`).
-- Typed requests, resolution order, one-time choice learning, and starter
-  prompt delivery/clearing via validated test envelopes
+- Naming, Jira/GitLab parsing, remote normalization, remote matching, and
+  the privacy gate that never interpolates source metadata into a prompt
+  (`SessionLaunchNamingTests`).
+- Typed requests, resolution order, one-time choice learning, and proof that
+  sentinel source metadata stays in local display/artifacts while remaining
+  absent from captured argv, environment, and terminal-send bytes on
+  toolbar, card, and retained-page prepopulation entry points
   (`SessionLaunchCoordinatorTests`).
 - Claude executable discovery and Settings override
   (`ClaudeExecutableLocatorTests`).

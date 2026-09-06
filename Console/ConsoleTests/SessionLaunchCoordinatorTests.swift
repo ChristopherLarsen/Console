@@ -3,8 +3,8 @@ import XCTest
 @testable import Console
 
 /// End-to-end coordinator behavior on top of a fake launcher: typed requests,
-/// the workspace resolution order, one-time choice learning, and memory-only
-/// starter prompt delivery.
+/// the workspace resolution order, one-time choice learning, and proof that
+/// WebView-derived source metadata never reaches Claude.
 @MainActor
 final class SessionLaunchCoordinatorTests: XCTestCase {
 
@@ -36,6 +36,7 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
     private final class FakeLauncher: SessionProcessLaunching {
         var launchCount = 0
         var lastArguments: [String]?
+        var lastEnvironment: [String: String]?
 
         func makeTerminalView() -> LocalProcessTerminalView {
             let view = ConsoleTerminalView()
@@ -52,6 +53,7 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         ) throws {
             launchCount += 1
             lastArguments = arguments
+            lastEnvironment = environment
         }
     }
 
@@ -96,8 +98,30 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         return stack.workspaces.add(name: name, directoryURL: directory)
     }
 
+    private enum Sentinel {
+        static let key = "SYN-99999"
+        static let title = "SENTINEL-TITLE-ZXCVBNM"
+        static let url = URL(string: "https://sentinel.example.test/browse/SYN-99999")!
+        static let mrIID = "771337"
+        static let mrTitle = "SENTINEL-MR-TITLE-QAZWSX"
+        static let mrURL = URL(string: "https://sentinel.example.test/grp/proj/-/merge_requests/771337")!
+
+        static var tokens: [String] {
+            [
+                key,
+                title,
+                url.absoluteString,
+                "sentinel.example.test",
+                mrTitle,
+                mrURL.absoluteString,
+                "Review !\(mrIID)",
+                "merge_requests/\(mrIID)",
+            ]
+        }
+    }
+
     private func jiraSource(_ key: String = "ENG-123") -> SessionLaunchSource {
-        .jira(key: key, title: nil, url: URL(string: "https://acme.atlassian.net/browse/\(key)"))
+        .jira(key: key, title: nil, url: URL(string: "https://example.test/browse/\(key)"))
     }
 
     private func mrSource(_ iid: String = "42") -> SessionLaunchSource {
@@ -106,6 +130,37 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             title: "Add SSO",
             url: URL(string: "https://gitlab.com/grp/proj/-/merge_requests/\(iid)")!
         )
+    }
+
+    private func sentinelJiraSource() -> SessionLaunchSource {
+        .jira(key: Sentinel.key, title: Sentinel.title, url: Sentinel.url)
+    }
+
+    private func sentinelMRSource() -> SessionLaunchSource {
+        .mergeRequest(iid: Sentinel.mrIID, title: Sentinel.mrTitle, url: Sentinel.mrURL)
+    }
+
+    private func assertSourceMetadataAbsent(
+        from stack: Stack,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let argv = (stack.launcher.lastArguments ?? []).joined(separator: " ")
+        let env = (stack.launcher.lastEnvironment ?? [:])
+            .map { "\($0.key)=\($0.value)" }
+            .joined(separator: "\n")
+        let sends = stack.store.debugTerminalSendBytes.map(\.utf8).joined(separator: "\n")
+        let combined = [argv, env, sends].joined(separator: "\n")
+        for token in Sentinel.tokens {
+            XCTAssertFalse(
+                combined.contains(token),
+                "source metadata leaked into argv/env/terminal-send: \(token)",
+                file: file,
+                line: line
+            )
+        }
+        XCTAssertFalse(argv.contains("--name"), "local display names must not be passed as --name", file: file, line: line)
+        XCTAssertTrue(stack.store.debugTerminalSendBytes.isEmpty, "contextual launches must not send terminal bytes", file: file, line: line)
     }
 
     /// Feeds a validated lifecycle envelope as if it arrived over the bridge.
@@ -125,24 +180,24 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
 
     // MARK: - Typed creation request
 
-    func testCreateSessionRequestStoresPurposeArtifactAndPrompt() throws {
+    func testCreateSessionRequestStoresPurposeAndLocalArtifact() throws {
         let stack = makeStack()
         let directory = tmpRoot!.appendingPathComponent("Req", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         let id = try stack.store.createSession(request: SessionCreationRequest(
             purpose: .existingTicket,
-            name: "ENG-123",
+            name: Sentinel.key,
             workingDirectory: directory,
-            source: jiraSource(),
-            starterPrompt: "Work on Jira ticket ENG-123"
+            source: sentinelJiraSource()
         ))
 
         let session = try XCTUnwrap(stack.store.session(withID: id))
         XCTAssertEqual(session.purpose, .existingTicket)
-        XCTAssertTrue(session.artifacts.contains { $0.kind == .jiraIssue && $0.label == "ENG-123" })
-        XCTAssertEqual(session.pendingStarterPrompt, "Work on Jira ticket ENG-123")
+        XCTAssertEqual(session.name, Sentinel.key, "local display may show the issue key")
+        XCTAssertTrue(session.artifacts.contains { $0.kind == .jiraIssue && $0.label == Sentinel.key })
         XCTAssertEqual(session.activity, .starting)
+        assertSourceMetadataAbsent(from: stack)
     }
 
     func testLegacyCreateOverloadStillWorksAsCompatibilityWrapper() throws {
@@ -155,11 +210,11 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         let session = try XCTUnwrap(stack.store.session(withID: id))
         XCTAssertEqual(session.name, "Old")
         XCTAssertEqual(session.purpose, .general, "legacy sessions are General-purpose")
-        XCTAssertNil(session.pendingStarterPrompt)
         XCTAssertTrue(session.artifacts.isEmpty)
+        XCTAssertTrue(stack.store.debugTerminalSendBytes.isEmpty)
     }
 
-    func testStarterPromptNeverAppearsInLaunchArgumentsOrEnvironmentKeys() throws {
+    func testReviewLaunchOmitsSourceMetadataFromArgvAndEnvironment() throws {
         let stack = makeStack()
         addWorkspace(stack, named: "Private", gitRemote: "https://gitlab.com/grp/proj.git")
 
@@ -172,7 +227,8 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         let joinedArgs = (stack.launcher.lastArguments ?? []).joined(separator: " ")
         XCTAssertFalse(joinedArgs.contains("Add SSO"), "MR title stays out of launch arguments")
         XCTAssertFalse(joinedArgs.contains("gitlab.com/grp/proj"))
-        XCTAssertFalse(joinedArgs.contains("Review GitLab merge request"), "the prompt body never reaches argv")
+        XCTAssertFalse(joinedArgs.contains("--name"))
+        XCTAssertFalse(joinedArgs.contains("Review GitLab merge request"), "no source-derived prompt body")
     }
 
     // MARK: - Resolution order
@@ -330,95 +386,139 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         XCTAssertEqual(stack.coordinator.pendingChoice?.purpose, .review)
     }
 
-    // MARK: - Starter prompt delivery
+    // MARK: - Source metadata stays local
 
-    func testStarterPromptSubmitsExactlyOnceAfterSessionStarted() throws {
+    func testToolbarAndCardJiraLaunchKeepsSentinelOutOfClaude() throws {
         let stack = makeStack()
-        addWorkspace(stack, named: "Deliver")
-        let id = try XCTUnwrap(try stack.coordinator.launch(draft: stack.coordinator.draft(
-            purpose: .existingTicket,
-            source: jiraSource()
-        )))
+        addWorkspace(stack, named: "JiraHome")
 
-        XCTAssertEqual(stack.store.session(withID: id)?.activity, .starting)
-        XCTAssertNotNil(stack.store.pendingStarterPrompt(for: id), "prompt queues while starting")
+        stack.coordinator.beginJiraTicketLaunch(
+            key: Sentinel.key,
+            title: Sentinel.title,
+            url: Sentinel.url
+        )
 
-        receiveLifecycleEvent(stack, sessionID: id, event: .sessionStarted, eventID: "evt-start-1")
+        let session = try XCTUnwrap(stack.store.selectedSession)
+        XCTAssertEqual(session.name, Sentinel.key)
+        XCTAssertTrue(session.artifacts.contains { $0.label == Sentinel.key && $0.kind == .jiraIssue })
+        XCTAssertEqual(session.activity, .starting)
 
-        XCTAssertEqual(stack.store.session(withID: id)?.activity, .working, "delivery applies the optimistic promptSubmitted state")
-        XCTAssertNil(stack.store.pendingStarterPrompt(for: id), "the queue drains on first delivery")
-
-        receiveLifecycleEvent(stack, sessionID: id, event: .sessionStarted, eventID: "evt-start-2")
-        XCTAssertNil(stack.store.pendingStarterPrompt(for: id), "a repeated start has nothing left to deliver")
+        receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-jira-auto")
+        XCTAssertEqual(stack.store.session(withID: session.id)?.activity, .idle, "contextual launches stay idle")
+        assertSourceMetadataAbsent(from: stack)
     }
 
-    func testDisabledAutoStartKeepsPromptPendingForManualSend() throws {
+    func testToolbarMergeRequestLaunchKeepsSentinelOutOfClaude() throws {
         let stack = makeStack()
-        addWorkspace(stack, named: "Manual", gitRemote: "https://gitlab.com/grp/proj.git")
-        stack.workspaces.automaticallyStartsContextualWork = false
+        addWorkspace(
+            stack,
+            named: "ReviewHome",
+            gitRemote: "https://sentinel.example.test/grp/proj.git"
+        )
+
+        stack.coordinator.beginMergeRequestReview(
+            iid: Sentinel.mrIID,
+            title: Sentinel.mrTitle,
+            url: Sentinel.mrURL
+        )
+
+        let session = try XCTUnwrap(stack.store.selectedSession)
+        XCTAssertEqual(session.name, "Review !\(Sentinel.mrIID)")
+        XCTAssertTrue(session.artifacts.contains { $0.label == "MR !\(Sentinel.mrIID)" })
+
+        receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-mr-auto")
+        XCTAssertEqual(stack.store.session(withID: session.id)?.activity, .idle)
+        assertSourceMetadataAbsent(from: stack)
+    }
+
+    func testRetainedPageDraftLaunchKeepsSentinelOutOfClaude() throws {
+        let stack = makeStack()
+        addWorkspace(stack, named: "Retained")
+
+        let draft = stack.coordinator.draft(purpose: .existingTicket, source: sentinelJiraSource())
+        XCTAssertEqual(draft.name, Sentinel.key)
+        XCTAssertNil(StarterPromptBuilder.prompt(for: draft.purpose, source: draft.source))
+
+        let id = try XCTUnwrap(try stack.coordinator.launch(draft: draft))
+        let session = try XCTUnwrap(stack.store.session(withID: id))
+        XCTAssertEqual(session.name, Sentinel.key)
+
+        receiveLifecycleEvent(stack, sessionID: id, event: .sessionStarted, eventID: "evt-retained-auto")
+        XCTAssertEqual(stack.store.session(withID: id)?.activity, .idle)
+        assertSourceMetadataAbsent(from: stack)
+    }
+
+    func testManualPathHasNothingSourceDerivedToSend() throws {
+        let stack = makeStack()
+        addWorkspace(
+            stack,
+            named: "Manual",
+            gitRemote: "https://sentinel.example.test/grp/proj.git"
+        )
 
         let id = try XCTUnwrap(try stack.coordinator.launch(draft: stack.coordinator.draft(
             purpose: .review,
-            source: mrSource()
+            source: sentinelMRSource()
         )))
 
-        receiveLifecycleEvent(stack, sessionID: id, event: .sessionStarted, eventID: "evt-manual-start")
-        XCTAssertEqual(stack.store.session(withID: id)?.activity, .idle, "auto-start off leaves the session idle")
-        XCTAssertNotNil(stack.store.pendingStarterPrompt(for: id), "banner keeps the manual-send prompt")
-
-        let result = stack.coordinator.manuallySendStarterPrompt(to: id)
-
-        XCTAssertEqual(result, SubmissionResult.submitted)
-        XCTAssertNil(stack.store.pendingStarterPrompt(for: id))
-        XCTAssertEqual(stack.store.session(withID: id)?.activity, .working)
+        receiveLifecycleEvent(stack, sessionID: id, event: .sessionStarted, eventID: "evt-manual-idle")
+        XCTAssertEqual(stack.store.session(withID: id)?.activity, .idle)
+        XCTAssertTrue(stack.store.debugTerminalSendBytes.isEmpty, "no queued prompt exists to send manually")
+        assertSourceMetadataAbsent(from: stack)
     }
 
-    func testManualSendBypassesIdleGateWhileBridgeUnavailable() throws {
+    func testGeneralSessionRemainsUsableAndSendsOnlyExplicitPrompts() throws {
         let stack = makeStack()
-        addWorkspace(stack, named: "NoBridge", gitRemote: "https://gitlab.com/grp/proj.git")
+        addWorkspace(stack, named: "GeneralHome")
+
         let id = try XCTUnwrap(try stack.coordinator.launch(draft: stack.coordinator.draft(
-            purpose: .review,
-            source: mrSource()
+            purpose: .general,
+            source: nil
         )))
 
-        // Bridge never reports anything, so the activity stays .starting and
-        // the ordinary submit gate would refuse; manual send must not.
-        XCTAssertEqual(stack.store.session(withID: id)?.activity, .starting)
+        receiveLifecycleEvent(stack, sessionID: id, event: .sessionStarted, eventID: "evt-general-start")
+        XCTAssertEqual(stack.store.session(withID: id)?.activity, .idle)
+        XCTAssertTrue(stack.store.debugTerminalSendBytes.isEmpty)
 
-        let result = stack.coordinator.manuallySendStarterPrompt(to: id)
-
-        XCTAssertEqual(result, SubmissionResult.submitted)
+        XCTAssertEqual(stack.store.submit(prompt: "please list the files", to: id), .submitted)
         XCTAssertEqual(stack.store.session(withID: id)?.activity, .working)
-        XCTAssertNil(stack.store.pendingStarterPrompt(for: id))
+        XCTAssertFalse(stack.store.debugTerminalSendBytes.isEmpty)
+        let sent = stack.store.debugTerminalSendBytes.map(\.utf8).joined()
+        XCTAssertTrue(sent.contains("please list the files"))
+        for token in Sentinel.tokens {
+            XCTAssertFalse(sent.contains(token))
+        }
     }
 
-    func testStopClearsTheQueuedPrompt() throws {
+    func testStopStillExitsAContextualSession() throws {
         let stack = makeStack()
         addWorkspace(stack, named: "Stopped")
         let id = try XCTUnwrap(try stack.coordinator.launch(draft: stack.coordinator.draft(
             purpose: .existingTicket,
-            source: jiraSource()
+            source: sentinelJiraSource()
         )))
-        XCTAssertNotNil(stack.store.pendingStarterPrompt(for: id))
 
-        stack.store.stopSession(id: id) // no live process → immediate terminated event
+        stack.store.stopSession(id: id)
 
         XCTAssertEqual(stack.store.session(withID: id)?.activity, .exited)
-        XCTAssertNil(stack.store.pendingStarterPrompt(for: id))
+        assertSourceMetadataAbsent(from: stack)
     }
 
-    func testTurnFailureClearsTheQueuedPrompt() throws {
+    func testTurnFailureMarksErrorWithoutSendingSource() throws {
         let stack = makeStack()
-        addWorkspace(stack, named: "Failed", gitRemote: "https://gitlab.com/grp/proj.git")
+        addWorkspace(
+            stack,
+            named: "Failed",
+            gitRemote: "https://sentinel.example.test/grp/proj.git"
+        )
         let id = try XCTUnwrap(try stack.coordinator.launch(draft: stack.coordinator.draft(
             purpose: .review,
-            source: mrSource()
+            source: sentinelMRSource()
         )))
-        XCTAssertNotNil(stack.store.pendingStarterPrompt(for: id))
 
         receiveLifecycleEvent(stack, sessionID: id, event: .turnFailed, eventID: "evt-fail-1")
 
-        XCTAssertNil(stack.store.pendingStarterPrompt(for: id))
         XCTAssertEqual(stack.store.session(withID: id)?.activity, .error)
+        assertSourceMetadataAbsent(from: stack)
     }
 }

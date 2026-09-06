@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Settings → Sessions: workspace management, default workspace, contextual
-/// auto-start, and learned-association clearing. This section persists only
-/// folders, IDs, and opaque hashes — never source content.
+/// Settings → Sessions: workspace management, default workspace, and
+/// learned-association clearing. This section persists only folders, IDs,
+/// and opaque hashes — never source content.
 struct SessionsSettingsSection: View {
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
     @State private var renamingID: UUID?
@@ -13,7 +13,6 @@ struct SessionsSettingsSection: View {
             workspacesRows
             addWorkspaceRow
             defaultWorkspacePicker
-            autoStartToggle
             clearAssociationsRow
         } header: {
             Text("Sessions")
@@ -126,19 +125,6 @@ struct SessionsSettingsSection: View {
         Binding(
             get: { workspaceStore.defaultWorkspaceID },
             set: { workspaceStore.setDefault(id: $0) }
-        )
-    }
-
-    private var autoStartToggle: some View {
-        Toggle("Automatically Start Contextual Work", isOn: autoStartBinding)
-            .themedToggleStyle()
-            .accessibilityIdentifier("Settings.Sessions.AutoStartToggle")
-    }
-
-    private var autoStartBinding: Binding<Bool> {
-        Binding(
-            get: { workspaceStore.automaticallyStartsContextualWork },
-            set: { workspaceStore.automaticallyStartsContextualWork = $0 }
         )
     }
 

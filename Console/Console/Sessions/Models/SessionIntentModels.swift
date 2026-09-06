@@ -1,7 +1,7 @@
 import Foundation
 
-/// Why a session exists. Drives generated names, icons, remembered
-/// workspace choices, and whether an automatic starter prompt applies.
+/// Why a session exists. Drives generated local names, icons, and
+/// remembered workspace choices. Source metadata never becomes a Claude prompt.
 enum SessionPurpose: String, Codable, CaseIterable {
     case newTicket
     case existingTicket
@@ -22,9 +22,9 @@ enum SessionPurpose: String, Codable, CaseIterable {
         case .newTicket:
             return "Clean, idle Claude session for starting new ticket work."
         case .existingTicket:
-            return "Jira-aware session with an automatic starter prompt."
+            return "Opens an idle session in the ticket's workspace. Type the work context yourself — ticket details stay in Console."
         case .review:
-            return "Merge-request review with a read-only review prompt."
+            return "Opens an idle session in the merge-request workspace. Type the review context yourself — MR details stay in Console."
         case .general:
             return "Clean, idle Claude session for anything else."
         }
@@ -98,25 +98,23 @@ nonisolated enum SessionLaunchSource: Equatable, Sendable {
 }
 
 /// Everything needed to build and launch one session.
+/// `name` is the local Console display name and is never passed to Claude.
 struct SessionCreationRequest {
     let purpose: SessionPurpose
     let name: String
     let workingDirectory: URL
     let source: SessionLaunchSource?
-    let starterPrompt: String?
 
     init(
         purpose: SessionPurpose,
         name: String,
         workingDirectory: URL,
-        source: SessionLaunchSource? = nil,
-        starterPrompt: String? = nil
+        source: SessionLaunchSource? = nil
     ) {
         self.purpose = purpose
         self.name = name
         self.workingDirectory = workingDirectory
         self.source = source
-        self.starterPrompt = starterPrompt
     }
 }
 

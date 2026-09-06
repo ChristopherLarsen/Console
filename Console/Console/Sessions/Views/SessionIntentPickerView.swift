@@ -32,6 +32,11 @@ struct SessionIntentPickerView: View {
             switch step {
             case .intents:
                 intentRows
+                Text(StarterPromptBuilder.developerContextNotice)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("Sessions.Launcher.ContextNotice")
                 if let draft { customizeArea(draft: draft) }
             case .awaitingJiraContext:
                 jiraContextStep
@@ -246,7 +251,7 @@ struct SessionIntentPickerView: View {
     private var jiraContextStep: some View {
         inlineContextStep(
             title: "Start Existing Ticket",
-            caption: "Enter a Jira issue key or URL.",
+            caption: "Enter a Jira issue key or URL to name the session and pick a folder. Type the work into Claude yourself.",
             placeholder: "ENG-123",
             purpose: .existingTicket,
             identifierPrefix: "Sessions.Launcher.Jira"
@@ -262,7 +267,7 @@ struct SessionIntentPickerView: View {
     private var mergeRequestContextStep: some View {
         inlineContextStep(
             title: "Start Review",
-            caption: "Paste the GitLab merge-request URL.",
+            caption: "Paste the GitLab merge-request URL to name the session and pick a folder. Type the review into Claude yourself.",
             placeholder: "https://gitlab.example.com/group/project/-/merge_requests/42",
             purpose: .review,
             identifierPrefix: "Sessions.Launcher.MergeRequest"

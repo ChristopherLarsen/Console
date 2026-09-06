@@ -77,8 +77,8 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(launcher.lastExecutable, "/bin/echo")
         let args = launcher.lastArguments ?? []
         XCTAssertTrue(args.contains("--session-id"))
-        XCTAssertTrue(args.contains("--name"))
-        XCTAssertTrue(args.contains("Alpha"))
+        XCTAssertFalse(args.contains("--name"), "local display name is not passed to Claude")
+        XCTAssertFalse(args.contains("Alpha"))
         XCTAssertTrue(args.contains("--plugin-dir"))
         XCTAssertEqual(
             args.filter { $0.hasPrefix("mcp__plugin_console-bridge_console__") }.count,
@@ -234,5 +234,33 @@ final class SessionStoreTests: XCTestCase {
         store.terminateAll()
         XCTAssertTrue(store.sessions.allSatisfy { $0.activity == .exited })
         XCTAssertEqual(store.sessions.count, 2, "termination keeps rows visible until quit")
+    }
+
+    func testSourceDisplayNameNeverReachesChildProcessNameOrTerminal() throws {
+        let (store, launcher) = makeStore()
+        let sentinelKey = "SYN-99999"
+        let sentinelTitle = "SENTINEL-TITLE-ZXCVBNM"
+        let sentinelURL = URL(string: "https://sentinel.example.test/browse/SYN-99999")!
+        let id = try store.createSession(request: SessionCreationRequest(
+            purpose: .existingTicket,
+            name: sentinelKey,
+            workingDirectory: tmpDirectory("Repo"),
+            source: .jira(key: sentinelKey, title: sentinelTitle, url: sentinelURL)
+        ))
+
+        let session = try XCTUnwrap(store.session(withID: id))
+        XCTAssertEqual(session.name, sentinelKey)
+        XCTAssertTrue(session.artifacts.contains { $0.label == sentinelKey })
+
+        let argv = (launcher.lastArguments ?? []).joined(separator: " ")
+        let env = (launcher.lastEnvironment ?? [:]).map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
+        let sends = store.debugTerminalSendBytes.map(\.utf8).joined(separator: "\n")
+        for token in [sentinelKey, sentinelTitle, sentinelURL.absoluteString, "sentinel.example.test"] {
+            XCTAssertFalse(argv.contains(token), "argv leaked \(token)")
+            XCTAssertFalse(env.contains(token), "environment leaked \(token)")
+            XCTAssertFalse(sends.contains(token), "terminal-send leaked \(token)")
+        }
+        XCTAssertFalse(argv.contains("--name"))
+        XCTAssertTrue(store.debugTerminalSendBytes.isEmpty)
     }
 }

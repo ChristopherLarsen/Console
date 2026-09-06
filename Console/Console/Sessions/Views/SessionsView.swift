@@ -4,7 +4,6 @@ import SwiftUI
 /// list filling the right edge.
 struct SessionsView: View {
     @Environment(SessionStore.self) private var store
-    @Environment(SessionLaunchCoordinator.self) private var coordinator
     @State private var showingIntentPicker = false
     @State private var pendingStopConfirmationID: UUID?
 
@@ -134,10 +133,7 @@ struct SessionsView: View {
                     activity: session.activity,
                     attention: session.attention
                 ),
-                onTerminate: { requestTerminate(session) },
-                onSendStarterPrompt: {
-                    _ = coordinator.manuallySendStarterPrompt(to: session.id)
-                }
+                onTerminate: { requestTerminate(session) }
             )
             .id(session.id)
         } else {

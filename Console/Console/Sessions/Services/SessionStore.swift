@@ -140,9 +140,13 @@ final class SessionStore {
     /// (including `sessionStarted`) can be expected.
     var isBridgeInstrumented: Bool { socketServer != nil }
 
-    /// Observer fired after each reduced lifecycle event is applied. Used by
-    /// the launch coordinator to deliver starter prompts at `sessionStarted`.
+    /// Observer fired after each reduced lifecycle event is applied.
     @ObservationIgnored var lifecycleObserver: (@MainActor (UUID, SessionLifecycleEvent) -> Void)?
+
+    #if DEBUG
+    /// Test seam: bytes handed to SwiftTerm `send`, in order. Never used at runtime.
+    @ObservationIgnored private(set) var debugTerminalSendBytes: [(sessionID: UUID, utf8: String)] = []
+    #endif
 
     func session(withID id: UUID) -> ConsoleSession? {
         sessions.first(where: { $0.id == id })
@@ -179,8 +183,9 @@ final class SessionStore {
     }
 
     /// Creates and launches a new Claude session from a typed launch request.
-    /// The starter prompt stays memory-only: it is stored on the session and
-    /// delivered through the terminal, never via command-line arguments.
+    /// `request.name` is the local Console label only; it is not passed to
+    /// Claude. Source metadata is never placed in argv, environment, or
+    /// terminal-send bytes.
     @discardableResult
     func createSession(request: SessionCreationRequest) throws -> UUID {
         guard let claudePath = locator.locate() else {
@@ -213,8 +218,7 @@ final class SessionStore {
             summary: nil,
             artifacts: Self.initialArtifacts(for: request.source),
             bridgeStatus: socketServer != nil ? .unknown : .unavailable,
-            purpose: request.purpose,
-            pendingStarterPrompt: request.starterPrompt
+            purpose: request.purpose
         )
         sessions.append(session)
         sessionTokens[consoleID] = token
@@ -226,7 +230,6 @@ final class SessionStore {
                 executable: claudePath,
                 arguments: Self.launchArguments(
                     claudeSessionID: claudeID,
-                    name: displayName,
                     pluginDirectory: pluginRoot
                 ),
                 environment: childEnvironment(
@@ -257,7 +260,7 @@ final class SessionStore {
     }
 
     /// Legacy creation entry point retained for compatibility; equivalent to
-    /// a General-purpose request with no source context or starter prompt.
+    /// a General-purpose request with no source context.
     @discardableResult
     func createSession(name: String, workingDirectory: URL) throws -> UUID {
         try createSession(
@@ -269,12 +272,12 @@ final class SessionStore {
         )
     }
 
-    /// Exact launch arguments: identity, display name, bundled plugin, and
-    /// preapproval of only the three Console MCP tool names.
-    static func launchArguments(claudeSessionID: UUID, name: String, pluginDirectory: String) -> [String] {
+    /// Exact launch arguments: Claude session identity, bundled plugin, and
+    /// preapproval of only the three Console MCP tool names. The local
+    /// Console display name is omitted — it must not reach the child CLI.
+    static func launchArguments(claudeSessionID: UUID, pluginDirectory: String) -> [String] {
         [
             "--session-id", claudeSessionID.uuidString,
-            "--name", name,
             "--plugin-dir", pluginDirectory,
         ] + ["--allowedTools"] + ConsoleClaudePluginAssembler.allowedToolNames
     }
@@ -499,38 +502,16 @@ final class SessionStore {
             return .rejected(.sessionNotAcceptingInput)
         }
         let bytes = PromptSubmissionEngine.bytes(for: prompt)
-        session.terminalView.send(data: bytes[...])
+        sendToTerminal(bytes, sessionID: sessionID, terminalView: session.terminalView)
         applyEvent(.promptSubmitted, to: sessionID)
         return .submitted
     }
 
-    // MARK: - Starter prompts (memory-only)
-
-    func pendingStarterPrompt(for sessionID: UUID) -> String? {
-        session(withID: sessionID)?.pendingStarterPrompt
-    }
-
-    func setPendingStarterPrompt(_ prompt: String?, for sessionID: UUID) {
-        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
-        sessions[index].pendingStarterPrompt = prompt
-    }
-
-    /// Submits a starter prompt without the idle-only gate: sessions whose
-    /// bridge is unavailable never report activity changes, so the manual
-    /// banner path must still be able to deliver. The caller owns clearing
-    /// `pendingStarterPrompt` first (exactly-once semantics).
-    @discardableResult
-    func submitStarterPrompt(_ prompt: String, to sessionID: UUID) -> SubmissionResult {
-        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return .rejected(.emptyPrompt)
-        }
-        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
-            return .rejected(.sessionNotFound)
-        }
-        let bytes = PromptSubmissionEngine.bytes(for: prompt)
-        sessions[index].terminalView.send(data: bytes[...])
-        applyEvent(.promptSubmitted, to: sessionID)
-        return .submitted
+    private func sendToTerminal(_ bytes: [UInt8], sessionID: UUID, terminalView: LocalProcessTerminalView) {
+        #if DEBUG
+        debugTerminalSendBytes.append((sessionID, String(decoding: bytes, as: UTF8.self)))
+        #endif
+        terminalView.send(data: bytes[...])
     }
 
     #if DEBUG

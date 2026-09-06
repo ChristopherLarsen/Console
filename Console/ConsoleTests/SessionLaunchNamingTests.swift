@@ -29,7 +29,7 @@ final class SessionLaunchNamingTests: XCTestCase {
         let source = SessionLaunchSource.jira(
             key: "ENG-123",
             title: "Fix login",
-            url: URL(string: "https://acme.atlassian.net/browse/ENG-123")
+            url: URL(string: "https://example.test/browse/ENG-123")
         )
         XCTAssertEqual(SessionPurpose.existingTicket.defaultName(source: source), "ENG-123")
     }
@@ -52,67 +52,45 @@ final class SessionLaunchNamingTests: XCTestCase {
         )
     }
 
-    // MARK: - Starter prompts
+    // MARK: - Starter prompts (never generated)
 
-    private let jiraURL = URL(string: "https://acme.atlassian.net/browse/ENG-123")!
-    private let mrURL = URL(string: "https://gitlab.com/grp/proj/-/merge_requests/42")!
+    private let jiraURL = URL(string: "https://sentinel.example.test/browse/SYN-99999")!
+    private let mrURL = URL(string: "https://sentinel.example.test/grp/proj/-/merge_requests/771337")!
 
-    func testJiraPromptIncludesOnlyKeyTitleAndURL() {
-        let prompt = StarterPromptBuilder.prompt(
-            for: .existingTicket,
-            source: .jira(key: "ENG-123", title: "Fix login", url: jiraURL)
-        )
-
-        XCTAssertEqual(
-            prompt,
-            """
-            Work on Jira ticket ENG-123: Fix login
-            Source: https://acme.atlassian.net/browse/ENG-123
-
-            Inspect the repository and the ticket context available to you, then begin the work. If critical ticket details are unavailable, ask me before making assumptions.
-            """
-        )
+    func testNoPurposeGeneratesAStarterPrompt() {
+        XCTAssertFalse(SessionPurpose.newTicket.generatesStarterPrompt)
+        XCTAssertFalse(SessionPurpose.existingTicket.generatesStarterPrompt)
+        XCTAssertFalse(SessionPurpose.review.generatesStarterPrompt)
+        XCTAssertFalse(SessionPurpose.general.generatesStarterPrompt)
     }
 
-    func testJiraPromptOmitsMissingTitleAndURLLines() {
-        XCTAssertEqual(
-            StarterPromptBuilder.prompt(for: .existingTicket, source: .jira(key: "ENG-9", title: nil, url: nil)),
-            """
-            Work on Jira ticket ENG-9
+    func testSourceMetadataIsNeverInterpolatedIntoAPrompt() {
+        let jira = SessionLaunchSource.jira(
+            key: "SYN-99999",
+            title: "SENTINEL-TITLE-ZXCVBNM",
+            url: jiraURL
+        )
+        let mr = SessionLaunchSource.mergeRequest(
+            iid: "771337",
+            title: "SENTINEL-MR-TITLE-QAZWSX",
+            url: mrURL
+        )
 
-            Inspect the repository and the ticket context available to you, then begin the work. If critical ticket details are unavailable, ask me before making assumptions.
-            """
-        )
-        XCTAssertFalse(
-            StarterPromptBuilder.prompt(for: .existingTicket, source: .jira(key: "ENG-9", title: "", url: jiraURL))!
-                .contains(": \n"),
-            "empty titles are omitted rather than placeholdered"
-        )
+        for purpose in SessionPurpose.allCases {
+            XCTAssertNil(StarterPromptBuilder.prompt(for: purpose, source: jira))
+            XCTAssertNil(StarterPromptBuilder.prompt(for: purpose, source: mr))
+            XCTAssertNil(StarterPromptBuilder.prompt(for: purpose, source: nil))
+        }
     }
 
-    func testReviewPromptIncludesOnlyIIDTitleAndURL() {
-        let prompt = StarterPromptBuilder.prompt(
-            for: .review,
-            source: .mergeRequest(iid: "42", title: "Add SSO", url: mrURL)
+    func testLauncherExplainsDeveloperMustEnterWorkContext() {
+        XCTAssertTrue(
+            StarterPromptBuilder.developerContextNotice.contains("Type work context into the idle session yourself")
         )
-
-        XCTAssertEqual(
-            prompt,
-            """
-            Review GitLab merge request 42: Add SSO
-            Source: https://gitlab.com/grp/proj/-/merge_requests/42
-
-            Inspect the change diff and report concrete findings prioritized by severity, including regressions, security issues, and missing tests. Do not modify files unless I ask.
-            """
-        )
-    }
-
-    func testNewTicketAndGeneralCreateNoStarterPrompt() {
-        let jiraSource = SessionLaunchSource.jira(key: "ENG-1", title: "T", url: jiraURL)
-        XCTAssertNil(StarterPromptBuilder.prompt(for: .newTicket, source: jiraSource))
-        XCTAssertNil(StarterPromptBuilder.prompt(for: .general, source: jiraSource))
-        XCTAssertNil(StarterPromptBuilder.prompt(for: .newTicket, source: nil))
-        XCTAssertNil(StarterPromptBuilder.prompt(for: .general, source: nil))
+        XCTAssertTrue(SessionPurpose.existingTicket.intentDescription.contains("Type the work context yourself"))
+        XCTAssertTrue(SessionPurpose.review.intentDescription.contains("Type the review context yourself"))
+        XCTAssertFalse(SessionPurpose.existingTicket.intentDescription.lowercased().contains("starter prompt"))
+        XCTAssertFalse(SessionPurpose.review.intentDescription.lowercased().contains("starter prompt"))
     }
 
     // MARK: - Jira parsing
@@ -187,7 +165,11 @@ final class SessionLaunchNamingTests: XCTestCase {
         let jira = SessionLaunchSource.jira(key: "eng-123", title: "Secret title", url: jiraURL)
         XCTAssertEqual(jira.routingIdentity, "ENG")
 
-        let mr = SessionLaunchSource.mergeRequest(iid: "42", title: "Secret MR title", url: mrURL)
+        let mr = SessionLaunchSource.mergeRequest(
+            iid: "42",
+            title: "Secret MR title",
+            url: URL(string: "https://gitlab.com/grp/proj/-/merge_requests/42")!
+        )
         XCTAssertEqual(mr.routingIdentity, "gitlab.com/grp/proj")
     }
 

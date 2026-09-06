@@ -62,9 +62,6 @@ struct ConsoleSession: Identifiable, Equatable {
     var bridgeStatus: BridgeStatus
     /// Why the session exists; nil for sessions created before intents.
     var purpose: SessionPurpose?
-    /// Memory-only starter prompt awaiting delivery. Never persisted and
-    /// never placed in launch arguments.
-    var pendingStarterPrompt: String?
 
     init(
         id: UUID,
@@ -77,8 +74,7 @@ struct ConsoleSession: Identifiable, Equatable {
         summary: String?,
         artifacts: [SessionArtifact],
         bridgeStatus: BridgeStatus,
-        purpose: SessionPurpose? = nil,
-        pendingStarterPrompt: String? = nil
+        purpose: SessionPurpose? = nil
     ) {
         self.id = id
         self.claudeSessionID = claudeSessionID
@@ -91,7 +87,6 @@ struct ConsoleSession: Identifiable, Equatable {
         self.artifacts = artifacts
         self.bridgeStatus = bridgeStatus
         self.purpose = purpose
-        self.pendingStarterPrompt = pendingStarterPrompt
     }
 }
 
