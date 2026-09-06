@@ -29,6 +29,15 @@ final class NextButtonModel {
     var refreshHandler: (@MainActor () async -> Void)?
     @ObservationIgnored
     var snapshotHandler: (@MainActor () -> NextContextSnapshot)?
+    /// Optional Open override so unit tests can observe the plan without
+    /// loading retained WebViews.
+    @ObservationIgnored
+    var applyPlanHandler: (@MainActor (NextTaskNavigation.Plan) -> Void)?
+
+    /// Snapshot provider from the last Check pass, reused to verify Open
+    /// against current list contents without starting another refresh.
+    @ObservationIgnored
+    private var lastSnapshotProvider: (@MainActor () -> NextContextSnapshot)?
 
     /// When the last check pass was started; drives the auto-check staleness rule.
     private(set) var lastCheckStartedAt: Date?
@@ -64,6 +73,7 @@ final class NextButtonModel {
     ) {
         guard status != .checking else { return }
         checkTask?.cancel()
+        lastSnapshotProvider = snapshot
         status = .checking
         lastCheckStartedAt = Date()
         checkStartCount += 1
@@ -83,39 +93,29 @@ final class NextButtonModel {
 
     /// Navigate to the ready task. Refresh never calls this. Returns the
     /// destination so SwiftUI bindings can stay in sync with `ConsoleNavigation`.
+    /// Missing or no-longer-actionable targets stay on Next and offer
+    /// Refresh / Open source instead of substituting another item.
     @discardableResult
     func performOpen(sessionStore: SessionStore?) -> SidebarSelection? {
         guard case .ready(let task, _) = status else { return nil }
-        switch task.kind {
-        case .reviewMergeRequest, .addressComments:
-            if let url = task.targetURL {
-                let kind: CodeHostListKind = task.kind == .reviewMergeRequest
-                    ? .reviewsRequested
-                    : .authored
-                MergeRequestDeepLink.shared.set(url: url, kind: kind)
-                ConsoleNavigation.show(.mergeRequests)
-                return .mergeRequests
+        let snapshot = resolvedSnapshot(sessionStore: sessionStore)
+        let decision = NextTaskNavigation.decide(
+            task: task,
+            snapshot: snapshot,
+            liveSessionStates: liveSessionStates(sessionStore: sessionStore, snapshot: snapshot)
+        )
+        switch decision {
+        case .stay(let updated):
+            status = .ready(updated, fromAI: false)
+            return nil
+        case .navigate(let plan):
+            if let applyPlanHandler {
+                applyPlanHandler(plan)
+            } else {
+                Self.execute(plan, sessionStore: sessionStore)
             }
-            openSession(task, sessionStore: sessionStore)
-            return .sessions
-
-        case .sessionAttention:
-            openSession(task, sessionStore: sessionStore)
-            return .sessions
-
-        case .newTicket:
-            ConsoleNavigation.show(.jira)
-            return .jira
+            return plan.destination
         }
-    }
-
-    private func openSession(_ task: NextTask, sessionStore: SessionStore?) {
-        if let name = task.sessionName,
-           let sessionStore,
-           let session = sessionStore.sessions.first(where: { $0.name == name }) {
-            sessionStore.select(sessionID: session.id)
-        }
-        ConsoleNavigation.showSessions()
     }
 
     func cancel() {
@@ -126,7 +126,8 @@ final class NextButtonModel {
 
     /// Auto-check rule for entering the Next view: run a fresh check when no
     /// task has been identified yet, or when the last check is older than the
-    /// freshness window. A fresh, ready answer is left untouched.
+    /// freshness window. A fresh, ready answer is left untouched unless its
+    /// referenced session disappeared or left an actionable state.
     func checkIfNeeded(
         sessionStore: SessionStore?,
         jiraController: JiraPanelController
@@ -135,20 +136,37 @@ final class NextButtonModel {
         let snapshot = snapshotHandler ?? {
             Self.gatherSnapshot(sessionStore: sessionStore, jiraController: jiraController)
         }
-        checkIfNeeded(refresh: refresh, snapshot: snapshot)
+        checkIfNeeded(refresh: refresh, snapshot: snapshot, sessionStore: sessionStore)
     }
 
     func checkIfNeeded(
         refresh: @escaping @MainActor () async -> Void,
         snapshot: @escaping @MainActor () -> NextContextSnapshot,
-        llmClient: (any LLMClient)? = nil
+        llmClient: (any LLMClient)? = nil,
+        sessionStore: SessionStore? = nil
     ) {
-        if case .ready = status,
+        if case .ready(let task, _) = status,
            let startedAt = lastCheckStartedAt,
            Date().timeIntervalSince(startedAt) < Self.freshnessWindow {
+            let current = resolvedSnapshot(sessionStore: sessionStore, provider: snapshot)
+            if isCachedRecommendationValid(task, sessionStore: sessionStore, snapshot: current) {
+                return
+            }
+            reselect(from: current)
             return
         }
         check(refresh: refresh, snapshot: snapshot, llmClient: llmClient)
+    }
+
+    /// Replaces a cached session recommendation when that session disappears
+    /// or leaves an actionable state. Does not refresh remote lists.
+    func invalidateCachedSessionIfNeeded(sessionStore: SessionStore?) {
+        guard case .ready(let task, _) = status else { return }
+        guard task.kind == .sessionAttention, let id = task.sessionID else { return }
+        let snapshot = resolvedSnapshot(sessionStore: sessionStore)
+        let live = liveSessionStates(sessionStore: sessionStore, snapshot: snapshot)
+        guard !NextTaskNavigation.sessionStillActionable(id: id, live: live) else { return }
+        reselect(from: snapshot)
     }
 
     // MARK: - Snapshot
@@ -161,10 +179,13 @@ final class NextButtonModel {
         jiraController: JiraPanelController
     ) -> NextContextSnapshot {
         let session = MergeRequestListSession.shared
+        let reviewsController = session.controller(for: .reviewsRequested)
+        let authoredController = session.controller(for: .authored)
         let sessions: [NextContextSnapshot.SessionInfo]
         if let sessionStore {
             sessions = sessionStore.sessions.map { session in
                 NextContextSnapshot.SessionInfo(
+                    id: session.id,
                     name: session.name,
                     state: displayedSessionState(activity: session.activity, attention: session.attention),
                     summary: session.summary
@@ -174,11 +195,82 @@ final class NextButtonModel {
             sessions = []
         }
         return NextContextSnapshot(
-            reviewItems: session.items(for: .reviewsRequested),
-            authoredItems: session.items(for: .authored),
+            reviewItems: reviewsController.state.retainedItems,
+            authoredItems: authoredController.state.retainedItems,
             sessions: sessions,
-            tickets: jiraController.state.tickets
+            tickets: jiraController.state.tickets,
+            reviewsStatus: NextSourceStatus.from(reviewsController.state),
+            authoredStatus: NextSourceStatus.from(authoredController.state),
+            ticketsStatus: NextSourceStatus.from(jiraController.state)
         )
+    }
+
+    private func resolvedSnapshot(
+        sessionStore: SessionStore?,
+        provider: (@MainActor () -> NextContextSnapshot)? = nil
+    ) -> NextContextSnapshot {
+        let provider = provider ?? snapshotHandler ?? lastSnapshotProvider
+        var snapshot = provider?() ?? Self.gatherSnapshot(
+            sessionStore: sessionStore,
+            jiraController: JiraWebSession.shared.panelController
+        )
+        if let sessionStore {
+            snapshot.sessions = sessionStore.sessions.map { session in
+                NextContextSnapshot.SessionInfo(
+                    id: session.id,
+                    name: session.name,
+                    state: displayedSessionState(activity: session.activity, attention: session.attention),
+                    summary: session.summary
+                )
+            }
+        }
+        return snapshot
+    }
+
+    private func reselect(from snapshot: NextContextSnapshot) {
+        status = .ready(NextContextBuilder.recommendedTask(for: snapshot), fromAI: false)
+    }
+
+    private func liveSessionStates(
+        sessionStore: SessionStore?,
+        snapshot: NextContextSnapshot
+    ) -> [UUID: DisplayedSessionState] {
+        if let sessionStore {
+            return Dictionary(uniqueKeysWithValues: sessionStore.sessions.map {
+                ($0.id, displayedSessionState(activity: $0.activity, attention: $0.attention))
+            })
+        }
+        return snapshot.liveSessionStates
+    }
+
+    private func isCachedRecommendationValid(
+        _ task: NextTask,
+        sessionStore: SessionStore?,
+        snapshot: NextContextSnapshot
+    ) -> Bool {
+        guard task.kind == .sessionAttention else { return true }
+        let live = liveSessionStates(sessionStore: sessionStore, snapshot: snapshot)
+        switch task.resolvedOpenTarget {
+        case .session(let id):
+            return NextTaskNavigation.sessionStillActionable(id: id, live: live)
+        default:
+            return false
+        }
+    }
+
+    static func execute(_ plan: NextTaskNavigation.Plan, sessionStore: SessionStore?) {
+        if let url = plan.jiraIssueURL {
+            JiraDeepLink.shared.set(url: url)
+        }
+        if let kind = plan.mergeRequestKind {
+            MergeRequestDeepLink.shared.set(url: plan.mergeRequestURL, kind: kind)
+        }
+        if let sessionID = plan.sessionID {
+            sessionStore?.select(sessionID: sessionID)
+        } else if plan.clearSessionSelection {
+            sessionStore?.clearSelection()
+        }
+        ConsoleNavigation.show(plan.destination)
     }
 
 #if DEBUG

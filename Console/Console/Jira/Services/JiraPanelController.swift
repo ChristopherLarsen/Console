@@ -20,6 +20,15 @@ enum JiraPanelState: Equatable {
         }
     }
 
+    var refreshedAt: Date? {
+        switch self {
+        case let .loaded(_, date), let .empty(date), let .stale(_, date, _):
+            return date
+        default:
+            return nil
+        }
+    }
+
     var hasCards: Bool {
         !tickets.isEmpty
     }
@@ -93,8 +102,13 @@ final class JiraPanelController {
     }
 
     func open(_ ticket: JiraTicketSummary) {
+        openIssue(at: ticket.issueURL)
+    }
+
+    /// Reveals the retained page and navigates it to a captured issue URL.
+    func openIssue(at url: URL) {
         showsBrowser = true
-        service.navigate(to: ticket.issueURL)
+        service.navigate(to: url)
     }
 
     private var isPositiveEmptyState: Bool {

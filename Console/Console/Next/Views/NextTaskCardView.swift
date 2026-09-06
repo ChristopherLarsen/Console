@@ -134,6 +134,14 @@ struct NextTaskCardView: View {
                 }
             }
 
+            if let freshnessNote = task.freshnessNote {
+                Text(freshnessNote)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(1)
+                    .accessibilityLabel(freshnessNote)
+            }
+
             Spacer(minLength: 0)
 
             HStack {
@@ -198,13 +206,19 @@ struct NextTaskCardView: View {
     }
 
     private func navigationHint(for task: NextTask) -> String {
-        switch task.kind {
-        case .reviewMergeRequest, .addressComments:
-            return "Tap to open GitLab"
-        case .sessionAttention:
+        switch task.resolvedOpenTarget {
+        case .mergeRequest:
+            return "Tap to open this merge request"
+        case .jiraIssue:
+            return "Tap to open this issue"
+        case .session:
             return "Tap to open session"
-        case .newTicket:
+        case .source(.reviews), .source(.authored):
+            return "Tap to open GitLab"
+        case .source(.jira):
             return "Tap to open JIRA"
+        case .source(.sessions):
+            return "Tap to open Sessions"
         }
     }
 

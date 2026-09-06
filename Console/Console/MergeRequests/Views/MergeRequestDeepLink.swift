@@ -11,6 +11,12 @@ final class MergeRequestDeepLink {
     private var pendingKind: CodeHostListKind?
 
     func set(url: URL, kind: CodeHostListKind) {
+        set(url: Optional.some(url), kind: kind)
+    }
+
+    /// Selects the list segment. A nil URL opens the source list rather than
+    /// a specific merge request.
+    func set(url: URL?, kind: CodeHostListKind) {
         pendingURL = url
         pendingKind = kind
     }
@@ -27,5 +33,10 @@ final class MergeRequestDeepLink {
     /// the destination's initially visible segment.
     func consumeKindHint() -> CodeHostListKind? {
         pendingKind
+    }
+
+    func reset() {
+        pendingURL = nil
+        pendingKind = nil
     }
 }

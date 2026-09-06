@@ -7,6 +7,12 @@ final class NextButtonModelTests: XCTestCase {
     /// Unique synthetic marker that must never leave the local Next path.
     private let sensitiveMarker = "SYN-NEXT-PRIVACY-MARKER-9f3c"
 
+    override func tearDown() {
+        JiraDeepLink.shared.reset()
+        MergeRequestDeepLink.shared.reset()
+        super.tearDown()
+    }
+
     // MARK: - Spies
 
     private final class RecordingLLMClient: LLMClient, @unchecked Sendable {
@@ -396,6 +402,8 @@ final class NextButtonModelTests: XCTestCase {
             jiraController: JiraPanelController()
         )
         XCTAssertEqual(snapshot.sessions, [])
+        XCTAssertEqual(snapshot.ticketsStatus.check, .unconfigured)
+        XCTAssertTrue(snapshot.ticketsStatus.couldNotCheck)
     }
 
     func testProductionCheckWithNilSessionStoreUsesInjectedSnapshot() async {
@@ -433,5 +441,157 @@ final class NextButtonModelTests: XCTestCase {
         XCTAssertNil(model.performOpen(sessionStore: nil))
         XCTAssertEqual(model.checkStartCount, 0)
         XCTAssertEqual(model.status, .idle)
+    }
+
+    func testPerformOpenQueuesExactTicketURL() async {
+        let model = NextButtonModel()
+        let snapshot = ticketSnapshot(key: "SYN-14", summary: "Open the exact issue")
+        var applied: NextTaskNavigation.Plan?
+        model.applyPlanHandler = { applied = $0 }
+
+        model.check(refresh: {}, snapshot: { snapshot })
+        await waitUntilReady(model)
+
+        XCTAssertEqual(model.performOpen(sessionStore: nil), .jira)
+        XCTAssertEqual(applied?.destination, .jira)
+        XCTAssertEqual(applied?.jiraIssueURL?.absoluteString, "https://jira.example.com/browse/SYN-14")
+        XCTAssertNil(applied?.sessionID)
+    }
+
+    func testPerformOpenExecuteSetsJiraDeepLinkToCapturedURL() async {
+        let model = NextButtonModel()
+        let snapshot = ticketSnapshot(key: "SYN-22", summary: "Fixture ticket")
+        model.check(refresh: {}, snapshot: { snapshot })
+        await waitUntilReady(model)
+
+        XCTAssertEqual(model.performOpen(sessionStore: nil), .jira)
+        XCTAssertEqual(
+            JiraDeepLink.shared.consume()?.absoluteString,
+            "https://jira.example.com/browse/SYN-22"
+        )
+    }
+
+    func testPerformOpenMissingTicketDoesNotOpenAnotherIssue() async {
+        let model = NextButtonModel()
+        var snapshot = ticketSnapshot(key: "SYN-1", summary: "Original")
+        var applied: NextTaskNavigation.Plan?
+        model.applyPlanHandler = { applied = $0 }
+
+        model.check(refresh: {}, snapshot: { snapshot })
+        await waitUntilReady(model)
+
+        snapshot = ticketSnapshot(key: "SYN-2", summary: "Different ticket")
+        XCTAssertNil(model.performOpen(sessionStore: nil))
+        XCTAssertNil(applied)
+        XCTAssertEqual(readyTask(model)?.openTarget, .source(.jira))
+
+        XCTAssertEqual(model.performOpen(sessionStore: nil), .jira)
+        XCTAssertEqual(applied?.jiraIssueURL, nil)
+        XCTAssertEqual(applied?.destination, .jira)
+    }
+
+    func testPerformOpenMissingSessionDoesNotSelectAnotherSession() async {
+        let model = NextButtonModel()
+        let missing = UUID()
+        let other = UUID()
+        var snapshot = NextContextSnapshot(
+            sessions: [
+                NextContextSnapshot.SessionInfo(
+                    id: missing,
+                    name: "Shared Name",
+                    state: .needsInput
+                )
+            ]
+        )
+        var applied: NextTaskNavigation.Plan?
+        model.applyPlanHandler = { applied = $0 }
+
+        model.check(refresh: {}, snapshot: { snapshot })
+        await waitUntilReady(model)
+        XCTAssertEqual(readyTask(model)?.sessionID, missing)
+
+        snapshot = NextContextSnapshot(
+            sessions: [
+                NextContextSnapshot.SessionInfo(
+                    id: other,
+                    name: "Shared Name",
+                    state: .needsInput
+                )
+            ]
+        )
+
+        XCTAssertNil(model.performOpen(sessionStore: nil))
+        XCTAssertNil(applied)
+        XCTAssertEqual(readyTask(model)?.openTarget, .source(.sessions))
+        XCTAssertNil(readyTask(model)?.sessionID)
+
+        XCTAssertEqual(model.performOpen(sessionStore: nil), .sessions)
+        XCTAssertNil(applied?.sessionID)
+        XCTAssertTrue(applied?.clearSessionSelection == true)
+    }
+
+    func testCheckIfNeededReselectsWhenCachedSessionLeavesActionableState() async {
+        let model = NextButtonModel()
+        let sessionID = UUID()
+        var snapshot = NextContextSnapshot(
+            sessions: [
+                NextContextSnapshot.SessionInfo(
+                    id: sessionID,
+                    name: "Blocked",
+                    state: .needsInput
+                )
+            ]
+        )
+        let refresh = RefreshProbe()
+
+        model.checkIfNeeded(
+            refresh: { await refresh.run() },
+            snapshot: { snapshot }
+        )
+        await waitUntilReady(model)
+        XCTAssertEqual(readyTask(model)?.sessionID, sessionID)
+        XCTAssertEqual(model.checkStartCount, 1)
+
+        snapshot = NextContextSnapshot(
+            sessions: [
+                NextContextSnapshot.SessionInfo(
+                    id: sessionID,
+                    name: "Blocked",
+                    state: .working
+                )
+            ]
+        )
+        model.checkIfNeeded(
+            refresh: { await refresh.run() },
+            snapshot: { snapshot }
+        )
+
+        XCTAssertEqual(refresh.count, 1)
+        XCTAssertEqual(model.checkStartCount, 1)
+        XCTAssertEqual(readyTask(model)?.headline, "No work in the loaded lists")
+        XCTAssertNotEqual(readyTask(model)?.sessionID, sessionID)
+    }
+
+    func testInvalidateCachedSessionDoesNotStartARefresh() async {
+        let model = NextButtonModel()
+        let sessionID = UUID()
+        var snapshot = NextContextSnapshot(
+            sessions: [
+                NextContextSnapshot.SessionInfo(
+                    id: sessionID,
+                    name: "Gone",
+                    state: .blocked
+                )
+            ]
+        )
+        model.snapshotHandler = { snapshot }
+        model.check(refresh: {}, snapshot: { snapshot })
+        await waitUntilReady(model)
+
+        snapshot = NextContextSnapshot()
+        model.invalidateCachedSessionIfNeeded(sessionStore: nil)
+
+        XCTAssertEqual(model.checkStartCount, 1)
+        XCTAssertEqual(readyTask(model)?.headline, "No work in the loaded lists")
     }
 }

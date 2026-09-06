@@ -29,22 +29,56 @@ struct NextTask: Equatable, Sendable {
     let headline: String
     /// Up to three supporting lines shown under the headline.
     let lines: [String]
-    /// Deep link for MR tasks; nil for other kinds.
+    /// Deep link for MR/ticket tasks; nil for session and source-only tasks.
     let targetURL: URL?
-    /// Exact session name for session-attention tasks; nil otherwise.
+    /// Display name for session-attention tasks; nil otherwise. Never used
+    /// to select a session — `sessionID` is the stable identity.
     let sessionName: String?
+    /// Stable session identity. Missing IDs must not match another session.
+    let sessionID: UUID?
+    /// Where Open should go. Nil only on legacy/parser values; `resolvedOpenTarget` fills in.
+    let openTarget: NextOpenTarget?
+    /// One stale-data label for the card, or nil when the pick is current.
+    let freshnessNote: String?
 
     init(
         kind: NextTaskKind,
         headline: String,
         lines: [String],
         targetURL: URL? = nil,
-        sessionName: String? = nil
+        sessionName: String? = nil,
+        sessionID: UUID? = nil,
+        openTarget: NextOpenTarget? = nil,
+        freshnessNote: String? = nil
     ) {
         self.kind = kind
         self.headline = headline
         self.lines = lines
         self.targetURL = targetURL
         self.sessionName = sessionName
+        self.sessionID = sessionID
+        self.openTarget = openTarget
+        self.freshnessNote = freshnessNote
+    }
+
+    /// Open target for navigation. Parser-built tasks have no `openTarget`;
+    /// session tasks without an ID fall back to the Sessions source rather
+    /// than matching another session by name.
+    var resolvedOpenTarget: NextOpenTarget {
+        if let openTarget { return openTarget }
+        switch kind {
+        case .reviewMergeRequest:
+            if let targetURL { return .mergeRequest(url: targetURL, list: .reviewsRequested) }
+            return .source(.reviews)
+        case .addressComments:
+            if let targetURL { return .mergeRequest(url: targetURL, list: .authored) }
+            return .source(.authored)
+        case .sessionAttention:
+            if let sessionID { return .session(id: sessionID) }
+            return .source(.sessions)
+        case .newTicket:
+            if let targetURL { return .jiraIssue(key: "", url: targetURL) }
+            return .source(.jira)
+        }
     }
 }
