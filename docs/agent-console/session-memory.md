@@ -6,19 +6,17 @@ _Rewritten in full at the end of each session by agent-console._
 
 ## Next Intended Move
 
-- Parent should merge `review-01-next-recommendations-local` (item 01) from the isolated worktree. Do not push or delete that worktree. Item 03 (one Next model, split Refresh/Open) depends on this local selector.
+- Parent should merge `review-08-single-execution-owner` (item 08) from the isolated worktree. Do not push or delete that worktree. Item 06 (Stop/timeouts that kill the child) depends on this owner: pass cancel/deadline into the process service from 05 using `activeRunID` / `cancelExecution()`. Do not start 06 or 09 here.
 
 ## Working Findings
 
-- Item 01 done: Next recommendations are fully local. `NextContextBuilder.recommendedTask` is the selector (same priority as the old fallback). `NextTaskService` and `promptText` are gone. `NextButtonModel.check` / `checkIfNeeded` no longer take an AI provider; they refresh, snapshot, and pick locally. Views no longer show a needs-provider state.
-- Check API now has an injectable `refresh` + `snapshot` seam. Optional `llmClient` is accepted and discarded so a spy can prove zero outbound requests.
-- Card still shows a `fromAI` badge; the local path always sets `fromAI: false` ("local"). Item 03 can drop that associated value.
-- `NextTaskResponseParser` remains because `recommendedTask` still uses `maxLines` / `maxLineLength`. It has no production AI caller after this change.
-- Isolated worktree used for compile/test: `/Users/christopherlarsen/orca/workspaces/Console/review-01-keep-next-local` on branch `review-01-next-recommendations-local`. The Cursor workspace worktree was not isolated — other review items were mid-edit there and broke `ConsoleTests` compiles (`pendingStarterPrompt` / `launchArguments name`). Do not treat that workspace as the item 01 source of truth.
-- Tests (pass): `NextContextBuilderTests`, `NextButtonModelTests`. Debug `Console` build succeeded with `-derivedDataPath /tmp/console-review-01-derived`.
+- Item 08 done: all command entry points use the app-owned `LocalCommandExecutor`. Temporary `LocalCommandExecutor()` instances are gone from list Test, creation Test, and recent Run. Voice and App Intents already used the shared owner; they now receive `CommandRun` (run ID + per-run result).
+- Occupancy: one app command at a time. A second `execute` returns `alreadyRunning` with message "A command is already running", without resetting `cancelled` or clearing `isExecuting`/`activeRunID` of the first run. Busy rejects do not update `lastResult` or increment `completedRunCount`.
+- Completion/logging: executor `endRun` is the single completion path (banner/sound). Voice logs once from the returned `CommandRun` via `recordVoiceExecutionLog`; busy results are not logged. Test/intent/recent do not write `CommandLogFileManager`.
+- Confirmation-through-Save/Test/Run (04) and concurrent pipe draining (05) preserved. Cancellation remains a boolean plus `activeRunID` for 06.
+- Isolated worktree: `/Users/christopherlarsen/orca/workspaces/Console/review-08-single-execution-owner` on `review-08-single-execution-owner`.
+- Tests (pass): `LocalCommandExecutorTests`, `CommandEntryPointTests`. Debug `Console` build succeeded with `-derivedDataPath /tmp/console-review-08-derived`.
 
 ## Dead Ends
 
-- Running `ConsoleTests` in the shared Cursor worktree while other items are in-progress fails to compile unrelated session tests. Use a clean worktree from `d3f1b25` for item 01 verification.
-
----
+- Shared `onExecutionComplete` on the executor would log Test/recent runs as voice completions. Removed; callers use the returned `CommandRun`.

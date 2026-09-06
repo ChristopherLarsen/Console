@@ -11,11 +11,21 @@ extension Notification.Name {
     static let voiceActivityDetected = Notification.Name("voiceActivityDetected")
 }
 
+@MainActor
+protocol CommandRunning: AnyObject {
+    var isExecuting: Bool { get }
+    func execute(_ command: Command, skipAuthorization: Bool) async -> CommandRun
+    func cancelExecution()
+}
+
 @Observable
 @MainActor
-final class LocalCommandExecutor {
+final class LocalCommandExecutor: CommandRunning {
     private(set) var isExecuting = false
     private(set) var lastResult: ExecutionResult?
+    private(set) var activeRunID: UUID?
+    private(set) var lastRunID: UUID?
+    private(set) var completedRunCount = 0
     private var cancelled = false
     private let actionExecutor: any CommandActionExecuting
     private let authorizer: any CommandAuthorizing
@@ -23,7 +33,6 @@ final class LocalCommandExecutor {
     private let completionChecker = CompletionChecker()
 
     var modelContext: ModelContext?
-    var onExecutionComplete: ((ExecutionResult) -> Void)?
 
     init(
         actionExecutor: (any CommandActionExecuting)? = nil,
@@ -45,12 +54,20 @@ final class LocalCommandExecutor {
         cancelled = true
     }
 
-    func execute(_ command: Command, skipAuthorization: Bool = false) async -> ExecutionResult {
-        // Intercept Console internal commands
+    func execute(_ command: Command, skipAuthorization: Bool = false) async -> CommandRun {
+        if let busy = rejectIfOccupied(command) {
+            return busy
+        }
+
+        let runID = beginRun()
+
         if command.isConsole,
            let payload = command.actions.first?.payload,
            let action = ConsoleAction(rawValue: payload) {
-            return await executeConsoleAction(action, command: command)
+            let result = await executeConsoleAction(action, command: command)
+            let run = CommandRun(id: runID, result: result)
+            endRun(run, feedback: .silent)
+            return run
         }
 
         if !skipAuthorization, needsAuthorization(command) {
@@ -63,15 +80,11 @@ final class LocalCommandExecutor {
                     totalDurationMs: 0,
                     authorizationDenied: true
                 )
-                lastResult = deniedResult
-                VisualFeedbackService.shared.show(.warning("Authorization denied"))
-                onExecutionComplete?(deniedResult)
-                return deniedResult
+                let run = CommandRun(id: runID, result: deniedResult)
+                endRun(run, feedback: .denied)
+                return run
             }
         }
-
-        isExecuting = true
-        cancelled = false
 
         let startTime = Date()
         let sortedActions = command.actions.sorted { $0.order < $1.order }
@@ -129,20 +142,52 @@ final class LocalCommandExecutor {
             overallSuccess: overallSuccess,
             totalDurationMs: totalDuration
         )
+        let run = CommandRun(id: runID, result: executionResult)
+        endRun(run, feedback: wasCancelled ? .cancelled : .finished(success: overallSuccess, command: command, logs: logs))
+        return run
+    }
 
-        lastResult = executionResult
+    private func rejectIfOccupied(_ command: Command) -> CommandRun? {
+        guard isExecuting || activeRunID != nil else { return nil }
+        VisualFeedbackService.shared.show(.warning(CommandRun.alreadyRunningMessage))
+        return CommandRun.alreadyRunning(command: command)
+    }
+
+    private func beginRun() -> UUID {
+        let runID = UUID()
+        activeRunID = runID
+        isExecuting = true
+        cancelled = false
+        return runID
+    }
+
+    private func endRun(_ run: CommandRun, feedback: RunFeedback) {
+        guard activeRunID == run.id else { return }
+        lastResult = run.result
+        lastRunID = run.id
         isExecuting = false
         cancelled = false
+        activeRunID = nil
+        completedRunCount += 1
 
-        if wasCancelled {
+        switch feedback {
+        case .cancelled:
             VisualFeedbackService.shared.show(.warning("Execution stopped"))
-        } else {
-            playCompletionSound(success: overallSuccess)
-            showCompletionBanner(command: command, success: overallSuccess, logs: logs)
+        case .denied:
+            VisualFeedbackService.shared.show(.warning("Authorization denied"))
+        case .finished(let success, let command, let logs):
+            playCompletionSound(success: success)
+            showCompletionBanner(command: command, success: success, logs: logs)
+        case .silent:
+            break
         }
-        onExecutionComplete?(executionResult)
+    }
 
-        return executionResult
+    private enum RunFeedback {
+        case finished(success: Bool, command: Command, logs: [ExecutionLogEntry])
+        case cancelled
+        case denied
+        case silent
     }
 
     // MARK: - Console Actions
@@ -182,15 +227,12 @@ final class LocalCommandExecutor {
             NotificationCenter.default.post(name: .showNoteRequested, object: nil)
         }
 
-        let result = ExecutionResult(
+        return ExecutionResult(
             command: command,
             logs: [],
             overallSuccess: true,
             totalDurationMs: Int(Date().timeIntervalSince(startTime) * 1000)
         )
-        lastResult = result
-        onExecutionComplete?(result)
-        return result
     }
 
     // MARK: - Authorization

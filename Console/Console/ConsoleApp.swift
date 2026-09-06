@@ -312,6 +312,7 @@ struct ConsoleApp: App {
             .environment(permissionsManager)
             .environment(infoManager)
             .environment(aiProviderManager)
+            .environment(localCommandExecutor)
             .environment(wakeWordManager)
             .environment(menuBarViewModel)
             .environment(updateManager)

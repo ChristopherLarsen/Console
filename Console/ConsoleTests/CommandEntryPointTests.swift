@@ -1,0 +1,322 @@
+import XCTest
+import SwiftData
+@testable import Console
+
+@MainActor
+final class CommandEntryPointTests: XCTestCase {
+
+    private var originalLogging: Any?
+    private var originalConfirmation: Any?
+    private var originalAuthorizeAll: Any?
+
+    override func setUp() {
+        super.setUp()
+        originalLogging = UserDefaults.standard.object(forKey: "enableCommandLogging")
+        originalConfirmation = UserDefaults.standard.object(forKey: "requireConfirmationForDangerous")
+        originalAuthorizeAll = UserDefaults.standard.object(forKey: "requireAuthorizationForAllCommands")
+        UserDefaults.standard.set(false, forKey: "enableCommandLogging")
+        UserDefaults.standard.set(true, forKey: "requireConfirmationForDangerous")
+        UserDefaults.standard.set(false, forKey: "requireAuthorizationForAllCommands")
+    }
+
+    override func tearDown() {
+        restore(originalLogging, key: "enableCommandLogging")
+        restore(originalConfirmation, key: "requireConfirmationForDangerous")
+        restore(originalAuthorizeAll, key: "requireAuthorizationForAllCommands")
+        super.tearDown()
+    }
+
+    func testCommandListTestUsesInjectedExecutor() async {
+        let spy = CommandRunningSpy()
+        let command = makeSafeCommand(name: "Synthetic List Test")
+
+        let run = await CommandListTesting.test(command, using: spy)
+
+        XCTAssertEqual(spy.executedCommands.map(\.name), ["Synthetic List Test"])
+        XCTAssertEqual(spy.skipAuthorizationFlags, [false])
+        XCTAssertEqual(run.result.command.name, "Synthetic List Test")
+        XCTAssertTrue(run.result.overallSuccess)
+    }
+
+    func testCommandCreationTestUsesInjectedExecutor() async {
+        let viewModel = makeViewModel()
+        viewModel.presentGeneratedCommand(makeSafeCommand(name: "Synthetic Creation Test"))
+        let spy = CommandRunningSpy()
+
+        let run = await viewModel.testDraft(using: spy)
+
+        XCTAssertEqual(spy.executedCommands.map(\.name), ["Synthetic Creation Test"])
+        XCTAssertEqual(spy.skipAuthorizationFlags, [false])
+        XCTAssertEqual(run?.result.command.name, "Synthetic Creation Test")
+        XCTAssertTrue(viewModel.isCurrentDraftAuthorized)
+    }
+
+    func testCommandCreationTestPassesSkipAuthorization() async {
+        let viewModel = makeViewModel()
+        viewModel.presentGeneratedCommand(
+            makeAppleScriptCommand(
+                name: "Synthetic Creation Skip",
+                payload: Self.dangerousAppleScriptFixture,
+                requiresConfirmation: true
+            )
+        )
+        viewModel.rememberDraftAuthorization()
+        let spy = CommandRunningSpy()
+
+        _ = await viewModel.testDraft(using: spy)
+
+        XCTAssertEqual(spy.skipAuthorizationFlags, [true])
+    }
+
+    func testCommandCreationBusyResultDoesNotRememberAuthorization() async {
+        let viewModel = makeViewModel()
+        viewModel.presentGeneratedCommand(makeSafeCommand(name: "Synthetic Creation Busy"))
+        let spy = CommandRunningSpy()
+        spy.resultProvider = { command, _ in CommandRun.alreadyRunning(command: command) }
+
+        let run = await viewModel.testDraft(using: spy)
+
+        XCTAssertTrue(run?.result.alreadyRunning == true)
+        XCTAssertFalse(viewModel.isCurrentDraftAuthorized)
+        XCTAssertEqual(spy.executedCommands.count, 1)
+    }
+
+    func testRecentCommandRunUsesInjectedExecutor() async {
+        let spy = CommandRunningSpy()
+        let controller = RecentCommandsController(executor: spy)
+        let command = makeSafeCommand(name: "Synthetic Recent Run")
+
+        let run = await controller.run(command)
+
+        XCTAssertEqual(spy.executedCommands.map(\.name), ["Synthetic Recent Run"])
+        XCTAssertEqual(run?.result.command.name, "Synthetic Recent Run")
+    }
+
+    func testAppIntentUsesInjectedExecutor() async throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let command = makeSafeCommand(name: "Synthetic Intent Run")
+        context.insert(command)
+        try context.save()
+
+        let spy = CommandRunningSpy()
+        let run = try await ExecuteCommandIntentRunner.execute(
+            commandName: "Synthetic Intent Run",
+            container: container,
+            executor: spy
+        )
+
+        XCTAssertEqual(spy.executedCommands.map(\.name), ["Synthetic Intent Run"])
+        XCTAssertEqual(run.result.command.name, "Synthetic Intent Run")
+        XCTAssertEqual(
+            ExecuteCommandIntentRunner.statusMessage(for: CommandRun.alreadyRunning(command: command)),
+            CommandRun.alreadyRunningMessage
+        )
+    }
+
+    func testVoiceUsesInjectedExecutor() async {
+        let spy = CommandRunningSpy()
+        let viewModel = MenuBarViewModel()
+        viewModel.setListeningServices(
+            localCommandExecutor: spy,
+            aiProviderManager: AIProviderManager()
+        )
+        let command = makeSafeCommand(name: "Synthetic Voice Run")
+
+        let run = await viewModel.executeLocalCommand(command)
+
+        XCTAssertEqual(spy.executedCommands.map(\.name), ["Synthetic Voice Run"])
+        XCTAssertTrue(run.result.overallSuccess)
+        XCTAssertEqual(viewModel.recentLogs.count, 0)
+    }
+
+    func testVoiceAlreadyRunningDoesNotLog() async {
+        UserDefaults.standard.set(true, forKey: "enableCommandLogging")
+        let spy = CommandRunningSpy()
+        spy.isExecuting = true
+        spy.resultProvider = { command, _ in CommandRun.alreadyRunning(command: command) }
+        let viewModel = MenuBarViewModel()
+        viewModel.setListeningServices(
+            localCommandExecutor: spy,
+            aiProviderManager: AIProviderManager()
+        )
+        let command = makeSafeCommand(name: "Synthetic Voice Busy")
+
+        let run = await viewModel.executeLocalCommand(command)
+        let didLog = viewModel.recordVoiceExecutionLog(
+            run: run,
+            triggerWord: "console",
+            rawTranscript: "console synthetic voice busy",
+            strippedTranscript: "synthetic voice busy",
+            matchedCommand: command.name,
+            confidence: 1,
+            duration: 0
+        )
+
+        XCTAssertTrue(run.result.alreadyRunning)
+        XCTAssertFalse(didLog)
+        XCTAssertEqual(viewModel.recentLogs.count, 0)
+    }
+
+    func testVoiceLogsOneEntryForCompletedRun() async {
+        UserDefaults.standard.set(true, forKey: "enableCommandLogging")
+        let spy = CommandRunningSpy()
+        let viewModel = MenuBarViewModel()
+        viewModel.setListeningServices(
+            localCommandExecutor: spy,
+            aiProviderManager: AIProviderManager()
+        )
+        let command = makeSafeCommand(name: "Synthetic Voice Log")
+
+        let run = await viewModel.executeLocalCommand(command)
+        let didLog = viewModel.recordVoiceExecutionLog(
+            run: run,
+            triggerWord: "console",
+            rawTranscript: "console synthetic voice log",
+            strippedTranscript: "synthetic voice log",
+            matchedCommand: command.name,
+            confidence: 1,
+            duration: 0.1
+        )
+
+        XCTAssertEqual(spy.executedCommands.count, 1)
+        XCTAssertTrue(didLog)
+        XCTAssertEqual(viewModel.recentLogs.count, 1)
+        XCTAssertEqual(viewModel.recentLogs.first?.matchedCommand, "Synthetic Voice Log")
+    }
+
+    func testGlobalStopCancelsInjectedExecutor() async {
+        let spy = CommandRunningSpy()
+        let viewModel = MenuBarViewModel()
+        viewModel.setListeningServices(
+            localCommandExecutor: spy,
+            aiProviderManager: AIProviderManager()
+        )
+
+        NotificationCenter.default.post(name: .stopExecutionRequested, object: nil)
+        await waitUntil { spy.cancelCount == 1 }
+
+        XCTAssertEqual(spy.cancelCount, 1)
+    }
+
+    func testListLaunchSharesOwnerWithStop() async {
+        let spy = CommandRunningSpy()
+        let command = makeSafeCommand(name: "Synthetic Shared Owner")
+
+        _ = await CommandListTesting.test(command, using: spy)
+        spy.cancelExecution()
+
+        XCTAssertEqual(spy.executedCommands.map(\.name), ["Synthetic Shared Owner"])
+        XCTAssertEqual(spy.cancelCount, 1)
+    }
+
+    // MARK: - Helpers
+
+    private func makeViewModel() -> CommandCreationViewModel {
+        let schema = Schema([Command.self])
+        let container = try! ModelContainer(
+            for: schema,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        return CommandCreationViewModel(
+            aiProviderManager: AIProviderManager(),
+            modelContext: ModelContext(container)
+        )
+    }
+
+    private func makeContainer() throws -> ModelContainer {
+        let schema = Schema([Command.self])
+        return try ModelContainer(
+            for: schema,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+    }
+
+    private func makeSafeCommand(name: String) -> Command {
+        Command(
+            name: name,
+            triggerPhrases: ["synthetic entry point"],
+            actions: [
+                CommandAction(
+                    type: .appleScript,
+                    payload: Self.safeAppleScriptFixture,
+                    order: 0,
+                    delayAfterMS: 0
+                )
+            ],
+            executionMode: .appleScript,
+            requiresConfirmation: false
+        )
+    }
+
+    private func makeAppleScriptCommand(
+        name: String,
+        payload: String,
+        requiresConfirmation: Bool
+    ) -> Command {
+        Command(
+            name: name,
+            triggerPhrases: ["synthetic entry point"],
+            actions: [
+                CommandAction(type: .appleScript, payload: payload, order: 0, delayAfterMS: 0)
+            ],
+            executionMode: .appleScript,
+            requiresConfirmation: requiresConfirmation
+        )
+    }
+
+    private func waitUntil(
+        _ condition: @escaping () -> Bool,
+        timeout: TimeInterval = 2,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() && Date() < deadline {
+            await Task.yield()
+        }
+        XCTAssertTrue(condition(), "Timed out waiting for condition", file: file, line: line)
+    }
+
+    private func restore(_ value: Any?, key: String) {
+        if let value {
+            UserDefaults.standard.set(value, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
+    private static let safeAppleScriptFixture = "return \"ok\""
+
+    private static let dangerousAppleScriptFixture = """
+    -- synthetic fixture: rm -rf
+    return "ok"
+    """
+}
+
+@MainActor
+private final class CommandRunningSpy: CommandRunning {
+    var isExecuting = false
+    private(set) var executedCommands: [Command] = []
+    private(set) var skipAuthorizationFlags: [Bool] = []
+    private(set) var cancelCount = 0
+    var resultProvider: ((Command, Bool) -> CommandRun)?
+
+    func execute(_ command: Command, skipAuthorization: Bool) async -> CommandRun {
+        executedCommands.append(command)
+        skipAuthorizationFlags.append(skipAuthorization)
+        return resultProvider?(command, skipAuthorization) ?? CommandRun(
+            id: UUID(),
+            result: ExecutionResult(
+                command: command,
+                logs: [],
+                overallSuccess: true,
+                totalDurationMs: 0
+            )
+        )
+    }
+
+    func cancelExecution() {
+        cancelCount += 1
+    }
+}

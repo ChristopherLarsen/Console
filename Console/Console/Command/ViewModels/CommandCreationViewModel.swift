@@ -203,6 +203,21 @@ final class CommandCreationViewModel {
         return .ready(command, skipAuthorization: skipAuthorization)
     }
 
+    func testDraft(using executor: any CommandRunning) async -> CommandRun? {
+        switch prepareDraftForExecution() {
+        case .invalid:
+            return nil
+        case let .ready(command, skipAuthorization):
+            let run = await executor.execute(command, skipAuthorization: skipAuthorization)
+            if run.result.authorizationDenied {
+                clearDraftAuthorization()
+            } else if !run.result.alreadyRunning {
+                rememberDraftAuthorization()
+            }
+            return run
+        }
+    }
+
     func rememberDraftAuthorization() {
         isCurrentDraftAuthorized = true
     }
