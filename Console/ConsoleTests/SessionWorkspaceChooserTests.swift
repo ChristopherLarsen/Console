@@ -154,8 +154,11 @@ final class SessionWorkspaceChooserTests: XCTestCase {
             stack.coordinator.workspaceBlockingReason(workspaceID: folder.id, purpose: .existingTicket)?
                 .contains("no longer available") == true
         )
-        XCTAssertThrowsError(try stack.coordinator.confirmWorkspaceChoice(workspaceID: folder.id)) { error in
-            XCTAssertEqual(error as? SessionLaunchCoordinator.LaunchError, .workspaceUnavailable)
+        do {
+            _ = try await stack.coordinator.confirmWorkspaceChoice(workspaceID: folder.id)
+            XCTFail("expected disappearing folder to throw")
+        } catch let error as SessionLaunchCoordinator.LaunchError {
+            XCTAssertEqual(error, .workspaceUnavailable)
         }
         let retained = try XCTUnwrap(stack.coordinator.pendingChoice)
         XCTAssertEqual(retained.name, "ENG-123")
@@ -180,8 +183,11 @@ final class SessionWorkspaceChooserTests: XCTestCase {
         )
         _ = try await presentChooser(stack, draft: reviewDraft)
 
-        XCTAssertThrowsError(try stack.coordinator.confirmWorkspaceChoice(workspaceID: plain.id)) { error in
-            XCTAssertEqual(error as? SessionLaunchCoordinator.LaunchError, .workspaceNotAGitRepository)
+        do {
+            _ = try await stack.coordinator.confirmWorkspaceChoice(workspaceID: plain.id)
+            XCTFail("expected non-git review confirm to throw")
+        } catch let error as SessionLaunchCoordinator.LaunchError {
+            XCTAssertEqual(error, .workspaceNotAGitRepository)
         }
         XCTAssertEqual(stack.coordinator.pendingChoice?.name, "Review !42")
         XCTAssertEqual(stack.coordinator.pendingChoice?.selectedWorkspaceID, plain.id)
@@ -200,7 +206,12 @@ final class SessionWorkspaceChooserTests: XCTestCase {
         stack.launcher.errorToThrow = SyntheticLaunchError()
         let sidebarBefore = UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey)
 
-        XCTAssertThrowsError(try stack.coordinator.confirmWorkspaceChoice(workspaceID: home.id))
+        do {
+            _ = try await stack.coordinator.confirmWorkspaceChoice(workspaceID: home.id)
+            XCTFail("expected injected launcher failure to throw")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "Synthetic launcher failed.")
+        }
         XCTAssertEqual(stack.coordinator.lastFailureMessage, "Synthetic launcher failed.")
         XCTAssertEqual(stack.coordinator.pendingChoice?.name, "ENG-123")
         XCTAssertEqual(stack.coordinator.pendingChoice?.selectedWorkspaceID, home.id)
@@ -224,11 +235,17 @@ final class SessionWorkspaceChooserTests: XCTestCase {
         _ = try await presentChooser(stack, draft: jiraDraft(stack))
         stack.launcher.errorToThrow = SyntheticLaunchError()
 
-        XCTAssertThrowsError(try stack.coordinator.confirmWorkspaceChoice(workspaceID: home.id))
+        do {
+            _ = try await stack.coordinator.confirmWorkspaceChoice(workspaceID: home.id)
+            XCTFail("expected injected launcher failure to throw")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "Synthetic launcher failed.")
+        }
         XCTAssertEqual(stack.coordinator.pendingChoice?.name, "ENG-123")
 
         stack.launcher.errorToThrow = nil
-        let sessionID = try XCTUnwrap(try stack.coordinator.confirmWorkspaceChoice(workspaceID: home.id))
+        let confirmed = try await stack.coordinator.confirmWorkspaceChoice(workspaceID: home.id)
+        let sessionID = try XCTUnwrap(confirmed)
 
         XCTAssertNil(stack.coordinator.pendingChoice)
         XCTAssertNil(stack.coordinator.lastFailureMessage)
@@ -249,8 +266,11 @@ final class SessionWorkspaceChooserTests: XCTestCase {
         let home = addWorkspace(stack, named: "Home")
         _ = try await presentChooser(stack, draft: jiraDraft(stack))
 
-        XCTAssertThrowsError(try stack.coordinator.confirmWorkspaceChoice(workspaceID: home.id)) { error in
-            XCTAssertEqual(error as? SessionCreationError, .claudeNotFound)
+        do {
+            _ = try await stack.coordinator.confirmWorkspaceChoice(workspaceID: home.id)
+            XCTFail("expected missing Claude to throw")
+        } catch let error as SessionCreationError {
+            XCTAssertEqual(error, .claudeNotFound)
         }
         XCTAssertEqual(stack.coordinator.pendingChoice?.name, "ENG-123")
         XCTAssertTrue(stack.coordinator.lastFailureMessage?.contains("Claude") == true)

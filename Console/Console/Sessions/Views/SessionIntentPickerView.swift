@@ -244,6 +244,10 @@ struct SessionIntentPickerView: View {
         Task { @MainActor in
             do {
                 guard try await coordinator.launch(draft: resolvedDraft) != nil else {
+                    if coordinator.pendingCollision != nil {
+                        dismiss()
+                        return
+                    }
                     errorMessage = "Choose a workspace folder to continue."
                     showsSettingsRoute = true
                     return
@@ -434,6 +438,10 @@ struct SessionIntentPickerView: View {
             Task { @MainActor in
                 do {
                     guard try await coordinator.launch(draft: resolvedDraft) != nil else {
+                        if coordinator.pendingCollision != nil {
+                            dismiss()
+                            return
+                        }
                         errorMessage = "The chosen folder could not be used."
                         showsSettingsRoute = true
                         return

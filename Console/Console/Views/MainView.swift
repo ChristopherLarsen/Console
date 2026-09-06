@@ -33,12 +33,18 @@ struct MainView: View {
         .preferredColorScheme(themeManager.colorScheme)
         // Shared host for unresolved contextual launches: Jira, GitLab,
         // future Home cards, and the Sessions launcher all land here.
+        .sheet(item: collisionSheetBinding) { warning in
+            SharedCheckoutWarningSheet(warning: warning)
+                .frame(minWidth: 460, maxWidth: 460, minHeight: 280, maxHeight: 480)
+        }
         .sheet(item: choiceSheetBinding) { choice in
             WorkspaceChoiceSheet(choice: choice)
             .frame(minWidth: 420, maxWidth: 420, minHeight: 300, maxHeight: 420)
         }
         .overlay(alignment: .top) {
-            if let failure = launchCoordinator.lastFailure, !launchCoordinator.presentsChoiceSheet {
+            if let failure = launchCoordinator.lastFailure,
+               !launchCoordinator.presentsChoiceSheet,
+               !launchCoordinator.presentsCollisionSheet {
                 SessionLaunchErrorBanner(
                     failure: failure,
                     onDismiss: { launchCoordinator.clearFailure() },
@@ -86,6 +92,17 @@ struct MainView: View {
             set: { newValue in
                 if newValue == nil, launchCoordinator.presentsChoiceSheet {
                     launchCoordinator.cancelWorkspaceChoice()
+                }
+            }
+        )
+    }
+
+    private var collisionSheetBinding: Binding<PendingSharedCheckoutWarning?> {
+        Binding(
+            get: { launchCoordinator.presentsCollisionSheet ? launchCoordinator.pendingCollision : nil },
+            set: { newValue in
+                if newValue == nil, launchCoordinator.presentsCollisionSheet {
+                    launchCoordinator.cancelSharedCheckoutWarning()
                 }
             }
         )

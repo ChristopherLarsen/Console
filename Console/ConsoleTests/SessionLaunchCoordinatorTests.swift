@@ -311,11 +311,13 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         // First launch: unresolved → one-time choice.
         var firstDraft = stack.coordinator.draft(purpose: .existingTicket, source: jiraSource())
         firstDraft.workspaceID = home.id
-        _ = try await stack.coordinator.launch(draft: firstDraft)
+        let firstID = try await requireLaunch(stack, draft: firstDraft)
+        stack.store.stopSession(id: firstID)
 
         stack.coordinator.cancelWorkspaceChoice()
 
         // Second launch of the same project resolves through the association.
+        // The first session is exited so occupancy does not mask routing.
         let second = stack.coordinator.draft(purpose: .existingTicket, source: jiraSource("ENG-456"))
         let id = try await requireLaunch(stack, draft: second)
 
@@ -357,10 +359,12 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         XCTAssertNil(unresolved)
         let choice = try XCTUnwrap(stack.coordinator.pendingChoice)
 
-        let confirmedID = try XCTUnwrap(try stack.coordinator.confirmWorkspaceChoice(workspaceID: beta.id))
+        let confirmed = try await stack.coordinator.confirmWorkspaceChoice(workspaceID: beta.id)
+        let confirmedID = try XCTUnwrap(confirmed)
         XCTAssertNotNil(stack.store.session(withID: confirmedID), "confirmation launches the session")
         XCTAssertNil(stack.coordinator.pendingChoice)
         _ = choice
+        stack.store.stopSession(id: confirmedID)
 
         // Learned: next identical source skips the sheet entirely.
         _ = try await stack.coordinator.launch(draft: stack.coordinator.draft(purpose: .review, source: mrSource()))
