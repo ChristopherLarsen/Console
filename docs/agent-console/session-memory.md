@@ -2,19 +2,18 @@
 
 # Session Memory
 
-_Rewritten 2026-09-06 after review item 22 in an isolated worktree._
+_Rewritten 2026-09-06 during review-item implementation._
 
 ## Next Intended Move
 
-Merge `review-22-shared-checkout-warning` when Christopher asks. Do not push or delete that worktree from here. Continue isolated review items; max three worktrees.
+Continue `docs/reviews/2026-09-06-ios-workflow-review.md`. On `main` after merging 20a: 01–17, 19, 20a, 22. In flight: 18 (Sessions layout), 24 (Brief attribution). Next: 20b (xcresult parser). Then 20c, 21, 23. Max three isolated worktrees.
 
 ## Working Findings
 
-- Item 22 is implemented on `review-22-shared-checkout-warning` (based on main at f727cb6, which includes item 11). Before an editing launch, the coordinator claims the canonical checkout path, compares it to live editing sessions and in-flight claims, and shows Focus Existing Session / Continue in Same Folder / Cancel. Reviews occupy the checkout; they are not treated as read-only. Linked worktrees stay distinct via symlink-resolved paths. Git lookup is read-only `status --porcelain --branch`. No reset, stash, branch switch, worktree create, or session kill.
-- Occupancy uses `CheckoutPath.canonical` (symlink aliases match). `SessionStore.liveEditingSessions` ignores exited rows. Continue reuses the pending claim and does not re-inspect Git. Two overlapping launches park on claims so neither bypasses the warning.
-- Targeted tests passed: SharedCheckoutWarningTests, SessionLaunchCoordinatorTests, SessionWorkspaceChooserTests. Debug Console build succeeded (`/tmp/console-review-22-derived`). Item 02/10/16 coordinator cases still pass. Item 18 not started.
+- P0/P1 complete. 20a: serialized iOS Build/Test jobs with structured xcodebuild argv; no parser/UI yet.
+- Item 02 branch remains in the shared Cursor tree. Do not `worktree remove` that path.
+- Uncommitted on `main`: `docs/reviews/` and 800×500 overview fact. Do not commit unless asked.
 
 ## Dead Ends
 
 - Shared Cursor worktree contaminates parallel items. Always `git worktree add` from current `main` at `/Users/christopherlarsen/Workspace/Console`.
-- `XCTUnwrap(try await …)` / `XCTAssertNotNil(try await …)` fail to compile; await first, then unwrap.
