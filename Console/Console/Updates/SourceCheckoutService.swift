@@ -149,6 +149,13 @@ struct SourceCheckoutService: SourceCheckouting {
             )
         } catch let error as SourceCheckoutError {
             throw error
+        } catch let error as ProcessRunError {
+            switch error {
+            case .executableMissing(let path):
+                throw SourceCheckoutError.executableMissing(path)
+            case .launchFailed(let message):
+                throw SourceCheckoutError.launchFailed(message)
+            }
         } catch is CancellationError {
             throw CancellationError()
         } catch {

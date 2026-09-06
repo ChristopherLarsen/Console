@@ -23,7 +23,10 @@ enum AppleScriptRunner {
 
     // MARK: - Application Control
 
-    static func openApplication(name: String) throws -> String {
+    static func openApplication(
+        name: String,
+        processRunner: any ProcessRunning = SystemProcessRunner()
+    ) async throws -> String {
         let sanitized = sanitizeAppName(name)
         guard !sanitized.isEmpty else {
             throw ScriptError.invalidParameter("Application name cannot be empty")
@@ -33,11 +36,14 @@ enum AppleScriptRunner {
             activate
         end tell
         """
-        try execute(script)
+        try await execute(script, processRunner: processRunner)
         return "Opened \(sanitized)"
     }
 
-    static func quitApplication(name: String) throws -> String {
+    static func quitApplication(
+        name: String,
+        processRunner: any ProcessRunning = SystemProcessRunner()
+    ) async throws -> String {
         let sanitized = sanitizeAppName(name)
         guard !sanitized.isEmpty else {
             throw ScriptError.invalidParameter("Application name cannot be empty")
@@ -47,19 +53,22 @@ enum AppleScriptRunner {
             quit
         end tell
         """
-        try execute(script)
+        try await execute(script, processRunner: processRunner)
         return "Quit \(sanitized)"
     }
 
     // MARK: - System Controls
 
-    static func setVolume(level: Int) throws -> String {
+    static func setVolume(
+        level: Int,
+        processRunner: any ProcessRunning = SystemProcessRunner()
+    ) async throws -> String {
         let clamped = min(max(level, 0), 100)
-        try execute("set volume output volume \(clamped)")
+        try await execute("set volume output volume \(clamped)", processRunner: processRunner)
         return "Volume set to \(clamped)%"
     }
 
-    static func toggleMute() throws -> String {
+    static func toggleMute(processRunner: any ProcessRunning = SystemProcessRunner()) async throws -> String {
         let script = """
         set curVolume to output volume of (get volume settings)
         if curVolume is 0 then
@@ -68,12 +77,12 @@ enum AppleScriptRunner {
             set volume output volume 0
         end if
         """
-        try execute(script)
+        try await execute(script, processRunner: processRunner)
         return "Toggled mute"
     }
 
-    static func toggleDarkMode() throws -> String {
-        let beforeDark = try isDarkMode()
+    static func toggleDarkMode(processRunner: any ProcessRunning = SystemProcessRunner()) async throws -> String {
+        let beforeDark = try await isDarkMode(processRunner: processRunner)
         let script = """
         tell application "System Events"
             tell appearance preferences
@@ -81,15 +90,15 @@ enum AppleScriptRunner {
             end tell
         end tell
         """
-        try execute(script)
-        let afterDark = try isDarkMode()
+        try await execute(script, processRunner: processRunner)
+        let afterDark = try await isDarkMode(processRunner: processRunner)
         if beforeDark == afterDark {
             throw ScriptError.executionFailed("Appearance did not change — grant Automation permission for System Events")
         }
         return afterDark ? "Switched to dark mode" : "Switched to light mode"
     }
 
-    static func enableLightMode() throws -> String {
+    static func enableLightMode(processRunner: any ProcessRunning = SystemProcessRunner()) async throws -> String {
         let script = """
         tell application "System Events"
             tell appearance preferences
@@ -97,15 +106,14 @@ enum AppleScriptRunner {
             end tell
         end tell
         """
-        try execute(script)
-        if try isDarkMode() {
+        try await execute(script, processRunner: processRunner)
+        if try await isDarkMode(processRunner: processRunner) {
             throw ScriptError.executionFailed("Failed to switch to light mode — grant Automation permission for System Events")
         }
         return "Switched to light mode"
     }
 
-    // Reads current appearance state from System Events
-    private static func isDarkMode() throws -> Bool {
+    private static func isDarkMode(processRunner: any ProcessRunning) async throws -> Bool {
         let script = """
         tell application "System Events"
             tell appearance preferences
@@ -113,49 +121,55 @@ enum AppleScriptRunner {
             end tell
         end tell
         """
-        let output = try executeWithOutput(script)
+        let output = try await executeWithOutput(script, processRunner: processRunner)
         return output.lowercased().contains("true")
     }
 
-    static func lockScreen() throws -> String {
+    static func lockScreen(processRunner: any ProcessRunning = SystemProcessRunner()) async throws -> String {
         let script = """
         tell application "System Events" to keystroke "q" using {control down, command down}
         """
-        try execute(script)
+        try await execute(script, processRunner: processRunner)
         return "Screen locked"
     }
 
-    static func emptyTrash() throws -> String {
+    static func emptyTrash(processRunner: any ProcessRunning = SystemProcessRunner()) async throws -> String {
         let script = """
         tell application "Finder"
             empty the trash
         end tell
         """
-        try execute(script)
+        try await execute(script, processRunner: processRunner)
         return "Trash emptied"
     }
 
-    static func showDesktop() throws -> String {
+    static func showDesktop(processRunner: any ProcessRunning = SystemProcessRunner()) async throws -> String {
         let script = """
         tell application "System Events"
             key code 103
         end tell
         """
-        try execute(script)
+        try await execute(script, processRunner: processRunner)
         return "Showing desktop"
     }
 
-    static func openURL(_ urlString: String) throws -> String {
+    static func openURL(
+        _ urlString: String,
+        processRunner: any ProcessRunning = SystemProcessRunner()
+    ) async throws -> String {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw ScriptError.invalidParameter("URL cannot be empty")
         }
         let escaped = trimmed.replacingOccurrences(of: "\"", with: "\\\"")
-        try execute("open location \"\(escaped)\"")
+        try await execute("open location \"\(escaped)\"", processRunner: processRunner)
         return "Opened URL: \(trimmed)"
     }
 
-    static func typeText(_ text: String) throws -> String {
+    static func typeText(
+        _ text: String,
+        processRunner: any ProcessRunning = SystemProcessRunner()
+    ) async throws -> String {
         guard !text.isEmpty else {
             throw ScriptError.invalidParameter("Text cannot be empty")
         }
@@ -167,26 +181,29 @@ enum AppleScriptRunner {
             keystroke "\(escaped)"
         end tell
         """
-        try execute(script)
+        try await execute(script, processRunner: processRunner)
         return "Typed text"
     }
 
     // MARK: - General Execution
 
-    static func run(script source: String) throws -> String {
+    static func run(
+        script source: String,
+        processRunner: any ProcessRunning = SystemProcessRunner()
+    ) async throws -> String {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw ScriptError.emptyScript
         }
-        return try executeWithOutput(trimmed)
+        return try await executeWithOutput(trimmed, processRunner: processRunner)
     }
 
     // MARK: - Private
 
-    private static func execute(_ source: String) throws {
-        let result = try executeProcess(source)
+    private static func execute(_ source: String, processRunner: any ProcessRunning) async throws {
+        let result = try await executeProcess(source, processRunner: processRunner)
         if result.exitCode != 0 {
-            let errorMsg = result.stderr.isEmpty ? "Unknown error" : result.stderr
+            let errorMsg = result.formattedStandardError.isEmpty ? "Unknown error" : result.formattedStandardError
             if errorMsg.contains("-1743") || errorMsg.contains("-10004") {
                 throw ScriptError.permissionDenied(errorMsg)
             }
@@ -194,40 +211,37 @@ enum AppleScriptRunner {
         }
     }
 
-    private static func executeWithOutput(_ source: String) throws -> String {
-        let result = try executeProcess(source)
+    private static func executeWithOutput(_ source: String, processRunner: any ProcessRunning) async throws -> String {
+        let result = try await executeProcess(source, processRunner: processRunner)
         if result.exitCode != 0 {
-            let errorMsg = result.stderr.isEmpty ? "Unknown error" : result.stderr
+            let errorMsg = result.formattedStandardError.isEmpty ? "Unknown error" : result.formattedStandardError
             if errorMsg.contains("-1743") || errorMsg.contains("-10004") {
                 throw ScriptError.permissionDenied(errorMsg)
             }
             throw ScriptError.executionFailed(errorMsg)
         }
-        return result.stdout.isEmpty ? "Script executed successfully" : result.stdout
+        return result.formattedStandardOutput.isEmpty
+            ? "Script executed successfully"
+            : result.formattedStandardOutput
     }
 
-    private static func executeProcess(_ source: String) throws -> (stdout: String, stderr: String, exitCode: Int32) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", source]
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-
-        let stdout = String(data: stdoutData, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let stderr = String(data: stderrData, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        return (stdout, stderr, process.terminationStatus)
+    private static func executeProcess(
+        _ source: String,
+        processRunner: any ProcessRunning
+    ) async throws -> ProcessResult {
+        do {
+            return try await processRunner.run(
+                executablePath: "/usr/bin/osascript",
+                arguments: ["-e", source],
+                workingDirectory: nil
+            )
+        } catch let error as ProcessRunError {
+            throw ScriptError.executionFailed(error.localizedDescription)
+        } catch let error as ScriptError {
+            throw error
+        } catch {
+            throw ScriptError.executionFailed(error.localizedDescription)
+        }
     }
 
     private static func sanitizeAppName(_ name: String) -> String {

@@ -31,6 +31,12 @@ protocol CommandActionExecuting: AnyObject {
 
 final class ActionExecutor: CommandActionExecuting {
 
+    private let processRunner: any ProcessRunning
+
+    init(processRunner: any ProcessRunning = SystemProcessRunner()) {
+        self.processRunner = processRunner
+    }
+
     func execute(_ action: CommandAction) async throws -> String {
         let payload = action.payload.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !payload.isEmpty else {
@@ -41,7 +47,7 @@ final class ActionExecutor: CommandActionExecuting {
         case .appIntent:
             return try await executeAppIntent(payload)
         case .appleScript:
-            return try executeAppleScript(payload)
+            return try await executeAppleScript(payload)
         case .shell:
             return try await executeShell(payload)
         }
@@ -57,47 +63,47 @@ final class ActionExecutor: CommandActionExecuting {
         switch intentName.lowercased() {
         case "openapplication", "open_application", "openapp":
             let appName = parameter ?? payload
-            return try AppleScriptRunner.openApplication(name: appName)
+            return try await AppleScriptRunner.openApplication(name: appName, processRunner: processRunner)
 
         case "quitapplication", "quit_application", "quitapp":
             let appName = parameter ?? payload
-            return try AppleScriptRunner.quitApplication(name: appName)
+            return try await AppleScriptRunner.quitApplication(name: appName, processRunner: processRunner)
 
         case "setvolume", "set_volume", "volume":
             guard let param = parameter, let level = Int(param) else {
                 throw ActionExecutionError.invalidPayload("Volume level required")
             }
-            return try AppleScriptRunner.setVolume(level: level)
+            return try await AppleScriptRunner.setVolume(level: level, processRunner: processRunner)
 
         case "togglemute", "toggle_mute", "mute":
-            return try AppleScriptRunner.toggleMute()
+            return try await AppleScriptRunner.toggleMute(processRunner: processRunner)
 
         case "toggledarkmode", "toggle_dark_mode", "darkmode":
-            return try AppleScriptRunner.toggleDarkMode()
+            return try await AppleScriptRunner.toggleDarkMode(processRunner: processRunner)
 
         case "enablelightmode", "enable_light_mode", "lightmode":
-            return try AppleScriptRunner.enableLightMode()
+            return try await AppleScriptRunner.enableLightMode(processRunner: processRunner)
 
         case "lockscreen", "lock_screen", "lock":
-            return try AppleScriptRunner.lockScreen()
+            return try await AppleScriptRunner.lockScreen(processRunner: processRunner)
 
         case "showdesktop", "show_desktop", "desktop":
-            return try AppleScriptRunner.showDesktop()
+            return try await AppleScriptRunner.showDesktop(processRunner: processRunner)
 
         case "emptytrash", "empty_trash", "trash":
-            return try AppleScriptRunner.emptyTrash()
+            return try await AppleScriptRunner.emptyTrash(processRunner: processRunner)
 
         case "openurl", "open_url", "url":
             guard let urlString = parameter else {
                 throw ActionExecutionError.invalidPayload("URL required")
             }
-            return try AppleScriptRunner.openURL(urlString)
+            return try await AppleScriptRunner.openURL(urlString, processRunner: processRunner)
 
         case "typetext", "type_text", "type":
             guard let text = parameter else {
                 throw ActionExecutionError.invalidPayload("Text required")
             }
-            return try AppleScriptRunner.typeText(text)
+            return try await AppleScriptRunner.typeText(text, processRunner: processRunner)
 
         default:
             throw ActionExecutionError.notImplemented("App Intent '\(intentName)' not yet supported")
@@ -106,8 +112,8 @@ final class ActionExecutor: CommandActionExecuting {
 
     // MARK: - AppleScript Execution
 
-    private func executeAppleScript(_ script: String) throws -> String {
-        try AppleScriptRunner.run(script: script)
+    private func executeAppleScript(_ script: String) async throws -> String {
+        try await AppleScriptRunner.run(script: script, processRunner: processRunner)
     }
 
     // MARK: - Shell Execution
@@ -119,41 +125,30 @@ final class ActionExecutor: CommandActionExecuting {
         }
 
         let args = Array(components.dropFirst())
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [command] + args
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
+        let result: ProcessResult
         do {
-            try process.run()
+            result = try await processRunner.run(
+                executablePath: "/usr/bin/env",
+                arguments: [command] + args,
+                workingDirectory: nil
+            )
+        } catch let error as ProcessRunError {
+            throw ActionExecutionError.shellError(error.localizedDescription)
+        } catch let error as ActionExecutionError {
+            throw error
         } catch {
             throw ActionExecutionError.shellError("Failed to launch: \(error.localizedDescription)")
         }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            process.terminationHandler = { proc in
-                let outputData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let errorData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        let output = result.formattedStandardOutput
+        let errorOutput = result.formattedStandardError
 
-                let output = String(data: outputData, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let errorOutput = String(data: errorData, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-                if proc.terminationStatus == 0 {
-                    continuation.resume(returning: output.isEmpty ? "Command executed successfully" : output)
-                } else {
-                    let msg = errorOutput.isEmpty
-                        ? "Exit code \(proc.terminationStatus)"
-                        : errorOutput
-                    continuation.resume(throwing: ActionExecutionError.shellError(msg))
-                }
-            }
+        if result.exitCode == 0 {
+            return output.isEmpty ? "Command executed successfully" : output
         }
+        let msg = errorOutput.isEmpty
+            ? "Exit code \(result.exitCode)"
+            : errorOutput
+        throw ActionExecutionError.shellError(msg)
     }
 }

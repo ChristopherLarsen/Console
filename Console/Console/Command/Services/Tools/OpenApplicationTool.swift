@@ -13,8 +13,6 @@ struct OpenApplicationTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        try await MainActor.run {
-            try AppleScriptRunner.openApplication(name: arguments.applicationName)
-        }
+        try await AppleScriptRunner.openApplication(name: arguments.applicationName)
     }
 }
