@@ -452,19 +452,23 @@ struct CommandCreationView: View {
 
     private func testCommand() {
         guard let viewModel else { return }
-        let command = Command(
-            name: viewModel.editableName,
-            triggerPhrases: viewModel.editableTriggerPhrases,
-            actions: viewModel.editableActions,
-            executionMode: viewModel.editableExecutionMode
-        )
-        isTesting = true
-        testResult = nil
-        Task {
-            let executor = LocalCommandExecutor()
-            let result = await executor.execute(command)
-            testResult = result
-            isTesting = false
+        switch viewModel.prepareDraftForExecution() {
+        case .invalid:
+            return
+        case let .ready(command, skipAuthorization):
+            isTesting = true
+            testResult = nil
+            Task {
+                let executor = LocalCommandExecutor()
+                let result = await executor.execute(command, skipAuthorization: skipAuthorization)
+                if result.authorizationDenied {
+                    viewModel.clearDraftAuthorization()
+                } else {
+                    viewModel.rememberDraftAuthorization()
+                }
+                testResult = result
+                isTesting = false
+            }
         }
     }
 

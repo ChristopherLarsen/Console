@@ -50,6 +50,11 @@ struct CommandValidator {
         return .success
     }
 
+    /// True when the command is flagged for confirmation or its payloads match a known dangerous pattern.
+    func needsConfirmation(_ command: Command) -> Bool {
+        command.requiresConfirmation || detectDangerousOperation(command) != nil
+    }
+
     // MARK: - Action Type Validation
 
     func isValidActionType(_ action: CommandAction) -> Bool {
