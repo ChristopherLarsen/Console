@@ -17,11 +17,23 @@ final class LocalCommandExecutor {
     private(set) var isExecuting = false
     private(set) var lastResult: ExecutionResult?
     private var cancelled = false
-    private let actionExecutor = ActionExecutor()
+    private let actionExecutor: any CommandActionExecuting
+    private let authorizer: any CommandAuthorizing
+    private let validator: CommandValidator
     private let completionChecker = CompletionChecker()
 
     var modelContext: ModelContext?
     var onExecutionComplete: ((ExecutionResult) -> Void)?
+
+    init(
+        actionExecutor: (any CommandActionExecuting)? = nil,
+        authorizer: (any CommandAuthorizing)? = nil,
+        validator: CommandValidator = CommandValidator()
+    ) {
+        self.actionExecutor = actionExecutor ?? ActionExecutor()
+        self.authorizer = authorizer ?? AuthorizationManager.shared
+        self.validator = validator
+    }
 
     private var failureBehavior: AppSettings.CommandFailureBehavior {
         let raw = UserDefaults.standard.string(forKey: "commandFailureBehavior")
@@ -41,24 +53,20 @@ final class LocalCommandExecutor {
             return await executeConsoleAction(action, command: command)
         }
 
-        if !skipAuthorization {
-            let confirmationEnabled = UserDefaults.standard.object(forKey: "requireConfirmationForDangerous") == nil
-                ? true
-                : UserDefaults.standard.bool(forKey: "requireConfirmationForDangerous")
-            if command.requiresConfirmation && confirmationEnabled {
-                let authorized = await AuthorizationManager.shared.requestAuthorization(for: command)
-                if !authorized {
-                    let deniedResult = ExecutionResult(
-                        command: command,
-                        logs: [],
-                        overallSuccess: false,
-                        totalDurationMs: 0
-                    )
-                    lastResult = deniedResult
-                    VisualFeedbackService.shared.show(.warning("Authorization denied"))
-                    onExecutionComplete?(deniedResult)
-                    return deniedResult
-                }
+        if !skipAuthorization, needsAuthorization(command) {
+            let authorized = await authorizer.requestAuthorization(for: command)
+            if !authorized {
+                let deniedResult = ExecutionResult(
+                    command: command,
+                    logs: [],
+                    overallSuccess: false,
+                    totalDurationMs: 0,
+                    authorizationDenied: true
+                )
+                lastResult = deniedResult
+                VisualFeedbackService.shared.show(.warning("Authorization denied"))
+                onExecutionComplete?(deniedResult)
+                return deniedResult
             }
         }
 
@@ -183,6 +191,21 @@ final class LocalCommandExecutor {
         lastResult = result
         onExecutionComplete?(result)
         return result
+    }
+
+    // MARK: - Authorization
+
+    private func needsAuthorization(_ command: Command) -> Bool {
+        if UserDefaults.standard.bool(forKey: "requireAuthorizationForAllCommands") {
+            return true
+        }
+
+        let confirmationEnabled = UserDefaults.standard.object(forKey: "requireConfirmationForDangerous") == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: "requireConfirmationForDangerous")
+        guard confirmationEnabled else { return false }
+
+        return validator.needsConfirmation(command)
     }
 
     // MARK: - Action Dispatch

@@ -27,6 +27,7 @@ struct ExecutionResult {
     let logs: [ExecutionLogEntry]
     let overallSuccess: Bool
     let totalDurationMs: Int
+    var authorizationDenied: Bool = false
 
     var failedSteps: [ExecutionLogEntry] {
         logs.filter { !$0.isSuccess }

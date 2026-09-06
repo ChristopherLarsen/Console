@@ -25,7 +25,11 @@ enum ActionExecutionError: LocalizedError {
 
 // MARK: - Action Executor
 
-final class ActionExecutor {
+protocol CommandActionExecuting: AnyObject {
+    func execute(_ action: CommandAction) async throws -> String
+}
+
+final class ActionExecutor: CommandActionExecuting {
 
     func execute(_ action: CommandAction) async throws -> String {
         let payload = action.payload.trimmingCharacters(in: .whitespacesAndNewlines)

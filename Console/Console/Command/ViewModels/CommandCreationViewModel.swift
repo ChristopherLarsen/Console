@@ -14,9 +14,11 @@ final class CommandCreationViewModel {
     private(set) var editableName: String = ""
     private(set) var editableTriggerPhrases: [String] = []
     private(set) var editableExecutionMode: CommandExecutionMode = .appIntents
+    private(set) var editableRequiresConfirmation = false
     private(set) var errorMessage: String?
     private(set) var hasGenerated = false
     private(set) var validationWarning: String?
+    private(set) var isCurrentDraftAuthorized = false
 
     private let aiProviderManager: AIProviderManager
     private let modelContext: ModelContext
@@ -72,46 +74,7 @@ final class CommandCreationViewModel {
                 try await generator.generateCommand(from: fullPrompt)
             }
 
-            generatedCommand = command
-
-            // Default command name to the user's trigger phrase (sentence-cased)
-            let firstUserPhrase = triggerPhrasesText
-                .components(separatedBy: ",")
-                .first?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !firstUserPhrase.isEmpty {
-                editableName = firstUserPhrase.prefix(1).uppercased() + firstUserPhrase.dropFirst()
-            } else {
-                editableName = command.name
-            }
-
-            editableTriggerPhrases = command.triggerPhrases
-            editableActions = command.actions
-            editableExecutionMode = command.executionMode
-
-            if !triggerPhrasesText.isEmpty {
-                let userPhrases = triggerPhrasesText
-                    .components(separatedBy: ",")
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-                for phrase in userPhrases {
-                    if !editableTriggerPhrases.contains(where: { $0.lowercased() == phrase.lowercased() }) {
-                        editableTriggerPhrases.append(phrase)
-                    }
-                }
-            }
-
-            let validationResult = validator.validateCommand(command)
-            switch validationResult {
-            case .success:
-                validationWarning = nil
-            case .failure(let msg):
-                validationWarning = msg
-            case .requiresConfirmation(let msg, _):
-                validationWarning = msg
-            }
-
-            hasGenerated = true
+            presentGeneratedCommand(command)
         } catch {
             let rawResponse = Self.lastRawResponse(for: provider)
             GenerationFailureLogger.log(
@@ -138,7 +101,46 @@ final class CommandCreationViewModel {
     func regenerate() async {
         hasGenerated = false
         generatedCommand = nil
+        editableRequiresConfirmation = false
+        isCurrentDraftAuthorized = false
         await generate()
+    }
+
+    /// Applies a generated command to the editable draft.
+    func presentGeneratedCommand(_ command: Command) {
+        generatedCommand = command
+        isCurrentDraftAuthorized = false
+
+        // Default command name to the user's trigger phrase (sentence-cased)
+        let firstUserPhrase = triggerPhrasesText
+            .components(separatedBy: ",")
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !firstUserPhrase.isEmpty {
+            editableName = firstUserPhrase.prefix(1).uppercased() + firstUserPhrase.dropFirst()
+        } else {
+            editableName = command.name
+        }
+
+        editableTriggerPhrases = command.triggerPhrases
+        editableActions = command.actions
+        editableExecutionMode = command.executionMode
+        editableRequiresConfirmation = command.requiresConfirmation
+
+        if !triggerPhrasesText.isEmpty {
+            let userPhrases = triggerPhrasesText
+                .components(separatedBy: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            for phrase in userPhrases {
+                if !editableTriggerPhrases.contains(where: { $0.lowercased() == phrase.lowercased() }) {
+                    editableTriggerPhrases.append(phrase)
+                }
+            }
+        }
+
+        revalidateDraft()
+        hasGenerated = true
     }
 
     // MARK: - Edit Actions
@@ -151,16 +153,62 @@ final class CommandCreationViewModel {
             payload: payload,
             order: editableActions[index].order
         )
+        draftDidChange()
     }
 
     func removeAction(at index: Int) {
         guard editableActions.indices.contains(index) else { return }
         editableActions.remove(at: index)
         reorderActions()
+        draftDidChange()
     }
 
     func updateName(_ name: String) {
         editableName = name
+    }
+
+    enum DraftPreparation {
+        case ready(Command, skipAuthorization: Bool)
+        case invalid
+    }
+
+    func makeDraftCommand() -> Command {
+        Command(
+            name: editableName.trimmingCharacters(in: .whitespacesAndNewlines),
+            triggerPhrases: editableTriggerPhrases,
+            actions: editableActions,
+            executionMode: editableExecutionMode,
+            requiresConfirmation: editableRequiresConfirmation
+        )
+    }
+
+    func prepareDraftForExecution() -> DraftPreparation {
+        let name = editableName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            errorMessage = "Command name cannot be empty."
+            return .invalid
+        }
+        guard !editableActions.isEmpty else {
+            errorMessage = "Command must have at least one action."
+            return .invalid
+        }
+
+        if case .failure(let msg) = revalidateDraft() {
+            errorMessage = msg
+            return .invalid
+        }
+
+        let command = makeDraftCommand()
+        let skipAuthorization = isCurrentDraftAuthorized && command.requiresConfirmation
+        return .ready(command, skipAuthorization: skipAuthorization)
+    }
+
+    func rememberDraftAuthorization() {
+        isCurrentDraftAuthorized = true
+    }
+
+    func clearDraftAuthorization() {
+        isCurrentDraftAuthorized = false
     }
 
     // MARK: - Conflict Detection
@@ -203,18 +251,12 @@ final class CommandCreationViewModel {
             }
         }
 
-        let command = Command(
-            name: name,
-            triggerPhrases: editableTriggerPhrases,
-            actions: editableActions,
-            executionMode: editableExecutionMode
-        )
-
-        let validationResult = validator.validateCommand(command)
-        if case .failure(let msg) = validationResult {
+        if case .failure(let msg) = revalidateDraft() {
             errorMessage = msg
             return false
         }
+
+        let command = makeDraftCommand()
 
         modelContext.insert(command)
         do {
@@ -260,6 +302,40 @@ final class CommandCreationViewModel {
             // TODO: Inject relevant CatalogEntry context here when catalog integration is implemented
         }
         return prompt
+    }
+
+    private func draftDidChange() {
+        isCurrentDraftAuthorized = false
+        revalidateDraft()
+    }
+
+    @discardableResult
+    func revalidateDraft() -> ValidationResult {
+        let draft = makeDraftCommand()
+        let result = validator.validateCommand(draft)
+        switch result {
+        case .success:
+            validationWarning = nil
+            if let generated = generatedCommand,
+               Self.actionFingerprint(generated.actions) == Self.actionFingerprint(editableActions) {
+                editableRequiresConfirmation = generated.requiresConfirmation
+            } else {
+                editableRequiresConfirmation = false
+            }
+        case .failure(let msg):
+            validationWarning = msg
+        case .requiresConfirmation(let msg, _):
+            validationWarning = msg
+            editableRequiresConfirmation = true
+        }
+        return result
+    }
+
+    private static func actionFingerprint(_ actions: [CommandAction]) -> String {
+        actions
+            .sorted { $0.order < $1.order }
+            .map { "\($0.type.rawValue)|\($0.payload)|\($0.order)" }
+            .joined(separator: "\u{1e}")
     }
 
     private func reorderActions() {

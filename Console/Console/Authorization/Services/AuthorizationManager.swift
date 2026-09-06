@@ -1,9 +1,14 @@
 import Foundation
 import Observation
 
+@MainActor
+protocol CommandAuthorizing: AnyObject {
+    func requestAuthorization(for command: Command) async -> Bool
+}
+
 @Observable
 @MainActor
-final class AuthorizationManager {
+final class AuthorizationManager: CommandAuthorizing {
     static let shared = AuthorizationManager()
 
     private(set) var pendingCommand: Command?
@@ -38,7 +43,7 @@ final class AuthorizationManager {
             return true
         }
 
-        if settings.requireConfirmationForDangerous && command.requiresConfirmation {
+        if settings.requireConfirmationForDangerous && CommandValidator().needsConfirmation(command) {
             return true
         }
 
