@@ -21,8 +21,8 @@ enum NextTaskKind: String, Codable, Equatable, Sendable {
     }
 }
 
-/// One actionable "next" decision shown on the sidebar card. Produced either
-/// by the configured AI provider or by the deterministic local fallback.
+/// One actionable "next" decision shown on the sidebar card. Produced by the
+/// local priority selector from in-process panel snapshots.
 struct NextTask: Equatable, Sendable {
     let kind: NextTaskKind
     /// Short imperative headline, e.g. "Review !88 in AntivirusGodot".

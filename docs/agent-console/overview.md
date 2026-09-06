@@ -48,7 +48,7 @@ to add files.
 | **CodeHost / MergeRequests / GitLab** | `CodeHost/`, `MergeRequests/`, `GitLab/` | GitLab MR panels (GitHub support was removed — GitLab only). TWO retained `WebPage`s (reviews + authored) sharing one persistent `WKWebsiteDataStore`; independent histories, shared login. Specs: `CONSOLE_PANEL_3_GITLAB.md`, `CONSOLE_PANEL_4_GITLAB.md`. |
 | **Home** | `Home/` | Four-quadrant grid: JIRA My Tickets · Agent Sessions · MRs to Review · My MRs (`HomePanel` enum in `HomeView.swift`). Sessions quadrant = attention radar/launcher over `SessionStore` (no terminal embedded, no destructive controls). Shared card grammar per `Design/HomeCards/DESIGN_PROMPT.md` §3. |
 | **Brief** | `Brief/` | Morning Brief: collects activity, composes prompt, calls AI (`BriefAIService`), parses response (`BriefAIResponseParser`), stores results (`BriefStore`). |
-| **Next** | `Next/` | "What should I do next" card: `NextContextBuilder` → `NextTaskService` (AI) → `NextTaskResponseParser` → `NextTaskCardView`. |
+| **Next** | `Next/` | "What should I do next" card: `NextContextBuilder.recommendedTask` (local priority selector) → `NextButtonModel` → `NextTaskCardView`. Panel-derived MR/ticket/session text never leaves the process. |
 | **Note** | `Note/` | Voice dictation notes panel with its own dictation mode. |
 | **Permissions / Authorization** | `Permissions/`, `Authorization/` | macOS permission checks (accessibility, automation, microphone), status polling, background observer, grant modals, voice authorization handler. |
 | **Updates** | `Updates/` | GitHub-release-based updater (`UpdateManager`, `SemanticVersion`, `SourceCheckoutService`, `ProcessRunner`). |

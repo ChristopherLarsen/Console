@@ -1,16 +1,14 @@
 import SwiftUI
 
 /// The full-width Next card in the Next destination. Shows "Check" until
-/// asked; then asks the configured AI provider what to do next (falling back
-/// to a deterministic local pick) and renders the resulting task. Tapping the
-/// ready card takes the user straight to that work.
+/// asked; then picks the next task locally from live panel snapshots and
+/// renders it. Tapping the ready card takes the user straight to that work.
 struct NextTaskCardView: View {
     @Binding var selection: SidebarSelection
 
     /// Content-hugging floor for the full-width panel (Christopher's spec).
     static let minimumHeight: CGFloat = 150
 
-    @Environment(AIProviderManager.self) private var aiProviderManager: AIProviderManager?
     @Environment(SessionStore.self) private var sessionStore: SessionStore?
     @State private var model = NextButtonModel()
 
@@ -43,10 +41,6 @@ struct NextTaskCardView: View {
 
         case .checking:
             checkingContent
-
-        case .needsProvider:
-            Button { selection = .aiProvider } label: { needsProviderContent }
-                .buttonStyle(.plain)
 
         case .failed(let message):
             Button { runCheck() } label: {
@@ -82,25 +76,6 @@ struct NextTaskCardView: View {
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.85))
                 .lineLimit(2)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var needsProviderContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            titleRow()
-            Spacer(minLength: 0)
-            Text("Check")
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(.white)
-            Text("Set an AI provider first.")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(2)
-            Text("Opens AI Provider settings.")
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.6))
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -204,8 +179,7 @@ struct NextTaskCardView: View {
     private func runCheck() {
         model.check(
             sessionStore: sessionStore ?? SessionStore(),
-            jiraController: JiraWebSession.shared.panelController,
-            aiProviderManager: aiProviderManager
+            jiraController: JiraWebSession.shared.panelController
         )
     }
 
@@ -256,8 +230,6 @@ struct NextTaskCardView: View {
             return "Next — check what to do"
         case .checking:
             return "Next — checking"
-        case .needsProvider:
-            return "Next — set an AI provider first"
         case .failed(let message):
             return "Next failed. \(message)"
         case .ready(let task, _):
@@ -270,7 +242,6 @@ struct NextTaskCardView: View {
 #Preview("Idle") {
     @Previewable @State var selection: SidebarSelection = .home
     NextTaskCardView(selection: $selection)
-        .environment(AIProviderManager())
         .environment(SessionStore())
         .frame(width: 560)
         .padding()

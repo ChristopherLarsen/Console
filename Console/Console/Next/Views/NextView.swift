@@ -6,7 +6,6 @@ import SwiftUI
 struct NextView: View {
     @Binding var selection: SidebarSelection
 
-    @Environment(AIProviderManager.self) private var aiProviderManager: AIProviderManager?
     @Environment(SessionStore.self) private var sessionStore: SessionStore?
     @State private var model = NextButtonModel()
 
@@ -52,16 +51,14 @@ struct NextView: View {
     private func autoCheckIfNeeded() {
         model.checkIfNeeded(
             sessionStore: sessionStore ?? SessionStore(),
-            jiraController: JiraWebSession.shared.panelController,
-            aiProviderManager: aiProviderManager
+            jiraController: JiraWebSession.shared.panelController
         )
     }
 
     private func runCheck() {
         model.check(
             sessionStore: sessionStore ?? SessionStore(),
-            jiraController: JiraWebSession.shared.panelController,
-            aiProviderManager: aiProviderManager
+            jiraController: JiraWebSession.shared.panelController
         )
     }
 }
@@ -69,7 +66,6 @@ struct NextView: View {
 #Preview("Idle") {
     @Previewable @State var selection: SidebarSelection = .next
     return NextView(selection: $selection)
-        .environment(AIProviderManager())
         .environment(SessionStore())
         .frame(width: 700, height: 500)
 }

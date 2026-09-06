@@ -21,19 +21,16 @@ struct NextContextSnapshot: Equatable, Sendable {
     }
 }
 
-/// Pure rules for the Next card: builds a bounded prompt snapshot and picks
-/// the deterministic fallback task in priority order (review others' MRs,
-/// then address comments on our own, then session attention, then start a
-/// new ticket).
+/// Pure local rules for the Next card. Picks one task in priority order
+/// (review others' MRs, then address comments on our own, then session
+/// attention, then start a new ticket). Panel-derived text stays in-process.
 enum NextContextBuilder {
-    /// Bounds prompt size; host lists are already ordered by relevance.
-    static let maxItemsPerList = 10
+    // MARK: - Selection
 
-    // MARK: - Fallback selection
-
-    /// The deterministic next task when no AI is available or its answer is
-    /// unusable. Always returns something pointing the user somewhere useful.
-    static func fallbackTask(for snapshot: NextContextSnapshot) -> NextTask {
+    /// The next task to show on the card. Always returns something that
+    /// points the user somewhere useful. Never packages snapshot text for
+    /// an external model.
+    static func recommendedTask(for snapshot: NextContextSnapshot) -> NextTask {
         if let item = firstReviewItem(in: snapshot.reviewItems) {
             return NextTask(
                 kind: .reviewMergeRequest,
@@ -143,70 +140,5 @@ enum NextContextBuilder {
         let limit = NextTaskResponseParser.maxLineLength
         guard text.count > limit else { return [text] }
         return [String(text.prefix(limit - 1)) + "…"]
-    }
-
-    // MARK: - Prompt text
-
-    /// Compact plain-text rendering of everything the AI may consider.
-    static func promptText(for snapshot: NextContextSnapshot) -> String {
-        var sections: [String] = []
-
-        if !snapshot.reviewItems.isEmpty {
-            sections.append("MRs TO REVIEW (host order):")
-            sections.append(
-                contentsOf: snapshot.reviewItems.prefix(maxItemsPerList).enumerated().map { index, item in
-                    "\(index + 1). \(describe(item))"
-                }
-            )
-        }
-
-        if !snapshot.authoredItems.isEmpty {
-            sections.append("MY OPEN MRs (host order):")
-            sections.append(
-                contentsOf: snapshot.authoredItems.prefix(maxItemsPerList).enumerated().map { index, item in
-                    "\(index + 1). \(describe(item))"
-                }
-            )
-        }
-
-        let attentionSessions = snapshot.sessions.filter(\.needsYou)
-        if !attentionSessions.isEmpty {
-            sections.append("SESSIONS NEEDING ATTENTION:")
-            sections.append(
-                contentsOf: attentionSessions.prefix(maxItemsPerList).enumerated().map { index, session in
-                    var line = "\(index + 1). \"\(session.name)\" — \(session.state.label)"
-                    if let summary = session.summary, !summary.isEmpty {
-                        line += " — \(summary)"
-                    }
-                    return line
-                }
-            )
-        }
-
-        if !snapshot.tickets.isEmpty {
-            sections.append("TICKETS:")
-            sections.append(
-                contentsOf: snapshot.tickets.prefix(maxItemsPerList).enumerated().map { index, ticket in
-                    var line = "\(index + 1). \(ticket.key) \"\(ticket.summary)\""
-                    if let status = ticket.status, !status.isEmpty { line += " (\(status))" }
-                    if let priority = ticket.priority, !priority.isEmpty { line += " [priority \(priority)]" }
-                    return line
-                }
-            )
-        }
-
-        return sections.isEmpty ? "(no sources available)" : sections.joined(separator: "\n")
-    }
-
-    private static func describe(_ item: MergeRequestSummary) -> String {
-        var parts: [String] = []
-        if let iid = item.iidText, !iid.isEmpty { parts.append("!\(iid)") }
-        parts.append("\"\(item.title)\"")
-        if let project = item.projectDisplayName, !project.isEmpty { parts.append(project) }
-        if let author = item.authorDisplayName, !author.isEmpty { parts.append("by \(author)") }
-        if item.isDraft { parts.append("draft") }
-        if let pipeline = item.pipelineDisplayState, !pipeline.isEmpty { parts.append("pipeline: \(pipeline)") }
-        if let review = item.reviewDisplayState, !review.isEmpty { parts.append("review: \(review)") }
-        return parts.joined(separator: " ")
     }
 }

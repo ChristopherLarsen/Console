@@ -65,7 +65,7 @@ final class NextContextBuilderTests: XCTestCase {
             tickets: [ticket(key: "PROJ-1", status: "To Do", order: 2)]
         )
 
-        let task = NextContextBuilder.fallbackTask(for: snapshot)
+        let task = NextContextBuilder.recommendedTask(for: snapshot)
         XCTAssertEqual(task.kind, .reviewMergeRequest)
         XCTAssertEqual(task.targetURL?.absoluteString.contains("merge_requests/0"), true)
     }
@@ -80,7 +80,7 @@ final class NextContextBuilderTests: XCTestCase {
             sessions: [session(name: "Antivirus", state: .needsInput)]
         )
 
-        let task = NextContextBuilder.fallbackTask(for: snapshot)
+        let task = NextContextBuilder.recommendedTask(for: snapshot)
         XCTAssertEqual(task.kind, .addressComments)
         // The first needs-you MR in host order wins (changes-requested at 6,
         // not the failed pipeline at 7).
@@ -93,7 +93,7 @@ final class NextContextBuilderTests: XCTestCase {
             sessions: [session(name: "Console work", state: .needsReview)]
         )
 
-        let task = NextContextBuilder.fallbackTask(for: snapshot)
+        let task = NextContextBuilder.recommendedTask(for: snapshot)
         XCTAssertEqual(task.kind, .sessionAttention)
         XCTAssertEqual(task.sessionName, "Console work")
     }
@@ -104,7 +104,7 @@ final class NextContextBuilderTests: XCTestCase {
             tickets: [ticket(key: "PROJ-9", status: "To Do", order: 0)]
         )
 
-        let task = NextContextBuilder.fallbackTask(for: snapshot)
+        let task = NextContextBuilder.recommendedTask(for: snapshot)
         XCTAssertEqual(task.kind, .sessionAttention)
         XCTAssertEqual(task.lines.first, "Waiting on API keys")
     }
@@ -118,13 +118,13 @@ final class NextContextBuilderTests: XCTestCase {
             ]
         )
 
-        let task = NextContextBuilder.fallbackTask(for: snapshot)
+        let task = NextContextBuilder.recommendedTask(for: snapshot)
         XCTAssertEqual(task.kind, .newTicket)
         XCTAssertEqual(task.headline, "Start PROJ-4")
     }
 
     func testEmptySnapshotProducesQuietNewTicketTask() {
-        let task = NextContextBuilder.fallbackTask(for: NextContextSnapshot())
+        let task = NextContextBuilder.recommendedTask(for: NextContextSnapshot())
         XCTAssertEqual(task.kind, .newTicket)
         XCTAssertFalse(task.headline.isEmpty)
         XCTAssertNil(task.targetURL)
@@ -141,37 +141,43 @@ final class NextContextBuilderTests: XCTestCase {
             ]
         )
 
-        let task = NextContextBuilder.fallbackTask(for: snapshot)
+        let task = NextContextBuilder.recommendedTask(for: snapshot)
         XCTAssertEqual(task.sessionName, "Approval")
     }
 
-    // MARK: - Prompt text
+    // MARK: - Local-only selection
 
-    func testPromptTextContainsAllSections() {
+    func testSyntheticReviewProducesRecommendationWithoutProvider() {
         let snapshot = NextContextSnapshot(
-            reviewItems: [mr(title: "Theirs", pipeline: "running", order: 0)],
-            authoredItems: [mr(title: "Mine", review: "Discussion", order: 1)],
-            sessions: [session(name: "A", state: .error), session(name: "B", state: .idle)],
-            tickets: [ticket(key: "K-1", status: "Open", order: 2)]
+            reviewItems: [mr(iid: "88", title: "Fix placement", project: "AntivirusGodot", order: 0)]
         )
 
-        let text = NextContextBuilder.promptText(for: snapshot)
-
-        XCTAssertTrue(text.contains("MRs TO REVIEW"))
-        XCTAssertTrue(text.contains("MY OPEN MRs"))
-        XCTAssertTrue(text.contains("SESSIONS NEEDING ATTENTION"))
-        XCTAssertTrue(text.contains("TICKETS"))
-        // Idle sessions are not attention-worthy and must be omitted.
-        XCTAssertFalse(text.contains("\"B\""))
+        let task = NextContextBuilder.recommendedTask(for: snapshot)
+        XCTAssertEqual(task.kind, .reviewMergeRequest)
+        XCTAssertEqual(task.headline, "Review !88 in AntivirusGodot")
+        XCTAssertEqual(task.targetURL?.absoluteString, "https://gitlab.example.com/p/r/-/merge_requests/0")
+        XCTAssertNil(task.sessionName)
     }
 
-    func testPromptTextBoundsEachList() {
-        let many = (0..<20).map { mr(title: "MR \($0)", order: $0) }
-        let snapshot = NextContextSnapshot(reviewItems: many)
+    func testSyntheticParkedTicketKeepsIssueDeepLink() {
+        let snapshot = NextContextSnapshot(
+            tickets: [ticket(key: "SYN-41", status: "To Do", order: 0)]
+        )
 
-        let text = NextContextBuilder.promptText(for: snapshot)
-        let lines = text.split(separator: "\n")
-        // Header + 10 items.
-        XCTAssertEqual(lines.count, NextContextBuilder.maxItemsPerList + 1)
+        let task = NextContextBuilder.recommendedTask(for: snapshot)
+        XCTAssertEqual(task.kind, .newTicket)
+        XCTAssertEqual(task.headline, "Start SYN-41")
+        XCTAssertEqual(task.targetURL?.absoluteString, "https://jira.example.com/browse/SYN-41")
+    }
+
+    func testSessionRecommendationKeepsExactSessionName() {
+        let snapshot = NextContextSnapshot(
+            sessions: [session(name: "Console work", state: .needsReview)]
+        )
+
+        let task = NextContextBuilder.recommendedTask(for: snapshot)
+        XCTAssertEqual(task.kind, .sessionAttention)
+        XCTAssertEqual(task.sessionName, "Console work")
+        XCTAssertNil(task.targetURL)
     }
 }
