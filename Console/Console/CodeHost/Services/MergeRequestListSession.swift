@@ -33,13 +33,12 @@ final class MergeRequestListSession {
         controller(for: kind).state.retainedItems
     }
 
-    /// Starts both lists once and refreshes them; returns after both
-    /// controllers settle or `timeout` elapses. Never throws — callers read
-    /// whatever items survived.
+    /// Starts both lists, or reloads them if they already completed. First
+    /// load is not doubled. Returns after both controllers settle or
+    /// `timeout` elapses. Never throws — callers read whatever items survived.
     func refreshBoth(timeout: TimeInterval = 10) async {
         for kind in CodeHostListKind.allCases {
-            controller(for: kind).startIfNeeded()
-            controller(for: kind).refresh()
+            controller(for: kind).startOrRefresh()
         }
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {

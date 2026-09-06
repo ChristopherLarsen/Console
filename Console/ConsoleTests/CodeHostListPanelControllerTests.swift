@@ -39,6 +39,18 @@ final class CodeHostListPanelControllerTests: XCTestCase {
         XCTFail("Extraction did not settle")
     }
 
+    private func waitUntil(
+        _ condition: @MainActor () -> Bool,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        for _ in 0..<400 {
+            if condition() { return }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTFail("Condition was not met", file: file, line: line)
+    }
+
     /// Executor stub whose use indicates a test bug (navigation was expected
     /// to short-circuit extraction).
     private final class UnexpectedExecutor {
@@ -402,6 +414,298 @@ final class CodeHostListPanelControllerTests: XCTestCase {
         controller.startIfNeeded()
         await waitForSettled(controller)
         XCTAssertEqual(controller.state, .unconfigured)
+        XCTAssertFalse(controller.isRefreshing)
+    }
+
+    func testStartIfNeededLoadsAfterURLAppearsOnPreviouslyEmptyController() async {
+        var activeProvider = ""
+        let loads = CounterBox()
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in
+                loads.increment()
+                return true
+            },
+            executor: { _ in "{\"outcome\":\"empty\",\"items\":[]}" },
+            provider: { activeProvider }
+        )
+
+        controller.startIfNeeded()
+        await waitForSettled(controller)
+        XCTAssertEqual(controller.state, .unconfigured)
+        XCTAssertEqual(loads.value, 0)
+
+        activeProvider = "https://gitlab.example.test/review-list"
+        controller.startIfNeeded()
+        await waitForSettled(controller)
+        XCTAssertEqual(controller.state, .empty(refreshedAt: currentDate))
+        XCTAssertEqual(loads.value, 1)
+    }
+
+    // MARK: - Resume after navigation
+
+    func testCancelDuringLoadThenAppearResumesExtraction() async {
+        let loadGate = ContinuationGate<Bool>()
+        let extractGate = ContinuationGate<String?>()
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in await loadGate.wait() },
+            executor: { _ in await extractGate.wait() }
+        )
+
+        controller.startIfNeeded()
+        await waitUntil { loadGate.pendingCount == 1 }
+        XCTAssertEqual(controller.state, .loadingPage)
+        XCTAssertTrue(controller.isRefreshing)
+
+        controller.cancelPendingWork()
+        XCTAssertFalse(controller.isRefreshing)
+        XCTAssertTrue(controller.isSuspended)
+        XCTAssertTrue(controller.needsExtraction)
+        XCTAssertEqual(controller.state, .loadingPage, "Cancelled first load must not look complete")
+
+        loadGate.resume(true)
+        await Task.yield()
+        XCTAssertNotEqual(controller.state.retainedItems.count, 3, "Cancelled load must not apply later")
+        guard case .loadingPage = controller.state else {
+            return XCTFail("Late cancelled load must leave the incomplete skeleton, got \(controller.state)")
+        }
+
+        controller.startIfNeeded()
+        XCTAssertTrue(controller.isRefreshing)
+        XCTAssertFalse(controller.isSuspended)
+        XCTAssertFalse(controller.needsExtraction)
+        await waitUntil { loadGate.pendingCount == 1 }
+
+        loadGate.resume(true)
+        await waitUntil { extractGate.pendingCount == 1 }
+        extractGate.resume(itemsJSON(count: 3))
+        await waitForSettled(controller)
+
+        guard case .loaded(let items, _) = controller.state else {
+            return XCTFail("Expected resumed load to complete, got \(controller.state)")
+        }
+        XCTAssertEqual(items.count, 3)
+        XCTAssertFalse(controller.isRefreshing)
+        XCTAssertFalse(controller.needsExtraction)
+        XCTAssertFalse(controller.isSuspended)
+    }
+
+    func testURLChangeWhileAbsentLoadsNewSourceAndRejectsLatePriorResult() async {
+        let loadGate = ContinuationGate<Bool>()
+        let extractGate = ContinuationGate<String?>()
+        var loadedURLs: [URL] = []
+        var activeProvider = "https://gitlab.example.test/list-a"
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, request in
+                if let url = request.url {
+                    loadedURLs.append(url)
+                }
+                return await loadGate.wait()
+            },
+            executor: { _ in await extractGate.wait() },
+            provider: { activeProvider }
+        )
+
+        controller.startIfNeeded()
+        await waitUntil { loadGate.pendingCount == 1 }
+        let firstGeneration = controller.currentGeneration
+        XCTAssertEqual(loadedURLs.map(\.absoluteString), ["https://gitlab.example.test/list-a"])
+
+        loadGate.resume(true)
+        await waitUntil { extractGate.pendingCount == 1 }
+        XCTAssertEqual(controller.state, .extracting)
+
+        controller.cancelPendingWork()
+        XCTAssertTrue(controller.isSuspended)
+        XCTAssertGreaterThan(controller.currentGeneration, firstGeneration)
+
+        activeProvider = "https://gitlab.example.test/list-b"
+        extractGate.resume(itemsJSON(count: 1))
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(controller.state.retainedItems, [], "A's late extraction must not apply after cancel")
+        XCTAssertEqual(controller.state, .extracting)
+
+        controller.startIfNeeded()
+        await waitUntil { loadGate.pendingCount == 1 }
+        let secondGeneration = controller.currentGeneration
+        XCTAssertGreaterThan(secondGeneration, firstGeneration)
+        XCTAssertEqual(loadedURLs.map(\.lastPathComponent), ["list-a", "list-b"])
+        XCTAssertEqual(controller.state, .loadingPage, "B must not keep A's extracting/cards state")
+
+        loadGate.resume(true)
+        await waitUntil { extractGate.pendingCount == 1 }
+        extractGate.resume(itemsJSON(count: 5))
+        await waitForSettled(controller)
+
+        guard case .loaded(let items, _) = controller.state else {
+            return XCTFail("Expected list B to load, got \(controller.state)")
+        }
+        XCTAssertEqual(items.count, 5)
+        XCTAssertEqual(controller.currentGeneration, secondGeneration)
+        controller.apply(.items([summary(index: 9)]), generation: firstGeneration)
+        XCTAssertEqual(controller.state.retainedItems.count, 5, "An older generation must not replace B")
+    }
+
+    func testClearingConfigurationStopsRefreshing() async {
+        let loadGate = ContinuationGate<Bool>()
+        var activeProvider: String? = configuredURLString
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in await loadGate.wait() },
+            executor: { _ in "{\"outcome\":\"empty\",\"items\":[]}" },
+            provider: { activeProvider }
+        )
+
+        controller.refresh()
+        XCTAssertTrue(controller.isRefreshing)
+        await waitUntil { loadGate.pendingCount == 1 }
+
+        activeProvider = ""
+        controller.configurationChanged()
+        XCTAssertEqual(controller.state, .unconfigured)
+        XCTAssertFalse(controller.isRefreshing)
+        XCTAssertFalse(controller.needsExtraction)
+        XCTAssertFalse(controller.isSuspended)
+
+        loadGate.resume(true)
+        await Task.yield()
+        XCTAssertEqual(controller.state, .unconfigured)
+        XCTAssertFalse(controller.isRefreshing)
+    }
+
+    func testReopeningCompleteUnchangedPanelPreservesCards() async {
+        let loads = CounterBox()
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in
+                loads.increment()
+                return true
+            },
+            executor: { [weak self] _ in self?.itemsJSON(count: 2) }
+        )
+
+        controller.startIfNeeded()
+        await waitForSettled(controller)
+        let preserved = controller.state
+        XCTAssertEqual(loads.value, 1)
+
+        controller.cancelPendingWork()
+        XCTAssertFalse(controller.needsExtraction)
+        XCTAssertFalse(controller.isSuspended)
+        XCTAssertEqual(controller.state, preserved)
+
+        controller.startIfNeeded()
+        await Task.yield()
+        XCTAssertEqual(loads.value, 1, "A complete unchanged panel must not reload")
+        XCTAssertEqual(controller.state, preserved)
+        XCTAssertFalse(controller.isRefreshing)
+    }
+
+    func testLateExtractorResultAfterGenerationBumpIsIgnored() async {
+        let loadGate = ContinuationGate<Bool>()
+        let extractGate = ContinuationGate<String?>()
+        var activeProvider = "https://gitlab.example.test/list-a"
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in await loadGate.wait() },
+            executor: { _ in await extractGate.wait() },
+            provider: { activeProvider }
+        )
+
+        controller.startIfNeeded()
+        await waitUntil { loadGate.pendingCount == 1 }
+        loadGate.resume(true)
+        await waitUntil { extractGate.pendingCount == 1 }
+        let firstGeneration = controller.currentGeneration
+        XCTAssertEqual(controller.state, .extracting)
+
+        activeProvider = "https://gitlab.example.test/list-b"
+        controller.configurationChanged()
+        let secondGeneration = controller.currentGeneration
+        XCTAssertGreaterThan(secondGeneration, firstGeneration)
+        XCTAssertEqual(controller.state, .loadingPage, "Changing source must drop A's cards")
+
+        extractGate.resume(itemsJSON(count: 1))
+        await waitUntil { loadGate.pendingCount == 1 }
+        loadGate.resume(true)
+        await waitUntil { extractGate.pendingCount == 1 }
+
+        XCTAssertEqual(controller.state.retainedItems, [], "Generation \(firstGeneration) must not win after \(secondGeneration)")
+        extractGate.resume(itemsJSON(count: 4))
+        await waitForSettled(controller)
+
+        XCTAssertEqual(controller.state.retainedItems.count, 4)
+        XCTAssertEqual(controller.currentGeneration, secondGeneration)
+        controller.apply(.empty, generation: firstGeneration)
+        XCTAssertEqual(controller.state.retainedItems.count, 4)
+    }
+
+    // MARK: - startOrRefresh
+
+    func testStartOrRefreshDoesNotDoubleFirstLoad() async {
+        let loads = CounterBox()
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in
+                loads.increment()
+                return true
+            },
+            executor: { _ in "{\"outcome\":\"empty\",\"items\":[]}" }
+        )
+
+        controller.startOrRefresh()
+        await waitForSettled(controller)
+        XCTAssertEqual(loads.value, 1)
+        XCTAssertEqual(controller.state, .empty(refreshedAt: currentDate))
+    }
+
+    func testStartOrRefreshReloadsWhenAlreadyComplete() async {
+        let loads = CounterBox()
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in
+                loads.increment()
+                return true
+            },
+            executor: { _ in "{\"outcome\":\"empty\",\"items\":[]}" }
+        )
+
+        controller.startIfNeeded()
+        await waitForSettled(controller)
+        XCTAssertEqual(loads.value, 1)
+
+        controller.startOrRefresh()
+        await waitForSettled(controller)
+        XCTAssertEqual(loads.value, 2)
+    }
+
+    func testStartOrRefreshResumesSuspendedLoadOnce() async {
+        let loadGate = ContinuationGate<Bool>()
+        let loads = CounterBox()
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in
+                loads.increment()
+                return await loadGate.wait()
+            },
+            executor: { _ in "{\"outcome\":\"empty\",\"items\":[]}" }
+        )
+
+        controller.startIfNeeded()
+        await waitUntil { loadGate.pendingCount == 1 }
+        XCTAssertEqual(loads.value, 1)
+        controller.cancelPendingWork()
+        loadGate.resume(true)
+
+        controller.startOrRefresh()
+        await waitUntil { loadGate.pendingCount == 1 }
+        XCTAssertEqual(loads.value, 2, "Resume plus startOrRefresh must not stack a third load")
+        loadGate.resume(true)
+        await waitForSettled(controller)
+        XCTAssertEqual(loads.value, 2)
+        XCTAssertEqual(controller.state, .empty(refreshedAt: currentDate))
     }
 
     // MARK: - Redaction
@@ -442,4 +746,20 @@ private final class CounterBox {
     private(set) var value = 0
 
     func increment() { value += 1 }
+}
+
+@MainActor
+private final class ContinuationGate<Value> {
+    private var pending: [CheckedContinuation<Value, Never>] = []
+
+    var pendingCount: Int { pending.count }
+
+    func wait() async -> Value {
+        await withCheckedContinuation { pending.append($0) }
+    }
+
+    func resume(_ value: Value) {
+        guard !pending.isEmpty else { return }
+        pending.removeFirst().resume(returning: value)
+    }
 }
