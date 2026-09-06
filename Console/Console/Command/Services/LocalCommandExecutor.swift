@@ -27,6 +27,7 @@ final class LocalCommandExecutor: CommandRunning {
     private(set) var lastRunID: UUID?
     private(set) var completedRunCount = 0
     private var cancelled = false
+    private var activeExecutionTask: Task<CommandRun, Never>?
     private let actionExecutor: any CommandActionExecuting
     private let authorizer: any CommandAuthorizing
     private let validator: CommandValidator
@@ -52,6 +53,7 @@ final class LocalCommandExecutor: CommandRunning {
 
     func cancelExecution() {
         cancelled = true
+        activeExecutionTask?.cancel()
     }
 
     func execute(_ command: Command, skipAuthorization: Bool = false) async -> CommandRun {
@@ -60,7 +62,29 @@ final class LocalCommandExecutor: CommandRunning {
         }
 
         let runID = beginRun()
+        let task = Task { @MainActor in
+            await self.performExecute(command, runID: runID, skipAuthorization: skipAuthorization)
+        }
+        activeExecutionTask = task
+        if cancelled {
+            task.cancel()
+        }
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
 
+    private var shouldHalt: Bool {
+        cancelled || Task.isCancelled
+    }
+
+    private func performExecute(
+        _ command: Command,
+        runID: UUID,
+        skipAuthorization: Bool
+    ) async -> CommandRun {
         if command.isConsole,
            let payload = command.actions.first?.payload,
            let action = ConsoleAction(rawValue: payload) {
@@ -68,6 +92,10 @@ final class LocalCommandExecutor: CommandRunning {
             let run = CommandRun(id: runID, result: result)
             endRun(run, feedback: .silent)
             return run
+        }
+
+        if shouldHalt {
+            return finishCancelled(command, runID: runID, logs: [], startTime: Date())
         }
 
         if !skipAuthorization, needsAuthorization(command) {
@@ -84,6 +112,9 @@ final class LocalCommandExecutor: CommandRunning {
                 endRun(run, feedback: .denied)
                 return run
             }
+            if shouldHalt {
+                return finishCancelled(command, runID: runID, logs: [], startTime: Date())
+            }
         }
 
         let startTime = Date()
@@ -92,7 +123,7 @@ final class LocalCommandExecutor: CommandRunning {
         var overallSuccess = true
 
         for (index, action) in sortedActions.enumerated() {
-            if cancelled {
+            if shouldHalt {
                 overallSuccess = false
                 break
             }
@@ -111,6 +142,11 @@ final class LocalCommandExecutor: CommandRunning {
             )
             logs.append(entry)
 
+            if shouldHalt {
+                overallSuccess = false
+                break
+            }
+
             if !entry.isSuccess {
                 overallSuccess = false
                 if failureBehavior == .stopOnError {
@@ -118,32 +154,60 @@ final class LocalCommandExecutor: CommandRunning {
                 }
             }
 
-            // Run completion check if present and action succeeded
             if entry.isSuccess, let check = action.completionCheck {
                 let timeout = TimeInterval(action.timeoutMS) / 1000.0
                 let passed = await completionChecker.waitForCompletion(check, timeout: timeout)
+                if shouldHalt {
+                    overallSuccess = false
+                    break
+                }
                 if !passed {
                     overallSuccess = false
                     if failureBehavior == .stopOnError { break }
                 }
             }
 
-            // Post-action delay
             if entry.isSuccess, action.delayAfterMS > 0 {
-                try? await Task.sleep(nanoseconds: UInt64(action.delayAfterMS) * 1_000_000)
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(action.delayAfterMS) * 1_000_000)
+                } catch {
+                    overallSuccess = false
+                    break
+                }
+                if shouldHalt {
+                    overallSuccess = false
+                    break
+                }
             }
         }
 
-        let wasCancelled = cancelled
+        let wasCancelled = cancelled || Task.isCancelled
         let totalDuration = Int(Date().timeIntervalSince(startTime) * 1000)
         let executionResult = ExecutionResult(
             command: command,
             logs: logs,
-            overallSuccess: overallSuccess,
+            overallSuccess: overallSuccess && !wasCancelled,
             totalDurationMs: totalDuration
         )
         let run = CommandRun(id: runID, result: executionResult)
         endRun(run, feedback: wasCancelled ? .cancelled : .finished(success: overallSuccess, command: command, logs: logs))
+        return run
+    }
+
+    private func finishCancelled(
+        _ command: Command,
+        runID: UUID,
+        logs: [ExecutionLogEntry],
+        startTime: Date
+    ) -> CommandRun {
+        let executionResult = ExecutionResult(
+            command: command,
+            logs: logs,
+            overallSuccess: false,
+            totalDurationMs: Int(Date().timeIntervalSince(startTime) * 1000)
+        )
+        let run = CommandRun(id: runID, result: executionResult)
+        endRun(run, feedback: .cancelled)
         return run
     }
 
@@ -168,6 +232,7 @@ final class LocalCommandExecutor: CommandRunning {
         isExecuting = false
         cancelled = false
         activeRunID = nil
+        activeExecutionTask = nil
         completedRunCount += 1
 
         switch feedback {
@@ -253,7 +318,10 @@ final class LocalCommandExecutor: CommandRunning {
     // MARK: - Action Dispatch
 
     private func executeAction(_ action: CommandAction) async -> Result<String, Error> {
-        // Handle app-level intents that require UI context
+        if shouldHalt {
+            return .failure(ActionExecutionError.cancelled)
+        }
+
         if action.type == .appIntent, let result = await handleAppLevelIntent(action.payload) {
             return result
         }
@@ -261,6 +329,8 @@ final class LocalCommandExecutor: CommandRunning {
         do {
             let output = try await actionExecutor.execute(action)
             return .success(output)
+        } catch is CancellationError {
+            return .failure(ActionExecutionError.cancelled)
         } catch {
             return .failure(error)
         }

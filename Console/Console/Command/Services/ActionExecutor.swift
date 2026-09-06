@@ -9,6 +9,7 @@ enum ActionExecutionError: LocalizedError {
     case appleScriptError(String)
     case shellError(String)
     case timeout(String)
+    case cancelled
     case notImplemented(String)
 
     var errorDescription: String? {
@@ -18,6 +19,7 @@ enum ActionExecutionError: LocalizedError {
         case .appleScriptError(let msg): return "AppleScript error: \(msg)"
         case .shellError(let msg): return "Shell error: \(msg)"
         case .timeout(let msg): return "Timeout: \(msg)"
+        case .cancelled: return "Execution stopped"
         case .notImplemented(let msg): return "Not implemented: \(msg)"
         }
     }
@@ -43,19 +45,29 @@ final class ActionExecutor: CommandActionExecuting {
             throw ActionExecutionError.invalidPayload("Payload is empty")
         }
 
+        let runner = DeadlineBoundProcessRunner(
+            base: processRunner,
+            deadline: Self.deadline(for: action)
+        )
+
         switch action.type {
         case .appIntent:
-            return try await executeAppIntent(payload)
+            return try await executeAppIntent(payload, processRunner: runner)
         case .appleScript:
-            return try await executeAppleScript(payload)
+            return try await executeAppleScript(payload, processRunner: runner)
         case .shell:
-            return try await executeShell(payload)
+            return try await executeShell(payload, processRunner: runner, timeoutMS: action.timeoutMS)
         }
+    }
+
+    static func deadline(for action: CommandAction) -> Date? {
+        guard action.timeoutMS > 0 else { return nil }
+        return Date().addingTimeInterval(TimeInterval(action.timeoutMS) / 1000.0)
     }
 
     // MARK: - App Intent Execution
 
-    private func executeAppIntent(_ payload: String) async throws -> String {
+    private func executeAppIntent(_ payload: String, processRunner: any ProcessRunning) async throws -> String {
         let components = payload.split(separator: ":", maxSplits: 1).map(String.init)
         let intentName = components.first ?? payload
         let parameter = components.count > 1 ? components[1] : nil
@@ -112,13 +124,34 @@ final class ActionExecutor: CommandActionExecuting {
 
     // MARK: - AppleScript Execution
 
-    private func executeAppleScript(_ script: String) async throws -> String {
-        try await AppleScriptRunner.run(script: script, processRunner: processRunner)
+    private func executeAppleScript(_ script: String, processRunner: any ProcessRunning) async throws -> String {
+        do {
+            return try await AppleScriptRunner.run(script: script, processRunner: processRunner)
+        } catch is CancellationError {
+            throw ActionExecutionError.cancelled
+        } catch let error as ProcessRunError {
+            throw mapProcessError(error, timeoutMS: nil)
+        } catch let error as AppleScriptRunner.ScriptError {
+            switch error {
+            case .timeout:
+                throw ActionExecutionError.timeout(error.localizedDescription)
+            default:
+                throw ActionExecutionError.appleScriptError(error.localizedDescription)
+            }
+        } catch let error as ActionExecutionError {
+            throw error
+        } catch {
+            throw ActionExecutionError.appleScriptError(error.localizedDescription)
+        }
     }
 
     // MARK: - Shell Execution
 
-    private func executeShell(_ payload: String) async throws -> String {
+    private func executeShell(
+        _ payload: String,
+        processRunner: any ProcessRunning,
+        timeoutMS: Int
+    ) async throws -> String {
         let components = payload.components(separatedBy: " ")
         guard let command = components.first, !command.isEmpty else {
             throw ActionExecutionError.invalidPayload("Empty shell command")
@@ -132,8 +165,10 @@ final class ActionExecutor: CommandActionExecuting {
                 arguments: [command] + args,
                 workingDirectory: nil
             )
+        } catch is CancellationError {
+            throw ActionExecutionError.cancelled
         } catch let error as ProcessRunError {
-            throw ActionExecutionError.shellError(error.localizedDescription)
+            throw mapProcessError(error, timeoutMS: timeoutMS)
         } catch let error as ActionExecutionError {
             throw error
         } catch {
@@ -150,5 +185,48 @@ final class ActionExecutor: CommandActionExecuting {
             ? "Exit code \(result.exitCode)"
             : errorOutput
         throw ActionExecutionError.shellError(msg)
+    }
+
+    private func mapProcessError(_ error: ProcessRunError, timeoutMS: Int?) -> ActionExecutionError {
+        switch error {
+        case .timedOut:
+            if let timeoutMS, timeoutMS > 0 {
+                return .timeout("Action exceeded \(timeoutMS)ms")
+            }
+            return .timeout(error.localizedDescription)
+        case .cancelled:
+            return .cancelled
+        case .executableMissing, .launchFailed:
+            return .shellError(error.localizedDescription)
+        }
+    }
+}
+
+/// Applies an action deadline to every process launch for one execution.
+private struct DeadlineBoundProcessRunner: ProcessRunning {
+    let base: any ProcessRunning
+    let deadline: Date?
+
+    func run(
+        executablePath: String,
+        arguments: [String],
+        workingDirectory: String?,
+        deadline: Date?
+    ) async throws -> ProcessResult {
+        try await base.run(
+            executablePath: executablePath,
+            arguments: arguments,
+            workingDirectory: workingDirectory,
+            deadline: earlier(self.deadline, deadline)
+        )
+    }
+
+    private func earlier(_ first: Date?, _ second: Date?) -> Date? {
+        switch (first, second) {
+        case (let a?, let b?): return min(a, b)
+        case (let a?, nil): return a
+        case (nil, let b?): return b
+        case (nil, nil): return nil
+        }
     }
 }

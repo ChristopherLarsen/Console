@@ -22,7 +22,8 @@ final class SourceCheckoutServiceTests: XCTestCase {
 
         func run(executablePath: String,
                  arguments: [String],
-                 workingDirectory: String?) async throws -> ProcessResult {
+                 workingDirectory: String?,
+                 deadline: Date?) async throws -> ProcessResult {
             let invocation = Invocation(
                 executablePath: executablePath,
                 arguments: arguments,
@@ -30,6 +31,7 @@ final class SourceCheckoutServiceTests: XCTestCase {
             )
             invocations.append(invocation)
             sideEffect?(invocation)
+            _ = deadline
             return ProcessResult(
                 exitCode: exitCode,
                 standardOutput: "",
