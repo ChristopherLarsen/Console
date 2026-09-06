@@ -6,19 +6,15 @@ _Rewritten in full at the end of each session by agent-console._
 
 ## Next Intended Move
 
-- Parent should merge `review-01-next-recommendations-local` (item 01) from the isolated worktree. Do not push or delete that worktree. Item 03 (one Next model, split Refresh/Open) depends on this local selector.
+- Parent should merge `review-10-session-launch-errors` (item 10) from the isolated worktree. Do not push or delete that worktree. Item 16 (bridge assembly failure) depends on this error-presentation path.
 
 ## Working Findings
 
-- Item 01 done: Next recommendations are fully local. `NextContextBuilder.recommendedTask` is the selector (same priority as the old fallback). `NextTaskService` and `promptText` are gone. `NextButtonModel.check` / `checkIfNeeded` no longer take an AI provider; they refresh, snapshot, and pick locally. Views no longer show a needs-provider state.
-- Check API now has an injectable `refresh` + `snapshot` seam. Optional `llmClient` is accepted and discarded so a spy can prove zero outbound requests.
-- Card still shows a `fromAI` badge; the local path always sets `fromAI: false` ("local"). Item 03 can drop that associated value.
-- `NextTaskResponseParser` remains because `recommendedTask` still uses `maxLines` / `maxLineLength`. It has no production AI caller after this change.
-- Isolated worktree used for compile/test: `/Users/christopherlarsen/orca/workspaces/Console/review-01-keep-next-local` on branch `review-01-next-recommendations-local`. The Cursor workspace worktree was not isolated — other review items were mid-edit there and broke `ConsoleTests` compiles (`pendingStarterPrompt` / `launchArguments name`). Do not treat that workspace as the item 01 source of truth.
-- Tests (pass): `NextContextBuilderTests`, `NextButtonModelTests`. Debug `Console` build succeeded with `-derivedDataPath /tmp/console-review-01-derived`.
+- Item 10 done in `/Users/christopherlarsen/orca/workspaces/Console/review-10-session-launch-errors` on `review-10-session-launch-errors`. MainView shows `SessionLaunchErrorBanner` for contextual failures; the workspace chooser keeps the pending draft/folder until success or cancel; Start is disabled for unavailable and non-Git Review folders; associations and last-used are written only after `createSession` succeeds.
+- Intent picker still owns its own thrown-error UI (item 02 metadata rule unchanged; no source-derived prompts, no `--name`).
+- Tests (pass): `SessionLaunchCoordinatorTests`, `SessionWorkspaceChooserTests`. UI: `SessionsUITests/testSyntheticLaunchFailureShowsActionableError` (DEBUG `-uiTestSessionLaunchFailure`). Debug `Console` build succeeded with `-derivedDataPath /tmp/console-review-10-derived`.
+- UI test asserts the banner and Settings route on Home; it does not click through Open Settings (host overlay intercepted the tap). Coordinator tests cover `openSessionsSettings()`.
 
 ## Dead Ends
 
-- Running `ConsoleTests` in the shared Cursor worktree while other items are in-progress fails to compile unrelated session tests. Use a clean worktree from `d3f1b25` for item 01 verification.
-
----
+- Do not treat the shared Cursor `Console` worktree as source of truth while other review items are in progress.

@@ -13,11 +13,41 @@ struct SessionDraft {
 
 /// One launch awaiting its one-time workspace choice. Hosted as a sheet at
 /// MainView so Jira, GitLab, Home cards, and Sessions share one flow.
-struct PendingWorkspaceChoice: Identifiable {
-    let id = UUID()
+/// `selectedWorkspaceID` is kept across failed Start attempts and a Settings
+/// round-trip so retry does not lose the folder.
+struct PendingWorkspaceChoice: Identifiable, Equatable {
+    let id: UUID
     let purpose: SessionPurpose
     let name: String
     let source: SessionLaunchSource?
+    var selectedWorkspaceID: UUID?
+
+    init(
+        purpose: SessionPurpose,
+        name: String,
+        source: SessionLaunchSource?,
+        selectedWorkspaceID: UUID? = nil,
+        id: UUID = UUID()
+    ) {
+        self.id = id
+        self.purpose = purpose
+        self.name = name
+        self.source = source
+        self.selectedWorkspaceID = selectedWorkspaceID
+    }
+}
+
+/// Actionable failure from a contextual launch or chooser Start. Views
+/// present `message` and, when `offersSettingsRoute` is true, a control
+/// that opens Settings → Sessions / Claude Executable.
+struct SessionLaunchFailure: Equatable {
+    let message: String
+    let offersSettingsRoute: Bool
+
+    init(message: String, offersSettingsRoute: Bool) {
+        self.message = message
+        self.offersSettingsRoute = offersSettingsRoute
+    }
 }
 
 /// Central launch entry point for intent-aware session creation. Builds
@@ -41,21 +71,30 @@ struct PendingWorkspaceChoice: Identifiable {
 @MainActor
 @Observable
 final class SessionLaunchCoordinator {
-    enum LaunchError: LocalizedError {
+    enum LaunchError: LocalizedError, Equatable {
         case workspaceUnavailable
+        case workspaceNotAGitRepository
 
         var errorDescription: String? {
             switch self {
             case .workspaceUnavailable:
                 return "That workspace folder is no longer available. Choose another in Settings → Sessions."
+            case .workspaceNotAGitRepository:
+                return "Review sessions need a Git repository. Choose a folder that contains a Git checkout, or add one in Settings → Sessions."
             }
         }
     }
 
     private(set) var pendingChoice: PendingWorkspaceChoice?
-    /// Set when a contextual launch failed after a workspace was chosen;
-    /// surfaced by MainView and cleared on dismissal.
-    private(set) var lastFailureMessage: String?
+    /// True while the one-time chooser sheet should be visible. Cleared when
+    /// opening Settings so the sheet does not cover the destination; restored
+    /// when the user leaves Settings if the draft is still pending.
+    private(set) var presentsChoiceSheet = false
+    /// Contextual-launch / chooser-Start failure. MainView presents it when
+    /// the chooser is hidden; the chooser presents it while the sheet is up.
+    private(set) var lastFailure: SessionLaunchFailure?
+
+    var lastFailureMessage: String? { lastFailure?.message }
 
     @ObservationIgnored private let store: SessionStore
     @ObservationIgnored private let workspaceStore: SessionWorkspaceStore
@@ -127,8 +166,16 @@ final class SessionLaunchCoordinator {
 
     /// Resolves and launches a draft. Returns the new session ID, or nil when
     /// a one-time workspace choice is now pending at MainView.
+    ///
+    /// Does not record `lastFailure` — the intent picker surfaces thrown
+    /// errors itself. Contextual toolbar/card launches go through
+    /// `startContextualLaunch`.
     @discardableResult
     func launch(draft: SessionDraft) throws -> UUID? {
+        lastFailure = nil
+        pendingChoice = nil
+        presentsChoiceSheet = false
+
         // 1. Explicit override wins and skips association learning.
         if let overrideID = draft.workspaceID {
             return try performLaunch(draft: draft, workspaceID: overrideID, rememberingAssociation: false)
@@ -142,46 +189,112 @@ final class SessionLaunchCoordinator {
         pendingChoice = PendingWorkspaceChoice(
             purpose: draft.purpose,
             name: draft.name,
-            source: draft.source
+            source: draft.source,
+            selectedWorkspaceID: draft.workspaceID
         )
+        presentsChoiceSheet = true
         return nil
     }
 
     /// Confirms the one-time choice; the association is remembered so later
-    /// launches of the same source are one click.
+    /// launches of the same source are one click. The pending draft and
+    /// selected folder stay until this succeeds or the user cancels.
     @discardableResult
     func confirmWorkspaceChoice(workspaceID: UUID) throws -> UUID? {
-        guard let choice = pendingChoice else { return nil }
-        guard SessionWorkspaceStore.meetsRequirement(
-            for: workspaceStore.workspace(withID: workspaceID),
-            purpose: choice.purpose
-        ) else {
-            throw LaunchError.workspaceUnavailable
-        }
-        pendingChoice = nil
+        guard var choice = pendingChoice else { return nil }
+        choice.selectedWorkspaceID = workspaceID
+        pendingChoice = choice
+        lastFailure = nil
+
         let draft = SessionDraft(
             purpose: choice.purpose,
             source: choice.source,
             name: choice.name,
             workspaceID: workspaceID
         )
-        return try performLaunch(draft: draft, workspaceID: workspaceID, rememberingAssociation: true)
+        do {
+            return try performLaunch(draft: draft, workspaceID: workspaceID, rememberingAssociation: true)
+        } catch {
+            lastFailure = SessionLaunchFailure(error: error)
+            throw error
+        }
     }
 
     func cancelWorkspaceChoice() {
         pendingChoice = nil
+        presentsChoiceSheet = false
+        lastFailure = nil
     }
 
     func clearFailure() {
-        lastFailureMessage = nil
+        lastFailure = nil
+    }
+
+    /// Hides the chooser without dropping the draft, then opens Settings so
+    /// the user can fix the Claude executable or workspace folders.
+    func openSessionsSettings() {
+        presentsChoiceSheet = false
+        lastFailure = nil
+        ConsoleNavigation.showSettings()
+    }
+
+    /// Re-shows the chooser after a Settings visit if the user never cancelled.
+    func restoreChoiceSheetIfNeeded() {
+        guard pendingChoice != nil else { return }
+        presentsChoiceSheet = true
+    }
+
+    func updatePendingWorkspaceSelection(_ workspaceID: UUID?) {
+        guard var choice = pendingChoice else { return }
+        choice.selectedWorkspaceID = workspaceID
+        pendingChoice = choice
+    }
+
+    /// False when nothing is selected or the folder cannot host this purpose.
+    func canConfirmWorkspace(workspaceID: UUID?, purpose: SessionPurpose) -> Bool {
+        guard let workspaceID else { return false }
+        return workspaceBlockingReason(workspaceID: workspaceID, purpose: purpose) == nil
+    }
+
+    /// User-facing reason Start is disabled, or nil when the folder is valid.
+    func workspaceBlockingReason(workspaceID: UUID, purpose: SessionPurpose) -> String? {
+        guard let workspace = workspaceStore.workspace(withID: workspaceID) else {
+            return LaunchError.workspaceUnavailable.errorDescription
+        }
+        if !workspaceStore.isAvailable(workspace) {
+            return LaunchError.workspaceUnavailable.errorDescription
+        }
+        if purpose == .review, !SessionWorkspaceStore.isGitRepository(atPath: workspace.directoryPath) {
+            return LaunchError.workspaceNotAGitRepository.errorDescription
+        }
+        if !SessionWorkspaceStore.meetsRequirement(for: workspace, purpose: purpose) {
+            return LaunchError.workspaceUnavailable.errorDescription
+        }
+        return nil
     }
 
     private func startContextualLaunch(_ draft: SessionDraft) {
         do {
             _ = try launch(draft: draft)
         } catch {
-            lastFailureMessage = error.localizedDescription
+            lastFailure = SessionLaunchFailure(error: error)
         }
+    }
+
+    private func requireValidWorkspace(_ workspaceID: UUID, purpose: SessionPurpose) throws -> SessionWorkspace {
+        guard let workspace = workspaceStore.workspace(withID: workspaceID) else {
+            throw LaunchError.workspaceUnavailable
+        }
+        guard workspaceStore.isAvailable(workspace) else {
+            throw LaunchError.workspaceUnavailable
+        }
+        if purpose == .review, !SessionWorkspaceStore.isGitRepository(atPath: workspace.directoryPath) {
+            throw LaunchError.workspaceNotAGitRepository
+        }
+        guard SessionWorkspaceStore.meetsRequirement(for: workspace, purpose: purpose) else {
+            throw LaunchError.workspaceUnavailable
+        }
+        return workspace
     }
 
     private func performLaunch(
@@ -189,15 +302,7 @@ final class SessionLaunchCoordinator {
         workspaceID: UUID,
         rememberingAssociation: Bool
     ) throws -> UUID {
-        guard let workspace = workspaceStore.workspace(withID: workspaceID),
-              SessionWorkspaceStore.meetsRequirement(for: workspace, purpose: draft.purpose) else {
-            throw LaunchError.workspaceUnavailable
-        }
-
-        if rememberingAssociation, let identity = draft.source?.routingIdentity {
-            workspaceStore.rememberAssociation(routingIdentity: identity, workspaceID: workspaceID)
-        }
-        workspaceStore.noteUse(workspaceID: workspaceID, purpose: draft.purpose)
+        let workspace = try requireValidWorkspace(workspaceID, purpose: draft.purpose)
 
         let request = SessionCreationRequest(
             purpose: draft.purpose,
@@ -206,14 +311,18 @@ final class SessionLaunchCoordinator {
             source: draft.source
         )
 
-        do {
-            let sessionID = try store.createSession(request: request)
-            ConsoleNavigation.showSessions()
-            return sessionID
-        } catch {
-            lastFailureMessage = error.localizedDescription
-            throw error
+        let sessionID = try store.createSession(request: request)
+
+        if rememberingAssociation, let identity = draft.source?.routingIdentity {
+            workspaceStore.rememberAssociation(routingIdentity: identity, workspaceID: workspaceID)
         }
+        workspaceStore.noteUse(workspaceID: workspaceID, purpose: draft.purpose)
+
+        lastFailure = nil
+        pendingChoice = nil
+        presentsChoiceSheet = false
+        ConsoleNavigation.showSessions()
+        return sessionID
     }
 
     private func resolveWorkspace(purpose: SessionPurpose, source: SessionLaunchSource?) -> SessionWorkspace? {
@@ -260,5 +369,33 @@ final class SessionLaunchCoordinator {
         }
 
         return nil
+    }
+
+    #if DEBUG
+    /// UI-test seam: present a synthetic launch failure without touching
+    /// workspaces, Claude, or UserDefaults.
+    func debugPresentSyntheticFailure() {
+        lastFailure = SessionLaunchFailure(error: SessionCreationError.claudeNotFound)
+        presentsChoiceSheet = false
+    }
+    #endif
+}
+
+extension SessionLaunchFailure {
+    init(error: Error) {
+        if let launchError = error as? SessionLaunchCoordinator.LaunchError {
+            self.init(message: launchError.localizedDescription, offersSettingsRoute: true)
+            return
+        }
+        if let creation = error as? SessionCreationError {
+            switch creation {
+            case .claudeNotFound:
+                self.init(message: creation.localizedDescription, offersSettingsRoute: true)
+            case .pluginAssemblyFailed:
+                self.init(message: creation.localizedDescription, offersSettingsRoute: false)
+            }
+            return
+        }
+        self.init(message: error.localizedDescription, offersSettingsRoute: true)
     }
 }

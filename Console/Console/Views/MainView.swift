@@ -34,14 +34,23 @@ struct MainView: View {
         // Shared host for unresolved contextual launches: Jira, GitLab,
         // future Home cards, and the Sessions launcher all land here.
         .sheet(item: choiceSheetBinding) { choice in
-            WorkspaceChoiceSheet(
-                choice: choice,
-                onConfirm: { workspaceID in
-                    _ = try? launchCoordinator.confirmWorkspaceChoice(workspaceID: workspaceID)
-                },
-                onCancel: { launchCoordinator.cancelWorkspaceChoice() }
-            )
+            WorkspaceChoiceSheet(choice: choice)
             .frame(minWidth: 420, maxWidth: 420, minHeight: 300, maxHeight: 420)
+        }
+        .overlay(alignment: .top) {
+            if let failure = launchCoordinator.lastFailure, !launchCoordinator.presentsChoiceSheet {
+                SessionLaunchErrorBanner(
+                    failure: failure,
+                    onDismiss: { launchCoordinator.clearFailure() },
+                    onOpenSettings: { launchCoordinator.openSessionsSettings() }
+                )
+                .padding(.top, 8)
+            }
+        }
+        .onChange(of: sidebarSelection) { _, newValue in
+            if newValue != .settings {
+                launchCoordinator.restoreChoiceSheetIfNeeded()
+            }
         }
         .onAppear {
             // Conservative migration from the removed bottom-terminal era.
@@ -73,9 +82,9 @@ struct MainView: View {
 
     private var choiceSheetBinding: Binding<PendingWorkspaceChoice?> {
         Binding(
-            get: { launchCoordinator.pendingChoice },
+            get: { launchCoordinator.presentsChoiceSheet ? launchCoordinator.pendingChoice : nil },
             set: { newValue in
-                if newValue == nil {
+                if newValue == nil, launchCoordinator.presentsChoiceSheet {
                     launchCoordinator.cancelWorkspaceChoice()
                 }
             }
