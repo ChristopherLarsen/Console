@@ -151,6 +151,104 @@ final class ActionExecutorTests: XCTestCase {
         }
     }
 
+    func testQuotedPathAndSchemeArriveAsExactArguments() async throws {
+        let runner = CapturingProcessRunner()
+        let output = try await ActionExecutor(processRunner: runner).execute(
+            CommandAction(type: .shell, payload: #"xcodebuild -scheme "My App" -project "/tmp/My Project/App.xcodeproj""#, order: 0)
+        )
+
+        XCTAssertEqual(output, "ok")
+        XCTAssertEqual(runner.invocations.count, 1)
+        XCTAssertEqual(runner.invocations[0].executablePath, "/usr/bin/env")
+        XCTAssertEqual(
+            runner.invocations[0].arguments,
+            ["xcodebuild", "-scheme", "My App", "-project", "/tmp/My Project/App.xcodeproj"]
+        )
+        XCTAssertNil(runner.invocations[0].workingDirectory)
+    }
+
+    func testEmptyQuotedArgumentsArriveExactly() async throws {
+        let runner = CapturingProcessRunner()
+        _ = try await ActionExecutor(processRunner: runner).execute(
+            CommandAction(type: .shell, payload: #"echo '' "" keep"#, order: 0)
+        )
+
+        XCTAssertEqual(runner.invocations[0].arguments, ["echo", "", "", "keep"])
+    }
+
+    func testEscapedQuotesAndUnicodeArriveExactly() async throws {
+        let runner = CapturingProcessRunner()
+        _ = try await ActionExecutor(processRunner: runner).execute(
+            CommandAction(type: .shell, payload: #"echo "say \"hello\" こんにちは""#, order: 0)
+        )
+
+        XCTAssertEqual(runner.invocations[0].arguments, ["echo", #"say "hello" こんにちは"#])
+    }
+
+    func testChosenWorkingDirectoryIsPassedToRunner() async throws {
+        let runner = CapturingProcessRunner()
+        let payload = ShellPayload.structured(
+            executable: "/usr/bin/xcodebuild",
+            arguments: ["-scheme", "My App"],
+            workingDirectory: "/tmp/My Project"
+        )
+        _ = try await ActionExecutor(processRunner: runner).execute(
+            CommandAction(shell: payload, order: 0)
+        )
+
+        XCTAssertEqual(runner.invocations.count, 1)
+        XCTAssertEqual(runner.invocations[0].executablePath, "/usr/bin/xcodebuild")
+        XCTAssertEqual(runner.invocations[0].arguments, ["-scheme", "My App"])
+        XCTAssertEqual(runner.invocations[0].workingDirectory, "/tmp/My Project")
+    }
+
+    func testLegacySimpleCommandStillRunsThroughEnv() async throws {
+        let runner = CapturingProcessRunner()
+        _ = try await ActionExecutor(processRunner: runner).execute(
+            CommandAction(type: .shell, payload: "open -a Safari", order: 0)
+        )
+
+        XCTAssertEqual(runner.invocations[0].executablePath, "/usr/bin/env")
+        XCTAssertEqual(runner.invocations[0].arguments, ["open", "-a", "Safari"])
+        XCTAssertNil(runner.invocations[0].workingDirectory)
+    }
+
+    func testUnsupportedOperatorErrorsBeforeLaunch() async {
+        let runner = CapturingProcessRunner()
+        var caught: Error?
+        do {
+            _ = try await ActionExecutor(processRunner: runner).execute(
+                CommandAction(type: .shell, payload: "echo hello | cat", order: 0)
+            )
+        } catch {
+            caught = error
+        }
+
+        guard let executionError = caught as? ActionExecutionError,
+              case .invalidPayload(let message) = executionError else {
+            return XCTFail("Expected invalidPayload, got \(String(describing: caught))")
+        }
+        XCTAssertTrue(message.contains("Unsupported shell operator"), message)
+        XCTAssertTrue(message.contains("|"), message)
+        XCTAssertEqual(runner.invocations, [])
+    }
+
+    func testIOSJobStructuredArgvIsNotParsedAsShell() async throws {
+        let runner = CapturingProcessRunner()
+        let payload = ShellPayload.structured(
+            executable: "/usr/bin/xcodebuild",
+            arguments: ["-scheme", "My App", "a|b", "$HOME"],
+            workingDirectory: "/tmp/My Project"
+        )
+        _ = try await ActionExecutor(processRunner: runner).execute(
+            CommandAction(shell: payload, order: 0)
+        )
+
+        XCTAssertEqual(runner.invocations[0].executablePath, "/usr/bin/xcodebuild")
+        XCTAssertEqual(runner.invocations[0].arguments, ["-scheme", "My App", "a|b", "$HOME"])
+        XCTAssertEqual(runner.invocations[0].workingDirectory, "/tmp/My Project")
+    }
+
     func testShortTimeoutTerminatesAndReportsTimeout() async throws {
         let script = try makeExecutableScript("""
         #!/bin/sh
@@ -285,5 +383,33 @@ final class ActionExecutorTests: XCTestCase {
             group.cancelAll()
             return value
         }
+    }
+}
+
+private final class CapturingProcessRunner: ProcessRunning, @unchecked Sendable {
+    struct Invocation: Equatable {
+        let executablePath: String
+        let arguments: [String]
+        let workingDirectory: String?
+    }
+
+    private(set) var invocations: [Invocation] = []
+    var result = ProcessResult(exitCode: 0, standardOutput: "ok", standardError: "")
+
+    func run(
+        executablePath: String,
+        arguments: [String],
+        workingDirectory: String?,
+        deadline: Date?
+    ) async throws -> ProcessResult {
+        invocations.append(
+            Invocation(
+                executablePath: executablePath,
+                arguments: arguments,
+                workingDirectory: workingDirectory
+            )
+        )
+        _ = deadline
+        return result
     }
 }

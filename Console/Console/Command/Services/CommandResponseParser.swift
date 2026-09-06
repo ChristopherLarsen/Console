@@ -48,7 +48,8 @@ enum CommandResponseParser {
             for (index, raw) in rawActions.enumerated() {
                 guard let typeRaw = raw["type"] as? String,
                       let type = CommandActionType(rawValue: typeRaw),
-                      let payload = raw["payload"] as? String else {
+                      let payloadValue = raw["payload"],
+                      let payload = Self.payloadString(type: type, from: payloadValue) else {
                     continue
                 }
                 let order = raw["order"] as? Int ?? index
@@ -179,10 +180,18 @@ enum CommandResponseParser {
                 ?? raw["fallbackAction"] as? [String: Any],
               let typeRaw = fallback["type"] as? String,
               let type = CommandActionType(rawValue: typeRaw),
-              let payload = fallback["payload"] as? String else {
+              let payloadValue = fallback["payload"],
+              let payload = Self.payloadString(type: type, from: payloadValue) else {
             return nil
         }
         return FallbackAction(type: type, payload: payload)
+    }
+
+    private static func payloadString(type: CommandActionType, from raw: Any) -> String? {
+        if type == .shell {
+            return CommandAction.decodePayload(from: raw)
+        }
+        return raw as? String
     }
 
     private static func resolveExecutionMode(

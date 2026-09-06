@@ -57,7 +57,8 @@ enum CommandImporter {
                 for (index, raw) in rawActions.enumerated() {
                     guard let typeRaw = raw["type"] as? String,
                           let type = CommandActionType(rawValue: typeRaw),
-                          let payload = raw["payload"] as? String else { continue }
+                          let payloadValue = raw["payload"],
+                          let payload = payloadString(type: type, from: payloadValue) else { continue }
                     let order = raw["order"] as? Int ?? index
                     actions.append(CommandAction(type: type, payload: payload, order: order))
                 }
@@ -109,7 +110,8 @@ enum CommandImporter {
             for (index, raw) in rawActions.enumerated() {
                 guard let typeRaw = raw["type"] as? String,
                       let type = CommandActionType(rawValue: typeRaw),
-                      let payload = raw["payload"] as? String else {
+                      let payloadValue = raw["payload"],
+                      let payload = payloadString(type: type, from: payloadValue) else {
                     continue
                 }
                 let order = raw["order"] as? Int ?? index
@@ -131,5 +133,12 @@ enum CommandImporter {
         try modelContext.save()
         NotificationCenter.default.post(name: .commandVocabularyDidChange, object: nil)
         return command
+    }
+
+    private static func payloadString(type: CommandActionType, from raw: Any) -> String? {
+        if type == .shell {
+            return CommandAction.decodePayload(from: raw)
+        }
+        return raw as? String
     }
 }
