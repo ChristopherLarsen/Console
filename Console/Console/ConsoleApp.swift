@@ -61,6 +61,7 @@ struct ConsoleApp: App {
     @State private var wakeWordManager: WakeWordManager?
     @State private var updateManager: UpdateManager
     @State private var sessionStore: SessionStore
+    @State private var nextButtonModel: NextButtonModel
     @State private var workspaceStore: SessionWorkspaceStore
     @State private var launchCoordinator: SessionLaunchCoordinator
     private var syntheticTranscriptSource: SyntheticTranscriptSource?
@@ -190,6 +191,8 @@ struct ConsoleApp: App {
 
         let sessionStore = SessionStore()
         _sessionStore = State(initialValue: sessionStore)
+        let nextButtonModel = NextButtonModel()
+        _nextButtonModel = State(initialValue: nextButtonModel)
         let coordinator = SessionLaunchCoordinator(store: sessionStore, workspaceStore: workspaceStore)
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-uiTestSessionLaunchFailure") {
@@ -202,6 +205,7 @@ struct ConsoleApp: App {
             MenuBarManager.shared.installStatusItem()
 
             let activeSessionStore = sessionStore
+            let activeNextModel = nextButtonModel
             // Cancel any in-flight update check or clone when the app terminates.
             NotificationCenter.default.addObserver(
                 forName: NSApplication.willTerminateNotification,
@@ -210,6 +214,7 @@ struct ConsoleApp: App {
             ) { [weak updates] _ in
                 MainActor.assumeIsolated {
                     updates?.cancelAll()
+                    activeNextModel.cancel()
                     // Real termination stops all session processes; hiding the
                     // window never reaches this path.
                     activeSessionStore.terminateAll()
@@ -225,6 +230,12 @@ struct ConsoleApp: App {
         }
         if ProcessInfo.processInfo.arguments.contains("-uiTestSelectGitLab") {
             UserDefaults.standard.set(SidebarSelection.mergeRequests.rawValue, forKey: ConsoleNavigation.sidebarKey)
+        }
+        if ProcessInfo.processInfo.arguments.contains("-uiTestSelectNext") {
+            UserDefaults.standard.set(SidebarSelection.next.rawValue, forKey: ConsoleNavigation.sidebarKey)
+        }
+        if ProcessInfo.processInfo.arguments.contains("-uiTestNextSyntheticSources") {
+            nextButtonModel.installSyntheticUITestSources()
         }
         if ProcessInfo.processInfo.arguments.contains("-uiTestSessionsPreview") {
             sessionStore.injectUITestPreviewSessions()
@@ -320,6 +331,7 @@ struct ConsoleApp: App {
             .environment(menuBarViewModel)
             .environment(updateManager)
             .environment(sessionStore)
+            .environment(nextButtonModel)
             .environment(workspaceStore)
             .environment(launchCoordinator)
             #if DEBUG
@@ -383,6 +395,18 @@ struct ConsoleApp: App {
                     }
                     .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .command)
                 }
+                #if DEBUG
+                Divider()
+                Button("Refresh Next Task") {
+                    nextButtonModel.check(
+                        sessionStore: sessionStore,
+                        jiraController: JiraWebSession.shared.panelController
+                    )
+                }
+                Button("Open Next Task") {
+                    _ = nextButtonModel.performOpen(sessionStore: sessionStore)
+                }
+                #endif
             }
         }
 

@@ -2,19 +2,19 @@
 
 # Session Memory
 
-_Rewritten in full at the end of each session by agent-console._
+_Rewritten 2026-09-06 during review-item implementation._
 
 ## Next Intended Move
 
-- Parent should merge `review-10-session-launch-errors` (item 10) from the isolated worktree. Do not push or delete that worktree. Item 16 (bridge assembly failure) depends on this error-presentation path.
+Continue `docs/reviews/2026-09-06-ios-workflow-review.md`. On `main` after merging 03: 01–05, 10, 12, 03. In flight: 08 (single execution owner), 16 (bridge failure). Next slice: 13 (Brief edits) — not 06 until 08 merges; not 09/07 while 08 is in Command files. Max three isolated worktrees.
 
 ## Working Findings
 
-- Item 10 done in `/Users/christopherlarsen/orca/workspaces/Console/review-10-session-launch-errors` on `review-10-session-launch-errors`. MainView shows `SessionLaunchErrorBanner` for contextual failures; the workspace chooser keeps the pending draft/folder until success or cancel; Start is disabled for unavailable and non-Git Review folders; associations and last-used are written only after `createSession` succeeds.
-- Intent picker still owns its own thrown-error UI (item 02 metadata rule unchanged; no source-derived prompts, no `--name`).
-- Tests (pass): `SessionLaunchCoordinatorTests`, `SessionWorkspaceChooserTests`. UI: `SessionsUITests/testSyntheticLaunchFailureShowsActionableError` (DEBUG `-uiTestSessionLaunchFailure`). Debug `Console` build succeeded with `-derivedDataPath /tmp/console-review-10-derived`.
-- UI test asserts the banner and Settings route on Home; it does not click through Open Settings (host overlay intercepted the tap). Coordinator tests cover `openSessionsSettings()`.
+- 01 local Next; 02 ticket/MR out of Claude; 03 one app-scoped Next model + sibling Refresh/Open; 04 confirmation; 05 pipe drain; 10 launch errors; 12 MR extraction resume.
+- Merging 03 into main required combining ConsoleApp init: keep NextButtonModel ownership AND `-uiTestSessionLaunchFailure`.
+- Item 02 branch remains in the shared Cursor tree. Do not `worktree remove` that path.
+- Uncommitted on `main`: `docs/reviews/` and 800×500 overview fact. Do not commit unless asked.
 
 ## Dead Ends
 
-- Do not treat the shared Cursor `Console` worktree as source of truth while other review items are in progress.
+- Shared Cursor worktree contaminates parallel items. Always `git worktree add` from current `main` at `/Users/christopherlarsen/Workspace/Console`.
