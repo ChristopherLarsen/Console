@@ -58,7 +58,7 @@ struct BriefView: View {
                         }
                     }
                     .disabled(viewModel.isLoading)
-                    .help("Rebuild from yesterday's commits")
+                    .help("Rebuild from yesterday's commits. Cancels an in-flight AI polish.")
 
                     Button {
                         viewModel.refineWithAI(
@@ -74,7 +74,7 @@ struct BriefView: View {
                     }
                     .disabled(viewModel.isRefining || !viewModel.canRefineWithAI)
                     .help(viewModel.canRefineWithAI
-                          ? "Polish wording with AI"
+                          ? "Polish wording with AI. Cancels an in-flight rebuild."
                           : "Configure an AI provider first")
                 }
             }
