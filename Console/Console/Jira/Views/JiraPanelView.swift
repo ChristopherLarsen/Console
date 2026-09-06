@@ -211,11 +211,13 @@ struct JiraPanelView: View {
                                 controller.open(ticket)
                             },
                             onStartSession: {
-                                launchCoordinator.beginJiraTicketLaunch(
-                                    key: ticket.key,
-                                    title: ticket.summary.isEmpty ? nil : ticket.summary,
-                                    url: ticket.issueURL
-                                )
+                                Task {
+                                    await launchCoordinator.beginJiraTicketLaunch(
+                                        key: ticket.key,
+                                        title: ticket.summary.isEmpty ? nil : ticket.summary,
+                                        url: ticket.issueURL
+                                    )
+                                }
                             }
                         )
                     }

@@ -105,14 +105,14 @@ final class SessionWorkspaceChooserTests: XCTestCase {
         )
     }
 
-    private func presentChooser(_ stack: Stack, draft: SessionDraft) throws -> PendingWorkspaceChoice {
+    private func presentChooser(_ stack: Stack, draft: SessionDraft) async throws -> PendingWorkspaceChoice {
         stack.workspaces.setDefault(id: nil)
-        let result = try stack.coordinator.launch(draft: draft)
+        let result = try await stack.coordinator.launch(draft: draft)
         XCTAssertNil(result)
         return try XCTUnwrap(stack.coordinator.pendingChoice)
     }
 
-    func testStartDisabledForNoSelectionAndNonGitReviewFolder() throws {
+    func testStartDisabledForNoSelectionAndNonGitReviewFolder() async throws {
         let stack = makeStack()
         let plain = addWorkspace(stack, named: "PlainOnly")
         let repo = addWorkspace(stack, named: "Repo", gitRemote: "https://gitlab.com/grp/proj.git")
@@ -126,7 +126,7 @@ final class SessionWorkspaceChooserTests: XCTestCase {
                 url: URL(string: "https://gitlab.com/other/project/-/merge_requests/42")!
             )
         )
-        let choice = try presentChooser(stack, draft: reviewDraft)
+        let choice = try await presentChooser(stack, draft: reviewDraft)
         XCTAssertEqual(choice.purpose, .review)
         XCTAssertTrue(stack.coordinator.presentsChoiceSheet)
 
@@ -140,10 +140,10 @@ final class SessionWorkspaceChooserTests: XCTestCase {
         XCTAssertNil(stack.coordinator.workspaceBlockingReason(workspaceID: repo.id, purpose: .review))
     }
 
-    func testDisappearingFolderDisablesStartAndKeepsDraft() throws {
+    func testDisappearingFolderDisablesStartAndKeepsDraft() async throws {
         let stack = makeStack()
         let folder = addWorkspace(stack, named: "SoonGone")
-        let choice = try presentChooser(stack, draft: jiraDraft(stack))
+        let choice = try await presentChooser(stack, draft: jiraDraft(stack))
         XCTAssertEqual(choice.name, "ENG-123")
         XCTAssertTrue(stack.coordinator.canConfirmWorkspace(workspaceID: folder.id, purpose: .existingTicket))
 
@@ -167,7 +167,7 @@ final class SessionWorkspaceChooserTests: XCTestCase {
         XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "ENG"))
     }
 
-    func testNonGitReviewConfirmKeepsDraftAndDoesNotLearn() throws {
+    func testNonGitReviewConfirmKeepsDraftAndDoesNotLearn() async throws {
         let stack = makeStack()
         let plain = addWorkspace(stack, named: "PlainOnly")
         let reviewDraft = stack.coordinator.draft(
@@ -178,7 +178,7 @@ final class SessionWorkspaceChooserTests: XCTestCase {
                 url: URL(string: "https://gitlab.com/grp/proj/-/merge_requests/42")!
             )
         )
-        _ = try presentChooser(stack, draft: reviewDraft)
+        _ = try await presentChooser(stack, draft: reviewDraft)
 
         XCTAssertThrowsError(try stack.coordinator.confirmWorkspaceChoice(workspaceID: plain.id)) { error in
             XCTAssertEqual(error as? SessionLaunchCoordinator.LaunchError, .workspaceNotAGitRepository)
@@ -192,10 +192,10 @@ final class SessionWorkspaceChooserTests: XCTestCase {
         XCTAssertEqual(stack.launcher.launchCount, 0)
     }
 
-    func testInjectedLauncherFailureOnConfirmRetainsDraftUntilCancel() throws {
+    func testInjectedLauncherFailureOnConfirmRetainsDraftUntilCancel() async throws {
         let stack = makeStack()
         let home = addWorkspace(stack, named: "Home")
-        let choice = try presentChooser(stack, draft: jiraDraft(stack))
+        let choice = try await presentChooser(stack, draft: jiraDraft(stack))
         XCTAssertEqual(choice.name, "ENG-123")
         stack.launcher.errorToThrow = SyntheticLaunchError()
         let sidebarBefore = UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey)
@@ -218,10 +218,10 @@ final class SessionWorkspaceChooserTests: XCTestCase {
         XCTAssertFalse(stack.coordinator.presentsChoiceSheet)
     }
 
-    func testRetryAfterChooserLauncherFailureSucceedsAndLearns() throws {
+    func testRetryAfterChooserLauncherFailureSucceedsAndLearns() async throws {
         let stack = makeStack()
         let home = addWorkspace(stack, named: "Home")
-        _ = try presentChooser(stack, draft: jiraDraft(stack))
+        _ = try await presentChooser(stack, draft: jiraDraft(stack))
         stack.launcher.errorToThrow = SyntheticLaunchError()
 
         XCTAssertThrowsError(try stack.coordinator.confirmWorkspaceChoice(workspaceID: home.id))
@@ -238,7 +238,7 @@ final class SessionWorkspaceChooserTests: XCTestCase {
         XCTAssertEqual(stack.workspaces.lastUsedWorkspaceID(for: .existingTicket), home.id)
     }
 
-    func testMissingClaudeOnConfirmKeepsDraftAndOffersSettings() throws {
+    func testMissingClaudeOnConfirmKeepsDraftAndOffersSettings() async throws {
         locatorDefaults.removeObject(forKey: ClaudeExecutableLocator.settingsKey)
         let notFound = ClaudeExecutableLocator(
             shellRunner: { _ in nil },
@@ -247,7 +247,7 @@ final class SessionWorkspaceChooserTests: XCTestCase {
         )
         let stack = makeStack(locator: notFound)
         let home = addWorkspace(stack, named: "Home")
-        _ = try presentChooser(stack, draft: jiraDraft(stack))
+        _ = try await presentChooser(stack, draft: jiraDraft(stack))
 
         XCTAssertThrowsError(try stack.coordinator.confirmWorkspaceChoice(workspaceID: home.id)) { error in
             XCTAssertEqual(error as? SessionCreationError, .claudeNotFound)
@@ -259,10 +259,10 @@ final class SessionWorkspaceChooserTests: XCTestCase {
         XCTAssertEqual(stack.launcher.launchCount, 0)
     }
 
-    func testOpenSessionsSettingsHidesChooserWithoutDroppingDraft() throws {
+    func testOpenSessionsSettingsHidesChooserWithoutDroppingDraft() async throws {
         let stack = makeStack()
         addWorkspace(stack, named: "Home")
-        _ = try presentChooser(stack, draft: jiraDraft(stack))
+        _ = try await presentChooser(stack, draft: jiraDraft(stack))
         let workspaceID = stack.workspaces.workspaces[0].id
         stack.coordinator.updatePendingWorkspaceSelection(workspaceID)
 
