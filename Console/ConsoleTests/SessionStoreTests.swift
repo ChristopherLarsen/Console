@@ -22,6 +22,7 @@ final class SessionStoreTests: XCTestCase {
         var lastExecutable: String?
         var lastArguments: [String]?
         var lastEnvironment: [String: String]?
+        var errorToThrow: Error?
 
         func makeTerminalView() -> LocalProcessTerminalView {
             let view = ConsoleTerminalView()
@@ -40,14 +41,37 @@ final class SessionStoreTests: XCTestCase {
             lastExecutable = executable
             lastArguments = arguments
             lastEnvironment = environment
+            if let errorToThrow {
+                throw errorToThrow
+            }
         }
     }
 
-    private func makeStore() -> (SessionStore, FakeLauncher) {
+    private final class FakeAssembler: ConsoleClaudePluginAssembling {
+        var errorToThrow: Error? = ConsoleClaudePluginAssembler.AssemblyError.missingResource("synthetic-plugin")
+        var materializeCount = 0
+
+        func materialize(in baseDirectory: URL) throws -> URL {
+            materializeCount += 1
+            if let errorToThrow {
+                throw errorToThrow
+            }
+            return try ConsoleClaudePluginAssembler().materialize(in: baseDirectory)
+        }
+    }
+
+    private struct SyntheticLaunchError: LocalizedError {
+        var errorDescription: String? { "Synthetic launcher failed." }
+    }
+
+    private func makeStore(
+        assembler: (any ConsoleClaudePluginAssembling)? = nil
+    ) -> (SessionStore, FakeLauncher) {
         let launcher = FakeLauncher()
         let store = SessionStore(
             launcher: launcher,
-            locator: ClaudeExecutableLocator(defaults: defaults)
+            locator: ClaudeExecutableLocator(defaults: defaults),
+            pluginAssembler: assembler ?? ConsoleClaudePluginAssembler()
         )
         return (store, launcher)
     }
@@ -262,5 +286,137 @@ final class SessionStoreTests: XCTestCase {
         }
         XCTAssertFalse(argv.contains("--name"))
         XCTAssertTrue(store.debugTerminalSendBytes.isEmpty)
+    }
+
+    // MARK: - Optional instrumentation vs process creation
+
+    func testPluginAssemblyFailureLaunchesUninstrumentedSession() throws {
+        let assembler = FakeAssembler()
+        let (store, launcher) = makeStore(assembler: assembler)
+        let dir = tmpDirectory("Degraded")
+
+        let id = try store.createSession(name: "Degraded", workingDirectory: dir)
+
+        XCTAssertEqual(assembler.materializeCount, 1)
+        XCTAssertEqual(store.sessions.count, 1)
+        XCTAssertEqual(store.selectedSessionID, id)
+        XCTAssertEqual(launcher.launchCount, 1)
+        XCTAssertEqual(launcher.lastExecutable, "/bin/echo")
+
+        let session = try XCTUnwrap(store.session(withID: id))
+        XCTAssertEqual(session.activity, .starting)
+        XCTAssertEqual(session.bridgeStatus, .unavailable)
+        XCTAssertNotEqual(session.bridgeStatus, .active)
+        XCTAssertEqual(
+            session.instrumentationWarning,
+            SessionCreationError.pluginAssemblyFailed.errorDescription
+        )
+        XCTAssertNil(store.debugSessionToken(id), "uninstrumented launches must not keep a bridge token")
+
+        let args = launcher.lastArguments ?? []
+        XCTAssertTrue(args.contains("--session-id"))
+        XCTAssertFalse(args.contains("--plugin-dir"))
+        XCTAssertFalse(args.contains("--allowedTools"))
+        XCTAssertFalse(args.contains("--name"))
+        XCTAssertFalse(args.contains("Degraded"))
+        XCTAssertFalse(
+            args.contains { $0.hasPrefix("mcp__plugin_console-bridge_console__") },
+            "unusable MCP preapprovals must not be passed without a plugin"
+        )
+
+        let env = launcher.lastEnvironment ?? [:]
+        XCTAssertNil(env["CONSOLE_TERM_BRIDGE_HELPER"])
+        XCTAssertNil(env["CONSOLE_TERM_BRIDGE_SOCKET"])
+        XCTAssertNil(env["CONSOLE_TERM_BRIDGE_SESSION_ID"])
+        XCTAssertNil(env["CONSOLE_TERM_BRIDGE_TOKEN"])
+        XCTAssertTrue(store.debugTerminalSendBytes.isEmpty)
+        XCTAssertEqual(
+            store.submit(prompt: "hello", to: id),
+            .rejected(.sessionNotAcceptingInput),
+            "never auto-submit into an unready terminal"
+        )
+    }
+
+    func testPluginAssemblyFailureKeepsSourceMetadataOutOfChildProcess() throws {
+        let (store, launcher) = makeStore(assembler: FakeAssembler())
+        let sentinelKey = "SYN-99999"
+        let sentinelTitle = "SENTINEL-TITLE-ZXCVBNM"
+        let sentinelURL = URL(string: "https://sentinel.example.test/browse/SYN-99999")!
+        let id = try store.createSession(request: SessionCreationRequest(
+            purpose: .existingTicket,
+            name: sentinelKey,
+            workingDirectory: tmpDirectory("Repo"),
+            source: .jira(key: sentinelKey, title: sentinelTitle, url: sentinelURL)
+        ))
+
+        let session = try XCTUnwrap(store.session(withID: id))
+        XCTAssertEqual(session.name, sentinelKey)
+        XCTAssertEqual(session.bridgeStatus, .unavailable)
+
+        let argv = (launcher.lastArguments ?? []).joined(separator: " ")
+        let env = (launcher.lastEnvironment ?? [:]).map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
+        let sends = store.debugTerminalSendBytes.map(\.utf8).joined(separator: "\n")
+        for token in [sentinelKey, sentinelTitle, sentinelURL.absoluteString, "sentinel.example.test"] {
+            XCTAssertFalse(argv.contains(token), "fallback argv leaked \(token)")
+            XCTAssertFalse(env.contains(token), "fallback environment leaked \(token)")
+            XCTAssertFalse(sends.contains(token), "fallback terminal-send leaked \(token)")
+        }
+        XCTAssertFalse(argv.contains("--name"))
+        XCTAssertFalse(argv.contains("--plugin-dir"))
+        XCTAssertTrue(store.debugTerminalSendBytes.isEmpty)
+    }
+
+    func testGenuineLaunchFailureRollsBackRowTokenAndSelection() throws {
+        let (store, launcher) = makeStore()
+        let first = try store.createSession(name: "Keep", workingDirectory: tmpDirectory("Keep"))
+        XCTAssertEqual(store.selectedSessionID, first)
+        let firstToken = store.debugSessionToken(first)
+
+        launcher.errorToThrow = SyntheticLaunchError()
+        XCTAssertThrowsError(
+            try store.createSession(name: "Ghost", workingDirectory: tmpDirectory("Ghost"))
+        ) { error in
+            XCTAssertEqual((error as? LocalizedError)?.errorDescription, "Synthetic launcher failed.")
+        }
+
+        XCTAssertEqual(store.sessions.count, 1)
+        XCTAssertEqual(store.selectedSessionID, first)
+        XCTAssertEqual(store.session(withID: first)?.name, "Keep")
+        XCTAssertEqual(store.debugSessionToken(first), firstToken)
+        XCTAssertNil(store.sessions.first { $0.name == "Ghost" })
+        XCTAssertNotEqual(store.session(withID: first)?.bridgeStatus, .active)
+    }
+
+    func testRepeatedRetryAfterLaunchFailureCreatesAtMostOneNewSession() throws {
+        let (store, launcher) = makeStore()
+        _ = try store.createSession(name: "Existing", workingDirectory: tmpDirectory("Existing"))
+        launcher.errorToThrow = SyntheticLaunchError()
+
+        XCTAssertThrowsError(try store.createSession(name: "Retry", workingDirectory: tmpDirectory("R1")))
+        XCTAssertThrowsError(try store.createSession(name: "Retry", workingDirectory: tmpDirectory("R2")))
+        XCTAssertEqual(store.sessions.count, 1, "failed retries must not leave ghost rows")
+
+        launcher.errorToThrow = nil
+        let created = try store.createSession(name: "Retry", workingDirectory: tmpDirectory("R3"))
+
+        XCTAssertEqual(store.sessions.count, 2)
+        XCTAssertEqual(store.selectedSessionID, created)
+        XCTAssertEqual(store.session(withID: created)?.name, "Retry")
+    }
+
+    func testUninstrumentedSessionDoesNotBecomeActiveWithoutValidatedEvent() throws {
+        let (store, _) = makeStore(assembler: FakeAssembler())
+        let id = try store.createSession(name: "Quiet", workingDirectory: tmpDirectory("Quiet"))
+
+        store.debugReceiveEnvelope(BridgeEnvelope(
+            sessionID: id.uuidString,
+            token: "not-a-real-token",
+            eventID: "evt-uninstrumented",
+            kind: .lifecycle,
+            lifecycleEvent: .sessionStarted
+        ))
+
+        XCTAssertEqual(store.session(withID: id)?.bridgeStatus, .unavailable)
+        XCTAssertEqual(store.session(withID: id)?.activity, .starting)
     }
 }

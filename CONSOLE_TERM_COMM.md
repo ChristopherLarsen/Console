@@ -48,11 +48,16 @@ Official references:
 - Claude is launched as the PTY child directly (the resolved `claude`
   executable). A shell is never started and `claude` never typed into it.
 - Each creation generates two UUIDs: a Console session UUID and a Claude
-  session UUID. Launch arguments include `--session-id <claudeUUID>`,
-  `--plugin-dir <bundled plugin>`, and preapproval of only the three
-  qualified Console MCP tool names via `--allowedTools`. The local Console
-  display name (issue key, MR number, or user override) is not passed as
-  `--name` and must not appear in argv or environment.
+  session UUID. Launch arguments always include `--session-id <claudeUUID>`.
+  When plugin assembly succeeds they also include `--plugin-dir <bundled plugin>`
+  and preapproval of only the three qualified Console MCP tool names via
+  `--allowedTools`. If the plugin or bridge cannot be prepared, Console still
+  launches the resolved Claude executable without those plugin/bridge arguments,
+  marks `bridgeStatus` unavailable, and shows a small status warning. The local
+  Console display name (issue key, MR number, or user override) is not passed as
+  `--name` and must not appear in argv or environment, including the uninstrumented
+  fallback. A session is claimed only after the launcher accepts the launch;
+  a genuine launch failure rolls back the row, token, and previous selection.
 - Switching sessions preserves every terminal process, view, and scrollback
   buffer: each session keeps one persistent `LocalProcessTerminalView`
   instance for its lifetime.
@@ -81,6 +86,7 @@ struct ConsoleSession {
     var summary: String?
     var artifacts: [SessionArtifact]
     var bridgeStatus: BridgeStatus
+    var instrumentationWarning: String? // set when launched without a usable plugin
 }
 
 enum SessionActivity { case starting, idle, working, exited, error, unknown }
@@ -251,7 +257,8 @@ temporary directory (directory and socket mode `0700`).
 - No HTTP server, localhost TCP listener, or external network traffic.
 - Peer credentials are verified with `getpeereid(2)`; connections from other
   users are dropped.
-- One random token is generated per Console session.
+- One random token is generated per instrumented session. Uninstrumented
+  fallback launches do not allocate a token or pass bridge environment.
 - Every envelope carries protocol version, session UUID, token, message kind,
   payload, and an event id for idempotency.
 - Newline-delimited Codable JSON; maximum envelope size 8 KiB including the
@@ -263,8 +270,9 @@ temporary directory (directory and socket mode `0700`).
 - Nothing about message content is ever logged: no bodies, tokens, paths,
   summaries, artifact identifiers, hook payloads, or terminal content.
 - If the socket, plugin, hooks, or MCP server are unavailable, the affected
-  session's `bridgeStatus` becomes Unknown and Claude plus the terminal remain
-  fully usable.
+  session's `bridgeStatus` becomes Unavailable. Claude plus the terminal remain
+  fully usable. No path marks the bridge Active before a validated event
+  arrives.
 
 Message kinds:
 
@@ -395,7 +403,8 @@ Coverage:
   limits, malformed input (`BridgeProtocolTests`, `SessionBridgeServerTests`).
 - MCP initialization, tool listing, valid calls, invalid calls, clean stdout
   framing (`HelperMCPTests`).
-- Plugin/helper embedding and executable signing (`SessionsPackagingTests`).
+- Plugin/helper embedding, executable signing, uninstrumented launch
+  arguments, and the assembler failure seam (`SessionsPackagingTests`).
 - Zero-session UI, intent launcher rows, inline ticket context step,
   concurrent rows, switching, stop confirmation, exited retention
   (`SessionsUITests`).

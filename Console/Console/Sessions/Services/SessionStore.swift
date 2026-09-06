@@ -31,13 +31,13 @@ final class SessionStore {
 
     @ObservationIgnored let locator: ClaudeExecutableLocator
     @ObservationIgnored private var launcher: any SessionProcessLaunching
+    @ObservationIgnored private let pluginAssembler: any ConsoleClaudePluginAssembling
 
     // Bridge plumbing. Tokens and event ids live only in memory.
     @ObservationIgnored private var sessionTokens: [UUID: String] = [:]
     @ObservationIgnored private var router: SessionEventRouter!
     @ObservationIgnored private var socketServer: SessionBridgeSocketServer?
     @ObservationIgnored private var socketPath: String?
-    @ObservationIgnored private lazy var pluginAssembler = ConsoleClaudePluginAssembler()
 
     /// Ephemeral root shared by the socket and assembled plugin copies.
     @ObservationIgnored private let ephemeralRoot: URL
@@ -52,10 +52,12 @@ final class SessionStore {
 
     init(
         launcher: any SessionProcessLaunching,
-        locator: ClaudeExecutableLocator
+        locator: ClaudeExecutableLocator,
+        pluginAssembler: any ConsoleClaudePluginAssembling = ConsoleClaudePluginAssembler()
     ) {
         self.launcher = launcher
         self.locator = locator
+        self.pluginAssembler = pluginAssembler
         ephemeralRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("console-sessions-\(UUID().uuidString)", isDirectory: true)
         router = SessionEventRouter(
@@ -203,9 +205,43 @@ final class SessionStore {
         let coordinator = SessionTerminalCoordinator(sessionID: consoleID, store: self)
         terminalView.processDelegate = coordinator
 
-        let token = Self.generateToken()
-        let bridgeSocketPath = socketPath ?? ""
-        let helperPath = Self.helperPath()
+        // Plugin/bridge preparation is optional. A failure still launches the
+        // resolved Claude executable without unusable plugin arguments.
+        let pluginRoot = materializePluginRoot()
+        let token: String?
+        let arguments: [String]
+        let environment: [String: String]
+        let bridgeStatus: BridgeStatus
+        let instrumentationWarning: String?
+
+        if let pluginRoot {
+            let sessionToken = Self.generateToken()
+            token = sessionToken
+            arguments = Self.launchArguments(
+                claudeSessionID: claudeID,
+                pluginDirectory: pluginRoot.path
+            )
+            environment = childEnvironment(
+                bridgeEnvironment: [
+                    "CONSOLE_TERM_BRIDGE_HELPER": Self.helperPath(),
+                    "CONSOLE_TERM_BRIDGE_SOCKET": socketPath ?? "",
+                    "CONSOLE_TERM_BRIDGE_SESSION_ID": consoleID.uuidString,
+                    "CONSOLE_TERM_BRIDGE_TOKEN": sessionToken,
+                ]
+            )
+            // Unknown until a validated envelope arrives; never start as active.
+            bridgeStatus = socketServer != nil ? .unknown : .unavailable
+            instrumentationWarning = nil
+        } else {
+            token = nil
+            arguments = Self.launchArguments(
+                claudeSessionID: claudeID,
+                pluginDirectory: nil
+            )
+            environment = childEnvironment(bridgeEnvironment: [:])
+            bridgeStatus = .unavailable
+            instrumentationWarning = SessionCreationError.pluginAssemblyFailed.errorDescription
+        }
 
         let session = ConsoleSession(
             id: consoleID,
@@ -217,36 +253,30 @@ final class SessionStore {
             attention: .none,
             summary: nil,
             artifacts: Self.initialArtifacts(for: request.source),
-            bridgeStatus: socketServer != nil ? .unknown : .unavailable,
-            purpose: request.purpose
+            bridgeStatus: bridgeStatus,
+            purpose: request.purpose,
+            instrumentationWarning: instrumentationWarning
         )
+
+        let previousSelection = selectedSessionID
         sessions.append(session)
-        sessionTokens[consoleID] = token
+        if let token {
+            sessionTokens[consoleID] = token
+        }
         select(sessionID: consoleID)
 
         do {
-            let pluginRoot = try materializePluginRoot()
             try launcher.launch(
                 executable: claudePath,
-                arguments: Self.launchArguments(
-                    claudeSessionID: claudeID,
-                    pluginDirectory: pluginRoot
-                ),
-                environment: childEnvironment(
-                    bridgeEnvironment: [
-                        "CONSOLE_TERM_BRIDGE_HELPER": helperPath,
-                        "CONSOLE_TERM_BRIDGE_SOCKET": bridgeSocketPath,
-                        "CONSOLE_TERM_BRIDGE_SESSION_ID": consoleID.uuidString,
-                        "CONSOLE_TERM_BRIDGE_TOKEN": token,
-                    ]
-                ),
+                arguments: arguments,
+                environment: environment,
                 workingDirectory: request.workingDirectory.path,
                 terminalView: terminalView
             )
         } catch {
-            if let index = sessions.firstIndex(where: { $0.id == consoleID }) {
-                sessions[index].activity = .error
-            }
+            sessions.removeAll { $0.id == consoleID }
+            sessionTokens.removeValue(forKey: consoleID)
+            selectedSessionID = previousSelection
             throw error
         }
         return consoleID
@@ -272,14 +302,20 @@ final class SessionStore {
         )
     }
 
-    /// Exact launch arguments: Claude session identity, bundled plugin, and
-    /// preapproval of only the three Console MCP tool names. The local
-    /// Console display name is omitted — it must not reach the child CLI.
-    static func launchArguments(claudeSessionID: UUID, pluginDirectory: String) -> [String] {
-        [
+    /// Exact launch arguments: Claude session identity, and when a plugin
+    /// directory is available the bundled plugin plus preapproval of only
+    /// the three Console MCP tool names. The local Console display name is
+    /// omitted — it must not reach the child CLI. Uninstrumented launches
+    /// pass identity only so a missing plugin cannot block Claude.
+    static func launchArguments(claudeSessionID: UUID, pluginDirectory: String?) -> [String] {
+        var arguments = [
             "--session-id", claudeSessionID.uuidString,
-            "--plugin-dir", pluginDirectory,
-        ] + ["--allowedTools"] + ConsoleClaudePluginAssembler.allowedToolNames
+        ]
+        if let pluginDirectory {
+            arguments += ["--plugin-dir", pluginDirectory]
+            arguments += ["--allowedTools"] + ConsoleClaudePluginAssembler.allowedToolNames
+        }
+        return arguments
     }
 
     /// Environment for a session launch: Console's environment layered with
@@ -305,16 +341,18 @@ final class SessionStore {
         return captured
     }
 
-    private func materializePluginRoot() throws -> String {
+    /// Best-effort plugin copy. Failure is non-fatal: the caller launches
+    /// Claude without plugin or bridge arguments instead of aborting.
+    private func materializePluginRoot() -> URL? {
         if let existing = assembledPluginRoot {
-            return existing.path
+            return existing
         }
         do {
             let root = try pluginAssembler.materialize(in: ephemeralRoot)
             assembledPluginRoot = root
-            return root.path
+            return root
         } catch {
-            throw SessionCreationError.pluginAssemblyFailed
+            return nil
         }
     }
 

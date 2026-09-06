@@ -12,6 +12,11 @@ struct SessionTerminalPane: View {
         VStack(spacing: 0) {
             header
 
+            if let warning = session.instrumentationWarning {
+                SessionInstrumentationWarning(message: warning)
+                Divider()
+            }
+
             if showsInfoStrip {
                 SessionInfoStrip(session: session)
                 Divider()
@@ -60,6 +65,31 @@ struct SessionTerminalPane: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+}
+
+/// Compact status warning when the session launched without a usable
+/// plugin/bridge. The Claude process still runs; activity will not update.
+private struct SessionInstrumentationWarning: View {
+    let message: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .font(.caption)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.08))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("Sessions.BridgeUnavailable")
     }
 }
 

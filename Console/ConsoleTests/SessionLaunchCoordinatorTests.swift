@@ -61,6 +61,17 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         }
     }
 
+    private final class FakeAssembler: ConsoleClaudePluginAssembling {
+        var errorToThrow: Error? = ConsoleClaudePluginAssembler.AssemblyError.missingResource("synthetic-plugin")
+
+        func materialize(in baseDirectory: URL) throws -> URL {
+            if let errorToThrow {
+                throw errorToThrow
+            }
+            return try ConsoleClaudePluginAssembler().materialize(in: baseDirectory)
+        }
+    }
+
     private struct SyntheticLaunchError: LocalizedError {
         var errorDescription: String? { "Synthetic launcher failed." }
     }
@@ -72,11 +83,15 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         let launcher: FakeLauncher
     }
 
-    private func makeStack(locator: ClaudeExecutableLocator? = nil) -> Stack {
+    private func makeStack(
+        locator: ClaudeExecutableLocator? = nil,
+        pluginAssembler: (any ConsoleClaudePluginAssembling)? = nil
+    ) -> Stack {
         let launcher = FakeLauncher()
         let store = SessionStore(
             launcher: launcher,
-            locator: locator ?? ClaudeExecutableLocator(defaults: locatorDefaults)
+            locator: locator ?? ClaudeExecutableLocator(defaults: locatorDefaults),
+            pluginAssembler: pluginAssembler ?? ConsoleClaudePluginAssembler()
         )
         let workspaces = SessionWorkspaceStore(defaults: defaults!)
         let coordinator = SessionLaunchCoordinator(store: store, workspaceStore: workspaces)
@@ -612,6 +627,8 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey),
             sidebarBefore
         )
+        XCTAssertTrue(stack.store.sessions.isEmpty, "genuine launch failure must not leave a ghost row")
+        XCTAssertNil(stack.store.selectedSessionID)
         assertSourceMetadataAbsent(from: stack)
     }
 
@@ -623,13 +640,79 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
         XCTAssertNotNil(stack.coordinator.lastFailureMessage)
         XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "ENG"))
+        XCTAssertTrue(stack.store.sessions.isEmpty)
 
         stack.launcher.errorToThrow = nil
         stack.coordinator.beginJiraTicketLaunch(key: "ENG-456", title: nil, url: nil)
 
         XCTAssertNil(stack.coordinator.lastFailureMessage)
         XCTAssertNotNil(stack.store.selectedSession)
+        XCTAssertEqual(stack.store.sessions.count, 1)
         XCTAssertEqual(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "ENG"), stack.workspaces.workspaces.first?.id)
+        XCTAssertEqual(stack.workspaces.lastUsedWorkspaceID(for: .existingTicket), stack.workspaces.workspaces.first?.id)
+    }
+
+    func testRepeatedRetryAfterLauncherFailureCreatesAtMostOneSession() throws {
+        let stack = makeStack()
+        addWorkspace(stack, named: "Home")
+        stack.launcher.errorToThrow = SyntheticLaunchError()
+
+        stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
+        stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
+        XCTAssertTrue(stack.store.sessions.isEmpty)
+        XCTAssertEqual(stack.coordinator.lastFailureMessage, "Synthetic launcher failed.")
+        XCTAssertEqual(stack.coordinator.lastFailure?.offersSettingsRoute, true)
+
+        stack.launcher.errorToThrow = nil
+        stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
+
+        XCTAssertEqual(stack.store.sessions.count, 1)
+        XCTAssertNil(stack.coordinator.lastFailureMessage)
+        XCTAssertNotNil(stack.store.selectedSession)
+    }
+
+    func testPluginAssemblyFailureStillLaunchesOneUninstrumentedSession() throws {
+        let stack = makeStack(pluginAssembler: FakeAssembler())
+        addWorkspace(stack, named: "Home")
+
+        stack.coordinator.beginJiraTicketLaunch(
+            key: Sentinel.key,
+            title: Sentinel.title,
+            url: Sentinel.url
+        )
+
+        XCTAssertNil(
+            stack.coordinator.lastFailureMessage,
+            "plugin assembly is optional; item 10 launch errors stay reserved for genuine failures"
+        )
+        XCTAssertEqual(stack.store.sessions.count, 1)
+        XCTAssertEqual(stack.launcher.launchCount, 1)
+
+        let session = try XCTUnwrap(stack.store.selectedSession)
+        XCTAssertEqual(session.name, Sentinel.key)
+        XCTAssertEqual(session.activity, .starting)
+        XCTAssertEqual(session.bridgeStatus, .unavailable)
+        XCTAssertNotEqual(session.bridgeStatus, .active)
+        XCTAssertEqual(
+            session.instrumentationWarning,
+            SessionCreationError.pluginAssemblyFailed.errorDescription
+        )
+        XCTAssertNil(stack.store.debugSessionToken(session.id))
+
+        let args = stack.launcher.lastArguments ?? []
+        XCTAssertTrue(args.contains("--session-id"))
+        XCTAssertFalse(args.contains("--plugin-dir"))
+        XCTAssertFalse(args.contains("--allowedTools"))
+        XCTAssertFalse(args.contains("--name"))
+        XCTAssertEqual(
+            stack.store.submit(prompt: "hello from fallback", to: session.id),
+            .rejected(.sessionNotAcceptingInput)
+        )
+        assertSourceMetadataAbsent(from: stack)
+        XCTAssertEqual(
+            stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "SYN"),
+            stack.workspaces.workspaces.first?.id
+        )
         XCTAssertEqual(stack.workspaces.lastUsedWorkspaceID(for: .existingTicket), stack.workspaces.workspaces.first?.id)
     }
 
