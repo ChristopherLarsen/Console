@@ -12,85 +12,89 @@ final class BriefViewModel {
 
     @ObservationIgnored private let generationService: BriefGenerationService
     @ObservationIgnored private let workspacePathsProvider: () -> [String]
+    @ObservationIgnored private let injectedRefiner: (any BriefRefining)?
     @ObservationIgnored private var copiedFeedbackTask: Task<Void, Never>?
+    @ObservationIgnored private var operationTask: Task<Void, Never>?
+    @ObservationIgnored private var currentOperation: BriefOperationToken?
     @ObservationIgnored private var preparedDay: Date?
 
     init(generationService: BriefGenerationService? = nil,
-         workspacePathsProvider: @escaping () -> [String] = { [] }) {
+         workspacePathsProvider: @escaping () -> [String] = { [] },
+         refiner: (any BriefRefining)? = nil) {
         self.generationService = generationService ?? BriefGenerationService()
         self.workspacePathsProvider = workspacePathsProvider
+        self.injectedRefiner = refiner
     }
 
     // MARK: - Lifecycle
 
     /// Prepares the day's brief once per calendar day; later opens return the
-    /// stored content instantly.
-    func prepareIfNeeded() {
-        guard !isLoading else { return }
-        let day = BriefStore.startOfDay(for: Date())
+    /// stored content instantly. `now` is injectable so a delayed previous-day
+    /// operation can be tested against today's displayed brief.
+    func prepareIfNeeded(now: Date = Date()) {
+        let day = BriefStore.startOfDay(for: now)
         if let existing = brief, existing.day == day {
             preparedDay = day
             return
         }
-        guard preparedDay != day else { return }
+        if currentOperation?.kind == .generate, currentOperation?.day == day {
+            return
+        }
+        if preparedDay == day, brief?.day == day {
+            return
+        }
 
-        isLoading = true
-        errorMessage = nil
+        let token = startOperation(.generate, day: day)
         let paths = workspacePathsProvider()
-        Task { [weak self] in
-            let generated = await self?.generationService.ensureBrief(
-                for: Date(),
-                workspacePaths: paths
+        operationTask = Task { [weak self, generationService] in
+            let outcome = await generationService.ensureBrief(
+                for: now,
+                workspacePaths: paths,
+                token: token
             )
-            guard let self, let generated else {
-                self?.isLoading = false
-                return
-            }
-            self.brief = generated
-            self.preparedDay = BriefStore.startOfDay(for: generated.day)
-            self.isLoading = false
+            self?.applyOutcome(outcome, token: token)
         }
     }
 
     // MARK: - Actions
 
     func regenerate() {
-        guard let current = brief, !isLoading else { return }
-        isLoading = true
-        errorMessage = nil
+        guard let current = brief else { return }
+        let token = startOperation(.generate, day: current.day)
         let paths = workspacePathsProvider()
-        Task { [weak self] in
-            let regenerated = await self?.generationService.regenerate(
-                for: current.day,
-                workspacePaths: paths
+        let day = current.day
+        operationTask = Task { [weak self, generationService] in
+            let outcome = await generationService.regenerate(
+                for: day,
+                workspacePaths: paths,
+                token: token
             )
-            guard let self, let regenerated else {
-                self?.isLoading = false
-                return
-            }
-            self.brief = regenerated
-            self.isLoading = false
+            self?.applyOutcome(outcome, token: token)
         }
     }
 
     func refineWithAI(aiProviderManager: AIProviderManager?) {
-        guard let current = brief, !isRefining else { return }
-        isRefining = true
-        errorMessage = nil
-        Task { [weak self] in
+        guard let current = brief else { return }
+        guard let refiner = makeRefiner(aiProviderManager: aiProviderManager) else {
+            errorMessage = BriefAIError.noProvider.localizedDescription
+            return
+        }
+        let token = startOperation(.refine, day: current.day)
+        let yesterdayLines = current.yesterdayLines
+        let todayTasks = current.todayTasks
+        operationTask = Task { [weak self, generationService] in
             do {
-                guard let aiProviderManager else { throw BriefAIError.noProvider }
-                guard let self else { return }
-                let parsed = try await BriefAIService.refine(
-                    yesterdayLines: current.yesterdayLines,
-                    todayTasks: current.todayTasks,
-                    aiProviderManager: aiProviderManager
+                let parsed = try await refiner.refine(
+                    yesterdayLines: yesterdayLines,
+                    todayTasks: todayTasks
                 )
-                self.brief = self.generationService.applyRefinement(parsed, to: current)
+                let outcome = generationService.applyRefinement(parsed, token: token)
+                self?.applyOutcome(outcome, token: token)
+            } catch is CancellationError {
+                self?.applyOutcome(.superseded, token: token)
             } catch {
-                self?.errorMessage = error.localizedDescription
+                self?.applyFailure(error, token: token)
             }
-            self?.isRefining = false
         }
     }
 
@@ -130,7 +134,53 @@ final class BriefViewModel {
     }
 
     var canRefineWithAI: Bool {
+        if injectedRefiner != nil { return true }
         guard let manager = AppDependencies.shared.aiProviderManager else { return false }
         return manager.selectedProvider != AIProvider.none
+    }
+
+    // MARK: - Operation lifetime
+
+    /// Starts a new generate/refine. Generation is incremented first so a
+    /// cancelled predecessor that resumes immediately is already superseded.
+    private func startOperation(_ kind: BriefOperationKind, day: Date) -> BriefOperationToken {
+        let token = generationService.beginOperation(kind, for: day)
+        operationTask?.cancel()
+        currentOperation = token
+        isLoading = kind == .generate
+        isRefining = kind == .refine
+        errorMessage = nil
+        return token
+    }
+
+    private func applyOutcome(_ outcome: BriefOperationOutcome, token: BriefOperationToken) {
+        guard currentOperation == token else { return }
+        currentOperation = nil
+        isLoading = false
+        isRefining = false
+        guard case .applied(let incoming) = outcome else { return }
+        guard shouldDisplay(incoming) else { return }
+        brief = incoming
+        preparedDay = BriefStore.startOfDay(for: incoming.day)
+    }
+
+    private func applyFailure(_ error: Error, token: BriefOperationToken) {
+        guard currentOperation == token else { return }
+        currentOperation = nil
+        isLoading = false
+        isRefining = false
+        errorMessage = error.localizedDescription
+    }
+
+    /// A delayed previous-day result must not replace a newer displayed brief.
+    private func shouldDisplay(_ incoming: MorningBrief) -> Bool {
+        guard let displayed = brief?.day else { return true }
+        return incoming.day == displayed || incoming.day > displayed
+    }
+
+    private func makeRefiner(aiProviderManager: AIProviderManager?) -> (any BriefRefining)? {
+        if let injectedRefiner { return injectedRefiner }
+        guard let aiProviderManager else { return nil }
+        return ProviderBackedBriefRefiner(aiProviderManager: aiProviderManager)
     }
 }

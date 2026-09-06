@@ -24,6 +24,28 @@ enum BriefAIError: LocalizedError {
     }
 }
 
+/// Testable seam for Brief AI polish. Production uses `BriefAIService`;
+/// tests inject a suspended refiner so edits can happen mid-flight.
+@MainActor
+protocol BriefRefining {
+    func refine(yesterdayLines: [String],
+                todayTasks: [String]) async throws -> BriefAIResponseParser.Parsed
+}
+
+@MainActor
+struct ProviderBackedBriefRefiner: BriefRefining {
+    let aiProviderManager: AIProviderManager
+
+    func refine(yesterdayLines: [String],
+                todayTasks: [String]) async throws -> BriefAIResponseParser.Parsed {
+        try await BriefAIService.refine(
+            yesterdayLines: yesterdayLines,
+            todayTasks: todayTasks,
+            aiProviderManager: aiProviderManager
+        )
+    }
+}
+
 /// Explicit, user-triggered AI polish of a brief. Sends only content already
 /// derived locally (commit subjects and task lines); never JIRA/GitLab web
 /// content. Runs only when the user asks for it — never automatically.
