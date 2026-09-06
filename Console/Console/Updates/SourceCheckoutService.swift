@@ -155,6 +155,10 @@ struct SourceCheckoutService: SourceCheckouting {
                 throw SourceCheckoutError.executableMissing(path)
             case .launchFailed(let message):
                 throw SourceCheckoutError.launchFailed(message)
+            case .cancelled:
+                throw CancellationError()
+            case .timedOut:
+                throw SourceCheckoutError.launchFailed(error.localizedDescription)
             }
         } catch is CancellationError {
             throw CancellationError()

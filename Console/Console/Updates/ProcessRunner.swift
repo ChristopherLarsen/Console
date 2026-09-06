@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Result of one external process invocation.
@@ -65,6 +66,8 @@ struct ProcessResult: Sendable, Equatable {
 enum ProcessRunError: LocalizedError, Equatable {
     case executableMissing(String)
     case launchFailed(String)
+    case cancelled
+    case timedOut
 
     var errorDescription: String? {
         switch self {
@@ -72,6 +75,22 @@ enum ProcessRunError: LocalizedError, Equatable {
             return "Executable was not found at \(path)."
         case .launchFailed(let message):
             return "Could not start process: \(message)"
+        case .cancelled:
+            return "Process was cancelled."
+        case .timedOut:
+            return "Process timed out."
+        }
+    }
+}
+
+enum ProcessStopReason: Sendable, Equatable {
+    case cancelled
+    case timedOut
+
+    var error: ProcessRunError {
+        switch self {
+        case .cancelled: return .cancelled
+        case .timedOut: return .timedOut
         }
     }
 }
@@ -80,43 +99,67 @@ enum ProcessRunError: LocalizedError, Equatable {
 protocol ProcessRunning: Sendable {
     func run(executablePath: String,
              arguments: [String],
-             workingDirectory: String?) async throws -> ProcessResult
+             workingDirectory: String?,
+             deadline: Date?) async throws -> ProcessResult
+}
+
+extension ProcessRunning {
+    func run(executablePath: String,
+             arguments: [String],
+             workingDirectory: String?) async throws -> ProcessResult {
+        try await run(
+            executablePath: executablePath,
+            arguments: arguments,
+            workingDirectory: workingDirectory,
+            deadline: nil
+        )
+    }
 }
 
 /// Runs a process and waits for it to finish off the main actor.
 /// stdout and stderr are drained from launch until EOF so a child that fills a
 /// pipe cannot deadlock. Retained output is bounded; overflow is truncated and
-/// reported. Task cancellation terminates the owned child (Stop, deadlines, and
-/// force-kill are reserved for review item 06).
+/// reported. Task cancellation and an optional deadline both stop the owned
+/// child with SIGTERM, then SIGKILL after ``ProcessInvocation/defaultForceStopGrace``.
 struct SystemProcessRunner: ProcessRunning {
 
     nonisolated static let defaultMaxOutputBytesPerStream = 1_048_576
 
     private let maxOutputBytesPerStream: Int
+    private let forceStopGrace: TimeInterval
 
-    nonisolated init(maxOutputBytesPerStream: Int = SystemProcessRunner.defaultMaxOutputBytesPerStream) {
+    nonisolated init(
+        maxOutputBytesPerStream: Int = SystemProcessRunner.defaultMaxOutputBytesPerStream,
+        forceStopGrace: TimeInterval = ProcessInvocation.defaultForceStopGrace
+    ) {
         self.maxOutputBytesPerStream = maxOutputBytesPerStream
+        self.forceStopGrace = forceStopGrace
     }
 
     func run(executablePath: String,
              arguments: [String],
-             workingDirectory: String?) async throws -> ProcessResult {
+             workingDirectory: String?,
+             deadline: Date?) async throws -> ProcessResult {
         let invocation = ProcessInvocation(
             executablePath: executablePath,
             arguments: arguments,
             workingDirectory: workingDirectory,
-            maxOutputBytesPerStream: maxOutputBytesPerStream
+            maxOutputBytesPerStream: maxOutputBytesPerStream,
+            forceStopGrace: forceStopGrace
         )
         return try await withTaskCancellationHandler {
-            try await invocation.startAndWait()
+            try await invocation.startAndWait(deadline: deadline)
         } onCancel: {
-            invocation.terminate()
+            invocation.requestStop(.cancelled)
         }
     }
 }
 
 /// Owns exactly one child process and both pipes for a single invocation.
 nonisolated final class ProcessInvocation: @unchecked Sendable {
+
+    /// Seconds to wait after SIGTERM before SIGKILL on the owned process tree.
+    nonisolated static let defaultForceStopGrace: TimeInterval = 2
 
     private enum Stream {
         case stdout
@@ -152,6 +195,7 @@ nonisolated final class ProcessInvocation: @unchecked Sendable {
     private let executablePath: String
     private let arguments: [String]
     private let workingDirectory: String?
+    private let forceStopGrace: TimeInterval
     private let lock = NSLock()
 
     private var process: Process?
@@ -163,32 +207,55 @@ nonisolated final class ProcessInvocation: @unchecked Sendable {
     private var stderrEOF = false
     private var terminated = false
     private var didFinish = false
+    private var launched = false
+    private var stopReason: ProcessStopReason?
+    private var rememberedPIDs = Set<pid_t>()
+    private var deadlineWork: DispatchWorkItem?
+    private var forceStopWork: DispatchWorkItem?
     private var continuation: CheckedContinuation<ProcessResult, Error>?
 
     init(
         executablePath: String,
         arguments: [String],
         workingDirectory: String?,
-        maxOutputBytesPerStream: Int
+        maxOutputBytesPerStream: Int,
+        forceStopGrace: TimeInterval = ProcessInvocation.defaultForceStopGrace
     ) {
         self.executablePath = executablePath
         self.arguments = arguments
         self.workingDirectory = workingDirectory
+        self.forceStopGrace = forceStopGrace
         self.stdoutBuffer = OutputBuffer(limit: maxOutputBytesPerStream)
         self.stderrBuffer = OutputBuffer(limit: maxOutputBytesPerStream)
     }
 
     func terminate() {
-        lock.lock()
-        let running = process
-        lock.unlock()
-        if running?.isRunning == true {
-            running?.terminate()
-        }
+        requestStop(.cancelled)
     }
 
-    func startAndWait() async throws -> ProcessResult {
-        try await withCheckedThrowingContinuation { continuation in
+    func requestStop(_ reason: ProcessStopReason) {
+        lock.lock()
+        if stopReason == nil {
+            stopReason = reason
+        }
+        let alreadyFinished = didFinish
+        let alreadyLaunched = launched
+        let pid = process?.processIdentifier ?? 0
+        lock.unlock()
+
+        guard !alreadyFinished else { return }
+        guard alreadyLaunched, pid > 1 else { return }
+
+        signalOwnedTree(root: pid, signal: SIGTERM)
+        scheduleForceStop()
+    }
+
+    func startAndWait(deadline: Date? = nil) async throws -> ProcessResult {
+        if Task.isCancelled {
+            requestStop(.cancelled)
+        }
+        scheduleDeadline(deadline)
+        return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async { [self] in
                 lock.lock()
                 self.continuation = continuation
@@ -202,10 +269,88 @@ nonisolated final class ProcessInvocation: @unchecked Sendable {
         }
     }
 
+    private func scheduleDeadline(_ deadline: Date?) {
+        guard let deadline else { return }
+        let remaining = deadline.timeIntervalSinceNow
+        if remaining <= 0 {
+            requestStop(.timedOut)
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            self?.requestStop(.timedOut)
+        }
+        lock.lock()
+        deadlineWork = work
+        lock.unlock()
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+            deadline: .now() + remaining,
+            execute: work
+        )
+    }
+
+    private func scheduleForceStop() {
+        lock.lock()
+        if forceStopWork != nil || didFinish {
+            lock.unlock()
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            self?.forceStopIfNeeded()
+        }
+        forceStopWork = work
+        let grace = forceStopGrace
+        lock.unlock()
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+            deadline: .now() + grace,
+            execute: work
+        )
+    }
+
+    private func forceStopIfNeeded() {
+        lock.lock()
+        if didFinish {
+            lock.unlock()
+            return
+        }
+        let pid = process?.processIdentifier ?? 0
+        lock.unlock()
+        guard pid > 1 else { return }
+        signalOwnedTree(root: pid, signal: SIGKILL)
+    }
+
+    private func signalOwnedTree(root: pid_t, signal: Int32) {
+        let extra: Set<pid_t> = {
+            lock.lock()
+            let remembered = rememberedPIDs
+            lock.unlock()
+            return remembered
+        }()
+        let signaled = OwnedProcessTree.signalOwned(root: root, signal: signal, extra: extra)
+        lock.lock()
+        rememberedPIDs.formUnion(signaled)
+        lock.unlock()
+    }
+
+    private func throwIfStopped() throws {
+        if Task.isCancelled {
+            requestStop(.cancelled)
+        }
+        lock.lock()
+        let reason = stopReason
+        lock.unlock()
+        if let reason {
+            throw reason.error
+        }
+    }
+
     private func launch() throws {
+        try throwIfStopped()
+
         guard FileManager.default.isExecutableFile(atPath: executablePath) else {
             throw ProcessRunError.executableMissing(executablePath)
         }
+
+        try throwIfStopped()
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executablePath)
@@ -225,14 +370,15 @@ nonisolated final class ProcessInvocation: @unchecked Sendable {
         let stderrHandle = stderrPipe.fileHandleForReading
 
         lock.lock()
+        if let reason = stopReason {
+            lock.unlock()
+            throw reason.error
+        }
         self.stdoutHandle = stdoutHandle
         self.stderrHandle = stderrHandle
         self.process = process
         lock.unlock()
 
-        // Read on the FileHandle callback queues so both pipes drain concurrently
-        // from launch. Hopping the read itself onto a serial queue deadlocks a
-        // child that fills stdout and stderr at the same time.
         stdoutHandle.readabilityHandler = { [weak self] handle in
             self?.consume(handle, stream: .stdout)
         }
@@ -244,13 +390,34 @@ nonisolated final class ProcessInvocation: @unchecked Sendable {
         }
 
         do {
+            try throwIfStopped()
             try process.run()
+        } catch let error as ProcessRunError {
+            clearLaunchHandlers(process, stdoutHandle: stdoutHandle, stderrHandle: stderrHandle)
+            throw error
         } catch {
-            stdoutHandle.readabilityHandler = nil
-            stderrHandle.readabilityHandler = nil
-            process.terminationHandler = nil
+            clearLaunchHandlers(process, stdoutHandle: stdoutHandle, stderrHandle: stderrHandle)
             throw ProcessRunError.launchFailed(error.localizedDescription)
         }
+
+        lock.lock()
+        launched = true
+        let pendingStop = stopReason
+        lock.unlock()
+
+        if let pendingStop {
+            requestStop(pendingStop)
+        }
+    }
+
+    private func clearLaunchHandlers(
+        _ process: Process,
+        stdoutHandle: FileHandle,
+        stderrHandle: FileHandle
+    ) {
+        stdoutHandle.readabilityHandler = nil
+        stderrHandle.readabilityHandler = nil
+        process.terminationHandler = nil
     }
 
     private func consume(_ handle: FileHandle, stream: Stream) {
@@ -290,6 +457,10 @@ nonisolated final class ProcessInvocation: @unchecked Sendable {
             lock.unlock()
             return
         }
+        if let reason = stopReason {
+            finishLocked(.failure(reason.error))
+            return
+        }
         let status = process?.terminationStatus ?? -1
         let result = ProcessResult(
             exitCode: status,
@@ -318,6 +489,10 @@ nonisolated final class ProcessInvocation: @unchecked Sendable {
         stdoutHandle?.readabilityHandler = nil
         stderrHandle?.readabilityHandler = nil
         process?.terminationHandler = nil
+        deadlineWork?.cancel()
+        forceStopWork?.cancel()
+        deadlineWork = nil
+        forceStopWork = nil
         let continuation = self.continuation
         self.continuation = nil
         lock.unlock()
@@ -330,3 +505,82 @@ nonisolated final class ProcessInvocation: @unchecked Sendable {
     }
 }
 
+/// Signals only the owned child and processes currently descended from it.
+/// Never signals pid 0/1, this process, or its parent (Xcode / test host).
+enum OwnedProcessTree {
+    @discardableResult
+    static func signalOwned(root: pid_t, signal: Int32, extra: Set<pid_t> = []) -> Set<pid_t> {
+        let selfPID = getpid()
+        let parentPID = getppid()
+        var targets = descendantIDs(of: root)
+        if root > 1 {
+            targets.insert(root)
+        }
+        targets.formUnion(extra)
+        var signaled = Set<pid_t>()
+        for pid in targets {
+            guard pid > 1, pid != selfPID, pid != parentPID else { continue }
+            _ = kill(pid, signal)
+            signaled.insert(pid)
+        }
+        return signaled
+    }
+
+    static func isRunning(_ pid: pid_t) -> Bool {
+        guard pid > 1 else { return false }
+        return kill(pid, 0) == 0
+    }
+
+    static func descendantIDs(of root: pid_t) -> Set<pid_t> {
+        guard root > 1 else { return [] }
+        let parentByPID = processParents()
+        var owned = Set<pid_t>()
+        var stack = [root]
+        while let current = stack.popLast() {
+            for (pid, ppid) in parentByPID where ppid == current && pid != current && pid > 1 {
+                if owned.insert(pid).inserted {
+                    stack.append(pid)
+                }
+            }
+        }
+        return owned
+    }
+
+    private static func processParents() -> [pid_t: pid_t] {
+        var map: [pid_t: pid_t] = [:]
+        for pid in listAllPIDs() {
+            if let ppid = parentPID(of: pid) {
+                map[pid] = ppid
+            }
+        }
+        return map
+    }
+
+    private static func listAllPIDs() -> [pid_t] {
+        var capacity = 1024
+        for _ in 0..<4 {
+            var pids = [pid_t](repeating: 0, count: capacity)
+            let bytes = proc_listpids(
+                UInt32(PROC_ALL_PIDS),
+                0,
+                &pids,
+                Int32(pids.count * MemoryLayout<pid_t>.size)
+            )
+            guard bytes > 0 else { return [] }
+            let filled = Int(bytes) / MemoryLayout<pid_t>.size
+            if filled < pids.count {
+                return Array(pids.prefix(filled).filter { $0 > 0 })
+            }
+            capacity *= 2
+        }
+        return []
+    }
+
+    private static func parentPID(of pid: pid_t) -> pid_t? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
+        let result = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size)
+        guard result == size else { return nil }
+        return pid_t(info.pbi_ppid)
+    }
+}

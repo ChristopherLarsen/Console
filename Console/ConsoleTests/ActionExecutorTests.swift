@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import Console
 
@@ -147,6 +148,104 @@ final class ActionExecutorTests: XCTestCase {
         guard let executionError = caught as? ActionExecutionError,
               case .invalidPayload = executionError else {
             return XCTFail("Expected invalidPayload, got \(String(describing: caught))")
+        }
+    }
+
+    func testShortTimeoutTerminatesAndReportsTimeout() async throws {
+        let script = try makeExecutableScript("""
+        #!/bin/sh
+        echo $$ > "$1"
+        exec sleep 60
+        """)
+        let pidFile = script.deletingLastPathComponent().appendingPathComponent("pid")
+        let start = Date()
+        var caught: Error?
+        do {
+            _ = try await runWithTimeout {
+                try await ActionExecutor().execute(
+                    CommandAction(
+                        type: .shell,
+                        payload: "\(script.path) \(pidFile.path)",
+                        order: 0,
+                        delayAfterMS: 0,
+                        timeoutMS: 250
+                    )
+                )
+            }
+        } catch {
+            caught = error
+        }
+
+        guard let timeoutError = caught as? ActionExecutionError,
+              case .timeout(let message) = timeoutError else {
+            return XCTFail("Expected timeout, got \(String(describing: caught))")
+        }
+        XCTAssertTrue(
+            timeoutError.localizedDescription.localizedCaseInsensitiveContains("timeout"),
+            "Unexpected description: \(timeoutError.localizedDescription)"
+        )
+        XCTAssertTrue(
+            message.contains("250") || message.localizedCaseInsensitiveContains("exceeded"),
+            "Unexpected timeout message: \(message)"
+        )
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+        if let text = try? String(contentsOf: pidFile, encoding: .utf8),
+           let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+           pid > 1 {
+            XCTAssertFalse(OwnedProcessTree.isRunning(pid))
+            if OwnedProcessTree.isRunning(pid) {
+                _ = kill(pid, SIGKILL)
+            }
+        }
+    }
+
+    func testTaskCancelStopsShellProcess() async throws {
+        let script = try makeExecutableScript("""
+        #!/bin/sh
+        echo $$ > "$1"
+        exec sleep 60
+        """)
+        let pidFile = script.deletingLastPathComponent().appendingPathComponent("pid")
+        let start = Date()
+        let task = Task {
+            try await ActionExecutor().execute(
+                CommandAction(
+                    type: .shell,
+                    payload: "\(script.path) \(pidFile.path)",
+                    order: 0,
+                    delayAfterMS: 0,
+                    timeoutMS: 60_000
+                )
+            )
+        }
+        let deadline = Date().addingTimeInterval(2)
+        var pid: pid_t?
+        while Date() < deadline {
+            if let text = try? String(contentsOf: pidFile, encoding: .utf8),
+               let value = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+               value > 1 {
+                pid = value
+                break
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertNotNil(pid)
+        task.cancel()
+
+        var caught: Error?
+        do {
+            _ = try await runWithTimeout { try await task.value }
+        } catch {
+            caught = error
+        }
+
+        XCTAssertNotNil(caught)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+        if let pid, pid > 1 {
+            XCTAssertFalse(OwnedProcessTree.isRunning(pid))
+            if OwnedProcessTree.isRunning(pid) {
+                _ = kill(pid, SIGKILL)
+            }
         }
     }
 

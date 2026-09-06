@@ -8,37 +8,54 @@ final class CompletionChecker {
         _ check: CompletionCheck,
         timeout: TimeInterval
     ) async -> Bool {
+        if Task.isCancelled { return false }
         let deadline = Date().addingTimeInterval(timeout)
         let pollInterval: UInt64 = 100_000_000
 
         switch check.type {
         case .delay:
-            if let ms = Int(check.value) {
-                try? await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
-                return true
+            guard let ms = Int(check.value), ms >= 0 else { return false }
+            do {
+                try await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
+                return !Task.isCancelled
+            } catch {
+                return false
             }
-            return false
 
         case .appRunning:
             while Date() < deadline {
+                if Task.isCancelled { return false }
                 if isAppRunning(check.value) { return true }
-                try? await Task.sleep(nanoseconds: pollInterval)
+                if await sleepOrCancel(nanoseconds: pollInterval) { return false }
             }
 
         case .fileExists:
             while Date() < deadline {
+                if Task.isCancelled { return false }
                 if doesFileExist(check.value) { return true }
-                try? await Task.sleep(nanoseconds: pollInterval)
+                if await sleepOrCancel(nanoseconds: pollInterval) { return false }
             }
 
         case .windowTitle:
             while Date() < deadline {
+                if Task.isCancelled { return false }
                 if doesWindowExist(withTitle: check.value) { return true }
-                try? await Task.sleep(nanoseconds: pollInterval)
+                if await sleepOrCancel(nanoseconds: pollInterval) { return false }
             }
         }
 
         return false
+    }
+
+    /// Returns `true` when the wait ended because the task was cancelled.
+    private func sleepOrCancel(nanoseconds: UInt64) async -> Bool {
+        if Task.isCancelled { return true }
+        do {
+            try await Task.sleep(nanoseconds: nanoseconds)
+        } catch {
+            return true
+        }
+        return Task.isCancelled
     }
 
     // MARK: - Check Implementations

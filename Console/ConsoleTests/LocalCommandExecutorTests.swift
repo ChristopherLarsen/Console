@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import Console
 
@@ -6,16 +7,32 @@ final class LocalCommandExecutorTests: XCTestCase {
 
     private var originalConfirmation: Any?
     private var originalAuthorizeAll: Any?
+    private var tempDirectories: [URL] = []
+    private var pidsToReap: [pid_t] = []
 
     override func setUp() {
         super.setUp()
+        continueAfterFailure = false
+        executionTimeAllowance = 30
         originalConfirmation = UserDefaults.standard.object(forKey: "requireConfirmationForDangerous")
         originalAuthorizeAll = UserDefaults.standard.object(forKey: "requireAuthorizationForAllCommands")
         UserDefaults.standard.set(true, forKey: "requireConfirmationForDangerous")
         UserDefaults.standard.set(false, forKey: "requireAuthorizationForAllCommands")
+        tempDirectories = []
+        pidsToReap = []
     }
 
     override func tearDown() {
+        for pid in pidsToReap {
+            if pid > 1, pid != getpid(), pid != getppid() {
+                _ = kill(pid, SIGKILL)
+            }
+        }
+        pidsToReap.removeAll()
+        for directory in tempDirectories {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        tempDirectories.removeAll()
         restore(originalConfirmation, key: "requireConfirmationForDangerous")
         restore(originalAuthorizeAll, key: "requireAuthorizationForAllCommands")
         super.tearDown()
@@ -295,6 +312,199 @@ final class LocalCommandExecutorTests: XCTestCase {
         _ = await firstTask.value
     }
 
+    // MARK: - Stop and timeouts
+
+    func testStopInterruptsLongRunningCommandAndSkipsLaterAction() async throws {
+        let fixture = try makeSleepFixture()
+        let later = fixture.directory.appendingPathComponent("later")
+        let executor = LocalCommandExecutor(
+            actionExecutor: ActionExecutor(),
+            authorizer: AuthorizationSpy(shouldAuthorize: true)
+        )
+        let command = makeShellCommand(
+            name: "Synthetic Stop Long",
+            actions: [
+                CommandAction(
+                    type: .shell,
+                    payload: "\(fixture.script.path) \(fixture.pidFile.path)",
+                    order: 0,
+                    delayAfterMS: 0,
+                    timeoutMS: 60_000
+                ),
+                CommandAction(
+                    type: .shell,
+                    payload: "touch \(later.path)",
+                    order: 1,
+                    delayAfterMS: 0,
+                    timeoutMS: 5_000
+                )
+            ]
+        )
+
+        let start = Date()
+        let task = Task { await executor.execute(command, skipAuthorization: true) }
+        let pid = try await waitForOwnedPID(fixture.pidFile)
+        XCTAssertTrue(executor.isExecuting)
+        executor.cancelExecution()
+        let run = await task.value
+
+        XCTAssertFalse(run.result.overallSuccess)
+        XCTAssertFalse(run.result.alreadyRunning)
+        XCTAssertEqual(run.result.logs.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: later.path))
+        XCTAssertFalse(OwnedProcessTree.isRunning(pid))
+        XCTAssertFalse(executor.isExecuting)
+        XCTAssertNil(executor.activeRunID)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+    }
+
+    func testShortTimeoutTerminatesAndReportsTimeout() async throws {
+        let fixture = try makeSleepFixture()
+        let executor = LocalCommandExecutor(
+            actionExecutor: ActionExecutor(),
+            authorizer: AuthorizationSpy(shouldAuthorize: true)
+        )
+        let command = makeShellCommand(
+            name: "Synthetic Timeout",
+            actions: [
+                CommandAction(
+                    type: .shell,
+                    payload: "\(fixture.script.path) \(fixture.pidFile.path)",
+                    order: 0,
+                    delayAfterMS: 0,
+                    timeoutMS: 250
+                )
+            ]
+        )
+
+        let start = Date()
+        let run = await executor.execute(command, skipAuthorization: true)
+
+        XCTAssertFalse(run.result.overallSuccess)
+        XCTAssertEqual(run.result.logs.count, 1)
+        XCTAssertTrue(
+            run.result.logs[0].message.localizedCaseInsensitiveContains("timeout"),
+            "Expected Timeout in log, got \(run.result.logs[0].message)"
+        )
+        XCTAssertFalse(executor.isExecuting)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+        if let pid = readPID(from: fixture.pidFile) {
+            pidsToReap.append(pid)
+            XCTAssertFalse(OwnedProcessTree.isRunning(pid))
+        }
+    }
+
+    func testNextCommandRunsAfterStopAndOldCancelCannotAffectIt() async throws {
+        let firstFixture = try makeSleepFixture()
+        let secondFixture = try makeSleepFixture()
+        let executor = LocalCommandExecutor(
+            actionExecutor: ActionExecutor(),
+            authorizer: AuthorizationSpy(shouldAuthorize: true)
+        )
+
+        let first = makeShellCommand(
+            name: "Synthetic First Stop",
+            actions: [
+                CommandAction(
+                    type: .shell,
+                    payload: "\(firstFixture.script.path) \(firstFixture.pidFile.path)",
+                    order: 0,
+                    delayAfterMS: 0,
+                    timeoutMS: 60_000
+                )
+            ]
+        )
+        let firstTask = Task { await executor.execute(first, skipAuthorization: true) }
+        _ = try await waitForOwnedPID(firstFixture.pidFile)
+        executor.cancelExecution()
+        let firstRun = await firstTask.value
+        XCTAssertFalse(firstRun.result.overallSuccess)
+        XCTAssertFalse(executor.isExecuting)
+
+        executor.cancelExecution()
+
+        let second = makeShellCommand(
+            name: "Synthetic Second After Stop",
+            actions: [
+                CommandAction(
+                    type: .shell,
+                    payload: "true",
+                    order: 0,
+                    delayAfterMS: 0,
+                    timeoutMS: 5_000
+                )
+            ]
+        )
+        let secondRun = await executor.execute(second, skipAuthorization: true)
+        XCTAssertTrue(secondRun.result.overallSuccess)
+        XCTAssertNotEqual(secondRun.id, firstRun.id)
+        XCTAssertEqual(executor.lastRunID, secondRun.id)
+        XCTAssertEqual(executor.completedRunCount, 2)
+
+        let third = makeShellCommand(
+            name: "Synthetic Third Independent",
+            actions: [
+                CommandAction(
+                    type: .shell,
+                    payload: "\(secondFixture.script.path) \(secondFixture.pidFile.path)",
+                    order: 0,
+                    delayAfterMS: 0,
+                    timeoutMS: 60_000
+                )
+            ]
+        )
+        let thirdTask = Task { await executor.execute(third, skipAuthorization: true) }
+        _ = try await waitForOwnedPID(secondFixture.pidFile)
+        XCTAssertTrue(executor.isExecuting)
+        XCTAssertNotEqual(executor.activeRunID, firstRun.id)
+        executor.cancelExecution()
+        let thirdRun = await thirdTask.value
+        XCTAssertFalse(thirdRun.result.overallSuccess)
+        XCTAssertFalse(executor.isExecuting)
+    }
+
+    func testStopDuringPostActionDelaySkipsLaterAction() async throws {
+        let later = try makeTempDirectory().appendingPathComponent("later")
+        let executor = LocalCommandExecutor(
+            actionExecutor: ActionExecutor(),
+            authorizer: AuthorizationSpy(shouldAuthorize: true)
+        )
+        let command = makeShellCommand(
+            name: "Synthetic Delay Stop",
+            actions: [
+                CommandAction(
+                    type: .shell,
+                    payload: "true",
+                    order: 0,
+                    delayAfterMS: 8_000,
+                    timeoutMS: 5_000
+                ),
+                CommandAction(
+                    type: .shell,
+                    payload: "touch \(later.path)",
+                    order: 1,
+                    delayAfterMS: 0,
+                    timeoutMS: 5_000
+                )
+            ]
+        )
+
+        let start = Date()
+        let task = Task { await executor.execute(command, skipAuthorization: true) }
+        guard await waitUntil({ executor.isExecuting }) else {
+            _ = await task.value
+            return
+        }
+        try await Task.sleep(nanoseconds: 150_000_000)
+        executor.cancelExecution()
+        let run = await task.value
+
+        XCTAssertFalse(run.result.overallSuccess)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: later.path))
+        XCTAssertLessThan(Date().timeIntervalSince(start), 3)
+        XCTAssertFalse(executor.isExecuting)
+    }
+
     // MARK: - Helpers
 
     private func makeExecutor(actions: any CommandActionExecuting) -> LocalCommandExecutor {
@@ -349,6 +559,57 @@ final class LocalCommandExecutorTests: XCTestCase {
             executionMode: .appleScript,
             requiresConfirmation: requiresConfirmation
         )
+    }
+
+    private func makeShellCommand(name: String, actions: [CommandAction]) -> Command {
+        Command(
+            name: name,
+            triggerPhrases: ["synthetic executor stop"],
+            actions: actions,
+            executionMode: .mixed,
+            requiresConfirmation: false
+        )
+    }
+
+    private func makeTempDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LocalCommandExecutorTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        tempDirectories.append(directory)
+        return directory
+    }
+
+    private func makeSleepFixture() throws -> (directory: URL, script: URL, pidFile: URL) {
+        let directory = try makeTempDirectory()
+        let script = directory.appendingPathComponent("run.sh")
+        let pidFile = directory.appendingPathComponent("pid")
+        try """
+        #!/bin/sh
+        echo $$ > "$1"
+        exec sleep 60
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        return (directory, script, pidFile)
+    }
+
+    private func waitForOwnedPID(_ url: URL, timeout: TimeInterval = 2) async throws -> pid_t {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let pid = readPID(from: url) {
+                pidsToReap.append(pid)
+                return pid
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail("Timed out waiting for pid file at \(url.path)")
+        throw NSError(domain: "LocalCommandExecutorTests", code: 1)
+    }
+
+    private func readPID(from url: URL) -> pid_t? {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = pid_t(trimmed), value > 1 else { return nil }
+        return value
     }
 
     private func restore(_ value: Any?, key: String) {

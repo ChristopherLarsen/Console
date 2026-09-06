@@ -236,9 +236,18 @@ enum AppleScriptRunner {
                 workingDirectory: nil
             )
         } catch let error as ProcessRunError {
-            throw ScriptError.executionFailed(error.localizedDescription)
+            switch error {
+            case .timedOut:
+                throw ScriptError.timeout
+            case .cancelled:
+                throw CancellationError()
+            case .executableMissing, .launchFailed:
+                throw ScriptError.executionFailed(error.localizedDescription)
+            }
         } catch let error as ScriptError {
             throw error
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw ScriptError.executionFailed(error.localizedDescription)
         }
