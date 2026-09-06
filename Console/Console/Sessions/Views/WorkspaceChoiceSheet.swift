@@ -61,7 +61,9 @@ struct WorkspaceChoiceSheet: View {
 
                 Button("Start Session") {
                     if let selectedID {
-                        _ = try? coordinator.confirmWorkspaceChoice(workspaceID: selectedID)
+                        Task { @MainActor in
+                            _ = try? await coordinator.confirmWorkspaceChoice(workspaceID: selectedID)
+                        }
                     }
                 }
                 .keyboardShortcut(.defaultAction)

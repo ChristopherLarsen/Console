@@ -4,7 +4,7 @@ import WebKit
 /// A prepared launch: automatic local display name and an optional explicit
 /// workspace. Views may edit name/workspaceID before handing the draft back
 /// to the coordinator's `launch(draft:)`. Source metadata stays local.
-struct SessionDraft {
+struct SessionDraft: Equatable {
     let purpose: SessionPurpose
     let source: SessionLaunchSource?
     var name: String
@@ -93,17 +93,34 @@ final class SessionLaunchCoordinator {
     /// Contextual-launch / chooser-Start failure. MainView presents it when
     /// the chooser is hidden; the chooser presents it while the sheet is up.
     private(set) var lastFailure: SessionLaunchFailure?
+    /// Shown when an editing launch would share a live checkout. Continue is
+    /// required; Focus selects an occupant and launches nothing.
+    private(set) var pendingCollision: PendingSharedCheckoutWarning?
+    /// True while the shared-checkout warning sheet should be visible.
+    private(set) var presentsCollisionSheet = false
 
     var lastFailureMessage: String? { lastFailure?.message }
 
     @ObservationIgnored private let store: SessionStore
     @ObservationIgnored private let workspaceStore: SessionWorkspaceStore
     @ObservationIgnored private let resolver: RepositoryIdentityResolver
+    @ObservationIgnored private let gitInspector: any LocalGitInspecting
+    @ObservationIgnored private let recheckGate: (@MainActor () async -> Void)?
+    /// Canonical paths claimed by in-flight launches or pending warnings so
+    /// two simultaneous requests cannot both skip the occupancy check.
+    @ObservationIgnored private var occupancyClaims: [UUID: String] = [:]
 
-    init(store: SessionStore, workspaceStore: SessionWorkspaceStore) {
+    init(
+        store: SessionStore,
+        workspaceStore: SessionWorkspaceStore,
+        gitInspector: (any LocalGitInspecting)? = nil,
+        recheckGate: (@MainActor () async -> Void)? = nil
+    ) {
         self.store = store
         self.workspaceStore = workspaceStore
         self.resolver = RepositoryIdentityResolver()
+        self.gitInspector = gitInspector ?? LocalGitWorkingCopyInspector()
+        self.recheckGate = recheckGate
     }
 
     // MARK: - Drafts
@@ -165,7 +182,8 @@ final class SessionLaunchCoordinator {
     // MARK: - Launch
 
     /// Resolves and launches a draft. Returns the new session ID, or nil when
-    /// a one-time workspace choice is now pending at MainView.
+    /// a one-time workspace choice or shared-checkout warning is now pending
+    /// at MainView.
     ///
     /// Does not record `lastFailure` — the intent picker surfaces thrown
     /// errors itself. Contextual toolbar/card launches go through
@@ -175,14 +193,15 @@ final class SessionLaunchCoordinator {
         lastFailure = nil
         pendingChoice = nil
         presentsChoiceSheet = false
+        clearCollision(releasingClaim: true)
 
         // 1. Explicit override wins and skips association learning.
         if let overrideID = draft.workspaceID {
-            return try performLaunch(draft: draft, workspaceID: overrideID, rememberingAssociation: false)
+            return try await performLaunch(draft: draft, workspaceID: overrideID, rememberingAssociation: false)
         }
 
         if let resolved = await resolveWorkspace(purpose: draft.purpose, source: draft.source) {
-            return try performLaunch(draft: draft, workspaceID: resolved.id, rememberingAssociation: true)
+            return try await performLaunch(draft: draft, workspaceID: resolved.id, rememberingAssociation: true)
         }
 
         // 7. Ask once and remember.
@@ -200,7 +219,7 @@ final class SessionLaunchCoordinator {
     /// launches of the same source are one click. The pending draft and
     /// selected folder stay until this succeeds or the user cancels.
     @discardableResult
-    func confirmWorkspaceChoice(workspaceID: UUID) throws -> UUID? {
+    func confirmWorkspaceChoice(workspaceID: UUID) async throws -> UUID? {
         guard var choice = pendingChoice else { return nil }
         choice.selectedWorkspaceID = workspaceID
         pendingChoice = choice
@@ -213,7 +232,7 @@ final class SessionLaunchCoordinator {
             workspaceID: workspaceID
         )
         do {
-            return try performLaunch(draft: draft, workspaceID: workspaceID, rememberingAssociation: true)
+            return try await performLaunch(draft: draft, workspaceID: workspaceID, rememberingAssociation: true)
         } catch {
             lastFailure = SessionLaunchFailure(error: error)
             throw error
@@ -224,6 +243,56 @@ final class SessionLaunchCoordinator {
         pendingChoice = nil
         presentsChoiceSheet = false
         lastFailure = nil
+        clearCollision(releasingClaim: true)
+    }
+
+    /// Focuses a live occupant and launches nothing.
+    func focusExistingSession() {
+        guard let pending = pendingCollision,
+              let targetID = pending.focusedOccupantID,
+              pending.liveOccupants.contains(where: { $0.id == targetID }) else {
+            return
+        }
+        store.select(sessionID: targetID)
+        ConsoleNavigation.showSessions()
+        pendingChoice = nil
+        presentsChoiceSheet = false
+        lastFailure = nil
+        clearCollision(releasingClaim: true)
+    }
+
+    /// Explicit acknowledgement: launch in the same checkout without
+    /// resetting, stashing, switching branches, or stopping occupants.
+    @discardableResult
+    func continueInSameFolder() async throws -> UUID? {
+        guard let pending = pendingCollision else { return nil }
+        lastFailure = nil
+        do {
+            return try await performLaunch(
+                draft: pending.draft,
+                workspaceID: pending.workspaceID,
+                rememberingAssociation: pending.rememberingAssociation,
+                acknowledgeSharedCheckout: true,
+                existingClaimID: pending.claimID
+            )
+        } catch {
+            lastFailure = SessionLaunchFailure(error: error)
+            throw error
+        }
+    }
+
+    func cancelSharedCheckoutWarning() {
+        lastFailure = nil
+        clearCollision(releasingClaim: true)
+        if pendingChoice != nil {
+            presentsChoiceSheet = true
+        }
+    }
+
+    func updatePendingCollisionOccupant(_ occupantID: UUID?) {
+        guard var pending = pendingCollision else { return }
+        pending.selectedOccupantID = occupantID
+        pendingCollision = pending
     }
 
     func clearFailure() {
@@ -234,12 +303,17 @@ final class SessionLaunchCoordinator {
     /// the user can fix the Claude executable or workspace folders.
     func openSessionsSettings() {
         presentsChoiceSheet = false
+        presentsCollisionSheet = false
         lastFailure = nil
         ConsoleNavigation.showSettings()
     }
 
     /// Re-shows the chooser after a Settings visit if the user never cancelled.
     func restoreChoiceSheetIfNeeded() {
+        if pendingCollision != nil {
+            presentsCollisionSheet = true
+            return
+        }
         guard pendingChoice != nil else { return }
         presentsChoiceSheet = true
     }
@@ -300,9 +374,53 @@ final class SessionLaunchCoordinator {
     private func performLaunch(
         draft: SessionDraft,
         workspaceID: UUID,
-        rememberingAssociation: Bool
-    ) throws -> UUID {
+        rememberingAssociation: Bool,
+        acknowledgeSharedCheckout: Bool = false,
+        existingClaimID: UUID? = nil
+    ) async throws -> UUID? {
         let workspace = try requireValidWorkspace(workspaceID, purpose: draft.purpose)
+        let canonicalPath = CheckoutPath.canonical(workspace.directoryURL)
+
+        let claimID = existingClaimID ?? UUID()
+        if existingClaimID == nil {
+            occupancyClaims[claimID] = canonicalPath
+        }
+        var created = false
+        defer {
+            if !created, pendingCollision?.claimID != claimID {
+                occupancyClaims.removeValue(forKey: claimID)
+            }
+        }
+
+        if let recheckGate {
+            await recheckGate()
+        }
+
+        if !acknowledgeSharedCheckout,
+           let warning = await warningIfOccupied(
+            draft: draft,
+            workspaceID: workspaceID,
+            rememberingAssociation: rememberingAssociation,
+            canonicalPath: canonicalPath,
+            claimID: claimID
+           ) {
+            presentCollision(warning)
+            return nil
+        }
+
+        // Recheck immediately before create so two overlapping launches
+        // cannot both observe an empty occupant list and skip the warning.
+        if !acknowledgeSharedCheckout,
+           let warning = await warningIfOccupied(
+            draft: draft,
+            workspaceID: workspaceID,
+            rememberingAssociation: rememberingAssociation,
+            canonicalPath: canonicalPath,
+            claimID: claimID
+           ) {
+            presentCollision(warning)
+            return nil
+        }
 
         let request = SessionCreationRequest(
             purpose: draft.purpose,
@@ -312,6 +430,8 @@ final class SessionLaunchCoordinator {
         )
 
         let sessionID = try store.createSession(request: request)
+        created = true
+        occupancyClaims.removeValue(forKey: claimID)
 
         if rememberingAssociation, let identity = draft.source?.routingIdentity {
             workspaceStore.rememberAssociation(routingIdentity: identity, workspaceID: workspaceID)
@@ -321,8 +441,64 @@ final class SessionLaunchCoordinator {
         lastFailure = nil
         pendingChoice = nil
         presentsChoiceSheet = false
+        clearCollision(releasingClaim: false)
         ConsoleNavigation.showSessions()
         return sessionID
+    }
+
+    private func warningIfOccupied(
+        draft: SessionDraft,
+        workspaceID: UUID,
+        rememberingAssociation: Bool,
+        canonicalPath: String,
+        claimID: UUID
+    ) async -> PendingSharedCheckoutWarning? {
+        let first = occupancy(canonicalPath: canonicalPath, excludingClaim: claimID)
+        guard first.hasConflict else { return nil }
+        let gitState = await gitInspector.inspect(canonicalPath: canonicalPath)
+        let second = occupancy(canonicalPath: canonicalPath, excludingClaim: claimID)
+        guard second.hasConflict else { return nil }
+        return PendingSharedCheckoutWarning(
+            id: UUID(),
+            claimID: claimID,
+            draft: draft,
+            workspaceID: workspaceID,
+            rememberingAssociation: rememberingAssociation,
+            canonicalPath: canonicalPath,
+            occupants: second.occupants,
+            gitState: gitState,
+            selectedOccupantID: second.occupants.first(where: \.isLiveSession)?.id
+        )
+    }
+
+    private func occupancy(
+        canonicalPath: String,
+        excludingClaim claimID: UUID
+    ) -> SharedCheckoutOccupancy {
+        let live = store.liveEditingSessions(occupyingCanonicalPath: canonicalPath)
+        let otherClaimIDs = occupancyClaims.compactMap { id, path -> UUID? in
+            guard id != claimID, path == canonicalPath else { return nil }
+            return id
+        }
+        return SharedCheckoutOccupancy(live: live, otherClaimIDs: otherClaimIDs)
+    }
+
+    private func presentCollision(_ warning: PendingSharedCheckoutWarning) {
+        if let existing = pendingCollision, existing.claimID != warning.claimID {
+            occupancyClaims.removeValue(forKey: existing.claimID)
+        }
+        pendingCollision = warning
+        presentsCollisionSheet = true
+        presentsChoiceSheet = false
+        lastFailure = nil
+    }
+
+    private func clearCollision(releasingClaim: Bool) {
+        if releasingClaim, let pending = pendingCollision {
+            occupancyClaims.removeValue(forKey: pending.claimID)
+        }
+        pendingCollision = nil
+        presentsCollisionSheet = false
     }
 
     private func resolveWorkspace(purpose: SessionPurpose, source: SessionLaunchSource?) async -> SessionWorkspace? {
@@ -397,5 +573,27 @@ extension SessionLaunchFailure {
             return
         }
         self.init(message: error.localizedDescription, offersSettingsRoute: true)
+    }
+}
+
+private struct SharedCheckoutOccupancy {
+    let live: [ConsoleSession]
+    let otherClaimIDs: [UUID]
+
+    var hasConflict: Bool { !live.isEmpty || !otherClaimIDs.isEmpty }
+
+    var occupants: [SharedCheckoutOccupant] {
+        var result = live.map { session in
+            SharedCheckoutOccupant(
+                id: session.id,
+                name: session.name,
+                purpose: session.purpose,
+                isLiveSession: true
+            )
+        }
+        if result.isEmpty {
+            result.append(contentsOf: otherClaimIDs.map(SharedCheckoutOccupant.inFlightPlaceholder(claimID:)))
+        }
+        return result
     }
 }
