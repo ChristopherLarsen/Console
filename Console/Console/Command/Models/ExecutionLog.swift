@@ -1,6 +1,11 @@
 import Foundation
 
 struct ExecutionLogEntry: Identifiable {
+    enum Kind: Equatable {
+        case action
+        case completionCheck
+    }
+
     let id = UUID()
     let timestamp: Date
     let actionIndex: Int
@@ -8,6 +13,28 @@ struct ExecutionLogEntry: Identifiable {
     let payload: String
     let result: Result<String, Error>
     let durationMs: Int
+    let kind: Kind
+    let completionCheck: CompletionCheckRun?
+
+    init(
+        timestamp: Date,
+        actionIndex: Int,
+        actionType: CommandActionType,
+        payload: String,
+        result: Result<String, Error>,
+        durationMs: Int,
+        kind: Kind = .action,
+        completionCheck: CompletionCheckRun? = nil
+    ) {
+        self.timestamp = timestamp
+        self.actionIndex = actionIndex
+        self.actionType = actionType
+        self.payload = payload
+        self.result = result
+        self.durationMs = durationMs
+        self.kind = kind
+        self.completionCheck = completionCheck
+    }
 
     var isSuccess: Bool {
         if case .success = result { return true }
@@ -32,6 +59,16 @@ struct ExecutionResult {
 
     var failedSteps: [ExecutionLogEntry] {
         logs.filter { !$0.isSuccess }
+    }
+
+    /// Banner text for a failed run. A missing failed row used to surface as
+    /// "Unknown error" when only a completion check had failed.
+    static func failureBannerMessage(from logs: [ExecutionLogEntry]) -> String {
+        logs.first(where: { !$0.isSuccess })?.message ?? "Unknown error"
+    }
+
+    var failureBannerMessage: String {
+        Self.failureBannerMessage(from: logs)
     }
 }
 

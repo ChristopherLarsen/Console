@@ -108,6 +108,107 @@ final class CommandLoggingTests: XCTestCase {
         XCTAssertTrue(md.contains("Script timed out"))
     }
 
+    // MARK: - Execution log completion checks
+
+    func testCompletionCheckTimeoutLogIsFailedWithTypeElapsedAndTimeout() {
+        let run = CompletionCheckRun(
+            type: .fileExists,
+            value: "/tmp/console-review-17-missing",
+            elapsedMs: 250,
+            outcome: .timedOut
+        )
+        let entry = ExecutionLogEntry(
+            timestamp: Date(),
+            actionIndex: 0,
+            actionType: .appleScript,
+            payload: "completionCheck:fileExists:/tmp/console-review-17-missing",
+            result: .failure(
+                CompletionCheckError.timedOut(
+                    type: run.type,
+                    value: run.value,
+                    timeoutMS: 250,
+                    elapsedMs: run.elapsedMs
+                )
+            ),
+            durationMs: 250,
+            kind: .completionCheck,
+            completionCheck: run
+        )
+
+        XCTAssertFalse(entry.isSuccess)
+        XCTAssertEqual(entry.kind, .completionCheck)
+        XCTAssertEqual(entry.completionCheck?.type, .fileExists)
+        XCTAssertEqual(entry.completionCheck?.elapsedMs, 250)
+        XCTAssertEqual(entry.completionCheck?.outcome, .timedOut)
+        XCTAssertTrue(entry.message.localizedCaseInsensitiveContains("timed out"), entry.message)
+        XCTAssertTrue(entry.message.contains("fileExists"), entry.message)
+        XCTAssertTrue(entry.message.contains("250"), entry.message)
+        XCTAssertNotEqual(entry.message, "Unknown error")
+    }
+
+    func testFailedCompletionCheckDrivesBannerInsteadOfUnknownError() {
+        let success = ExecutionLogEntry(
+            timestamp: Date(),
+            actionIndex: 0,
+            actionType: .appleScript,
+            payload: "return \"ok\"",
+            result: .success("ok"),
+            durationMs: 12
+        )
+        let checkRun = CompletionCheckRun(
+            type: .windowTitle,
+            value: "Synthetic Review 17 Window",
+            elapsedMs: 500,
+            outcome: .timedOut
+        )
+        let failedCheck = ExecutionLogEntry(
+            timestamp: Date(),
+            actionIndex: 0,
+            actionType: .appleScript,
+            payload: "completionCheck:windowTitle:Synthetic Review 17 Window",
+            result: .failure(
+                CompletionCheckError.timedOut(
+                    type: checkRun.type,
+                    value: checkRun.value,
+                    timeoutMS: 500,
+                    elapsedMs: checkRun.elapsedMs
+                )
+            ),
+            durationMs: 500,
+            kind: .completionCheck,
+            completionCheck: checkRun
+        )
+        let logs = [success, failedCheck]
+        let banner = ExecutionResult.failureBannerMessage(from: logs)
+        XCTAssertEqual(banner, failedCheck.message)
+        XCTAssertNotEqual(banner, "Unknown error")
+        XCTAssertTrue(banner.localizedCaseInsensitiveContains("timed out"))
+        XCTAssertTrue(banner.contains("windowTitle"))
+    }
+
+    func testPassedCompletionCheckLogIncludesTypeAndElapsedTime() {
+        let run = CompletionCheckRun(
+            type: .delay,
+            value: "120",
+            elapsedMs: 120,
+            outcome: .passed
+        )
+        let entry = ExecutionLogEntry(
+            timestamp: Date(),
+            actionIndex: 1,
+            actionType: .shell,
+            payload: "completionCheck:delay:120",
+            result: .success(run.passedMessage),
+            durationMs: 120,
+            kind: .completionCheck,
+            completionCheck: run
+        )
+        XCTAssertTrue(entry.isSuccess)
+        XCTAssertTrue(entry.message.contains("delay"), entry.message)
+        XCTAssertTrue(entry.message.contains("120"), entry.message)
+        XCTAssertEqual(ExecutionResult.failureBannerMessage(from: [entry]), "Unknown error")
+    }
+
     func testMarkdownWithNoMatch() {
         let log = makeLog(result: .noMatch, matchedCommand: nil, confidence: nil)
         let md = CommandLogFileManager.shared.formatLogAsMarkdown(log)

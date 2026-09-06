@@ -129,15 +129,20 @@ final class LocalCommandExecutor: CommandRunning {
             }
 
             let actionStart = Date()
-            let result = await executeAction(action)
+            let outcome = await executeActionWithPolicy(action)
             let durationMs = Int(Date().timeIntervalSince(actionStart) * 1000)
+            let finalized = finalizeActionResult(
+                outcome.result,
+                attempts: outcome.attempts,
+                usedFallback: outcome.usedFallback
+            )
 
             let entry = ExecutionLogEntry(
                 timestamp: Date(),
                 actionIndex: index,
                 actionType: action.type,
                 payload: action.payload,
-                result: result,
+                result: finalized,
                 durationMs: durationMs
             )
             logs.append(entry)
@@ -152,22 +157,25 @@ final class LocalCommandExecutor: CommandRunning {
                 if failureBehavior == .stopOnError {
                     break
                 }
+                continue
             }
 
-            if entry.isSuccess, let check = action.completionCheck {
+            if let check = action.completionCheck {
                 let timeout = TimeInterval(action.timeoutMS) / 1000.0
-                let passed = await completionChecker.waitForCompletion(check, timeout: timeout)
-                if shouldHalt {
+                let checkRun = await completionChecker.evaluate(check, timeout: timeout)
+                logs.append(makeCompletionCheckLog(index: index, action: action, checkRun: checkRun))
+
+                if shouldHalt || checkRun.outcome == .cancelled {
                     overallSuccess = false
                     break
                 }
-                if !passed {
+                if checkRun.outcome != .passed {
                     overallSuccess = false
                     if failureBehavior == .stopOnError { break }
                 }
             }
 
-            if entry.isSuccess, action.delayAfterMS > 0 {
+            if action.delayAfterMS > 0 {
                 do {
                     try await Task.sleep(nanoseconds: UInt64(action.delayAfterMS) * 1_000_000)
                 } catch {
@@ -317,6 +325,167 @@ final class LocalCommandExecutor: CommandRunning {
 
     // MARK: - Action Dispatch
 
+    private struct ActionSequenceOutcome {
+        let result: Result<String, Error>
+        let attempts: Int
+        let usedFallback: Bool
+    }
+
+    private func executeActionWithPolicy(_ action: CommandAction) async -> ActionSequenceOutcome {
+        let policy = ActionAttemptPolicy(action: action)
+        var lastResult: Result<String, Error> = .failure(ActionExecutionError.cancelled)
+        var attempts = 0
+
+        for _ in 0..<policy.primaryAttemptCount {
+            if shouldHalt {
+                return ActionSequenceOutcome(
+                    result: .failure(ActionExecutionError.cancelled),
+                    attempts: attempts,
+                    usedFallback: false
+                )
+            }
+            attempts += 1
+            lastResult = await executeAction(action)
+            if case .success = lastResult {
+                return ActionSequenceOutcome(
+                    result: lastResult,
+                    attempts: attempts,
+                    usedFallback: false
+                )
+            }
+            if shouldHalt || isCancellation(lastResult) {
+                return ActionSequenceOutcome(
+                    result: .failure(ActionExecutionError.cancelled),
+                    attempts: attempts,
+                    usedFallback: false
+                )
+            }
+        }
+
+        guard policy.shouldRunFallback(primarySucceeded: false, isCancelled: shouldHalt) else {
+            return ActionSequenceOutcome(
+                result: lastResult,
+                attempts: attempts,
+                usedFallback: false
+            )
+        }
+        guard let fallback = action.fallbackAction else {
+            return ActionSequenceOutcome(
+                result: lastResult,
+                attempts: attempts,
+                usedFallback: false
+            )
+        }
+
+        let fallbackCommand = fallback.asCommandAction(timeoutMS: action.timeoutMS, order: action.order)
+        if let validationError = validator.validatePayload(fallbackCommand) {
+            return ActionSequenceOutcome(
+                result: .failure(ActionAttemptError.invalidFallback(validationError)),
+                attempts: attempts,
+                usedFallback: false
+            )
+        }
+        if shouldHalt {
+            return ActionSequenceOutcome(
+                result: .failure(ActionExecutionError.cancelled),
+                attempts: attempts,
+                usedFallback: false
+            )
+        }
+
+        let fallbackResult = await executeAction(fallbackCommand)
+        if shouldHalt || isCancellation(fallbackResult) {
+            return ActionSequenceOutcome(
+                result: .failure(ActionExecutionError.cancelled),
+                attempts: attempts,
+                usedFallback: true
+            )
+        }
+        return ActionSequenceOutcome(
+            result: fallbackResult,
+            attempts: attempts,
+            usedFallback: true
+        )
+    }
+
+    private func finalizeActionResult(
+        _ result: Result<String, Error>,
+        attempts: Int,
+        usedFallback: Bool
+    ) -> Result<String, Error> {
+        switch result {
+        case .success(let output):
+            if usedFallback {
+                return .success("Fallback succeeded after \(attempts) attempt(s): \(output)")
+            }
+            if attempts > 1 {
+                return .success("Succeeded on attempt \(attempts): \(output)")
+            }
+            return .success(output)
+        case .failure(let error):
+            if isCancellation(.failure(error)) {
+                return .failure(ActionExecutionError.cancelled)
+            }
+            if usedFallback {
+                return .failure(ActionAttemptError.fallbackFailed(attempts: attempts, underlying: error))
+            }
+            if attempts > 1 {
+                return .failure(ActionAttemptError.exhausted(attempts: attempts, underlying: error))
+            }
+            return .failure(error)
+        }
+    }
+
+    private func isCancellation(_ result: Result<String, Error>) -> Bool {
+        guard case .failure(let error) = result else { return false }
+        if error is CancellationError { return true }
+        if let actionError = error as? ActionExecutionError, case .cancelled = actionError {
+            return true
+        }
+        return false
+    }
+
+    private func makeCompletionCheckLog(
+        index: Int,
+        action: CommandAction,
+        checkRun: CompletionCheckRun
+    ) -> ExecutionLogEntry {
+        let result: Result<String, Error>
+        switch checkRun.outcome {
+        case .passed:
+            result = .success(checkRun.passedMessage)
+        case .timedOut:
+            result = .failure(
+                CompletionCheckError.timedOut(
+                    type: checkRun.type,
+                    value: checkRun.value,
+                    timeoutMS: action.timeoutMS,
+                    elapsedMs: checkRun.elapsedMs
+                )
+            )
+        case .failed:
+            result = .failure(
+                CompletionCheckError.failed(
+                    type: checkRun.type,
+                    value: checkRun.value,
+                    elapsedMs: checkRun.elapsedMs
+                )
+            )
+        case .cancelled:
+            result = .failure(ActionExecutionError.cancelled)
+        }
+        return ExecutionLogEntry(
+            timestamp: Date(),
+            actionIndex: index,
+            actionType: action.type,
+            payload: "completionCheck:\(checkRun.type.rawValue):\(checkRun.value)",
+            result: result,
+            durationMs: checkRun.elapsedMs,
+            kind: .completionCheck,
+            completionCheck: checkRun
+        )
+    }
+
     private func executeAction(_ action: CommandAction) async -> Result<String, Error> {
         if shouldHalt {
             return .failure(ActionExecutionError.cancelled)
@@ -370,8 +539,9 @@ final class LocalCommandExecutor: CommandRunning {
         if success {
             VisualFeedbackService.shared.show(.commandRecognized(command.name))
         } else {
-            let errorMsg = logs.first(where: { !$0.isSuccess })?.message ?? "Unknown error"
-            VisualFeedbackService.shared.show(.commandFailure(command.name, errorMsg))
+            VisualFeedbackService.shared.show(
+                .commandFailure(command.name, ExecutionResult.failureBannerMessage(from: logs))
+            )
         }
     }
 

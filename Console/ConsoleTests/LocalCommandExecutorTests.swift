@@ -7,6 +7,7 @@ final class LocalCommandExecutorTests: XCTestCase {
 
     private var originalConfirmation: Any?
     private var originalAuthorizeAll: Any?
+    private var originalFailureBehavior: Any?
     private var tempDirectories: [URL] = []
     private var pidsToReap: [pid_t] = []
 
@@ -16,8 +17,13 @@ final class LocalCommandExecutorTests: XCTestCase {
         executionTimeAllowance = 30
         originalConfirmation = UserDefaults.standard.object(forKey: "requireConfirmationForDangerous")
         originalAuthorizeAll = UserDefaults.standard.object(forKey: "requireAuthorizationForAllCommands")
+        originalFailureBehavior = UserDefaults.standard.object(forKey: "commandFailureBehavior")
         UserDefaults.standard.set(true, forKey: "requireConfirmationForDangerous")
         UserDefaults.standard.set(false, forKey: "requireAuthorizationForAllCommands")
+        UserDefaults.standard.set(
+            AppSettings.CommandFailureBehavior.stopOnError.rawValue,
+            forKey: "commandFailureBehavior"
+        )
         tempDirectories = []
         pidsToReap = []
     }
@@ -35,6 +41,7 @@ final class LocalCommandExecutorTests: XCTestCase {
         tempDirectories.removeAll()
         restore(originalConfirmation, key: "requireConfirmationForDangerous")
         restore(originalAuthorizeAll, key: "requireAuthorizationForAllCommands")
+        restore(originalFailureBehavior, key: "commandFailureBehavior")
         super.tearDown()
     }
 
@@ -505,6 +512,240 @@ final class LocalCommandExecutorTests: XCTestCase {
         XCTAssertFalse(executor.isExecuting)
     }
 
+    // MARK: - Retry, fallback, completion checks
+
+    func testRetryingFakeActionFailsTwiceThenSucceedsOnConfiguredAttempt() async {
+        let actions = SequenceActionExecutor(results: [
+            .failure(ActionExecutionError.appleScriptError("synthetic fail 1")),
+            .failure(ActionExecutionError.appleScriptError("synthetic fail 2")),
+            .success("ok")
+        ])
+        let executor = makeExecutor(actions: actions)
+        let command = makePolicyCommand(
+            name: "Synthetic Retry Then Succeed",
+            action: CommandAction(
+                type: .appleScript,
+                payload: Self.safeAppleScriptFixture,
+                order: 0,
+                delayAfterMS: 0,
+                retryOnFailure: true,
+                maxRetries: 3
+            )
+        )
+
+        let run = await executor.execute(command, skipAuthorization: true)
+
+        XCTAssertEqual(actions.executionCount, 3)
+        XCTAssertEqual(actions.payloads, [Self.safeAppleScriptFixture, Self.safeAppleScriptFixture, Self.safeAppleScriptFixture])
+        XCTAssertTrue(run.result.overallSuccess)
+        XCTAssertEqual(run.result.logs.count, 1)
+        XCTAssertTrue(run.result.logs[0].isSuccess)
+        XCTAssertTrue(run.result.logs[0].message.contains("attempt 3"), run.result.logs[0].message)
+    }
+
+    func testRetryStaysOffWhenMaxRetriesIsSetButFlagIsFalse() async {
+        let actions = SequenceActionExecutor(results: [
+            .failure(ActionExecutionError.appleScriptError("synthetic fail")),
+            .success("should not run")
+        ])
+        let executor = makeExecutor(actions: actions)
+        let command = makePolicyCommand(
+            name: "Synthetic Retry Off",
+            action: CommandAction(
+                type: .appleScript,
+                payload: Self.safeAppleScriptFixture,
+                order: 0,
+                delayAfterMS: 0,
+                retryOnFailure: false,
+                maxRetries: 5
+            )
+        )
+
+        let run = await executor.execute(command, skipAuthorization: true)
+
+        XCTAssertEqual(actions.executionCount, 1)
+        XCTAssertFalse(run.result.overallSuccess)
+        XCTAssertFalse(run.result.logs[0].isSuccess)
+    }
+
+    func testFallbackRunsOnlyAfterPrimaryAttemptsExhausted() async {
+        let actions = SequenceActionExecutor(results: [
+            .failure(ActionExecutionError.appleScriptError("synthetic fail 1")),
+            .failure(ActionExecutionError.appleScriptError("synthetic fail 2")),
+            .success("fallback-ok")
+        ])
+        let executor = makeExecutor(actions: actions)
+        let fallbackPayload = "return \"fallback\""
+        let command = makePolicyCommand(
+            name: "Synthetic Fallback After Exhaustion",
+            action: CommandAction(
+                type: .appleScript,
+                payload: Self.safeAppleScriptFixture,
+                order: 0,
+                delayAfterMS: 0,
+                retryOnFailure: true,
+                maxRetries: 2,
+                fallbackAction: FallbackAction(type: .appleScript, payload: fallbackPayload)
+            )
+        )
+
+        let run = await executor.execute(command, skipAuthorization: true)
+
+        XCTAssertEqual(actions.executionCount, 3)
+        XCTAssertEqual(actions.payloads, [
+            Self.safeAppleScriptFixture,
+            Self.safeAppleScriptFixture,
+            fallbackPayload
+        ])
+        XCTAssertTrue(run.result.overallSuccess)
+        XCTAssertTrue(run.result.logs[0].message.localizedCaseInsensitiveContains("fallback"), run.result.logs[0].message)
+    }
+
+    func testFallbackDoesNotRunAfterCancellationDuringRetry() async {
+        let actions = FailThenHoldActionExecutor()
+        let executor = makeExecutor(actions: actions)
+        defer { actions.resume() }
+        let fallbackPayload = "return \"fallback\""
+        let command = makePolicyCommand(
+            name: "Synthetic Cancel Skips Fallback",
+            action: CommandAction(
+                type: .appleScript,
+                payload: Self.safeAppleScriptFixture,
+                order: 0,
+                delayAfterMS: 0,
+                retryOnFailure: true,
+                maxRetries: 3,
+                fallbackAction: FallbackAction(type: .appleScript, payload: fallbackPayload)
+            )
+        )
+
+        let task = Task { await executor.execute(command, skipAuthorization: true) }
+        guard await waitUntil({ actions.isHolding && executor.isExecuting }) else {
+            _ = await task.value
+            return
+        }
+        executor.cancelExecution()
+        let run = await task.value
+
+        XCTAssertFalse(run.result.overallSuccess)
+        XCTAssertEqual(actions.executionCount, 2)
+        XCTAssertFalse(actions.payloads.contains(fallbackPayload))
+        XCTAssertFalse(executor.isExecuting)
+    }
+
+    func testInvalidFallbackIsRejectedWithoutExecutingIt() async {
+        let actions = SequenceActionExecutor(results: [
+            .failure(ActionExecutionError.appleScriptError("synthetic fail"))
+        ])
+        let executor = makeExecutor(actions: actions)
+        let command = makePolicyCommand(
+            name: "Synthetic Invalid Fallback Runtime",
+            action: CommandAction(
+                type: .appleScript,
+                payload: Self.safeAppleScriptFixture,
+                order: 0,
+                delayAfterMS: 0,
+                retryOnFailure: false,
+                fallbackAction: FallbackAction(type: .appleScript, payload: "   ")
+            )
+        )
+
+        let run = await executor.execute(command, skipAuthorization: true)
+
+        XCTAssertEqual(actions.executionCount, 1)
+        XCTAssertEqual(actions.payloads, [Self.safeAppleScriptFixture])
+        XCTAssertFalse(run.result.overallSuccess)
+        XCTAssertTrue(
+            run.result.logs[0].message.localizedCaseInsensitiveContains("fallback"),
+            run.result.logs[0].message
+        )
+        XCTAssertNotEqual(ExecutionResult.failureBannerMessage(from: run.result.logs), "Unknown error")
+    }
+
+    func testCompletionTimeoutProducesFailedRowAndActionableBanner() async {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("console-review-17-missing-\(UUID().uuidString)")
+        let actions = ActionExecutorSpy()
+        let executor = makeExecutor(actions: actions)
+        let command = makePolicyCommand(
+            name: "Synthetic Completion Timeout",
+            action: CommandAction(
+                type: .appleScript,
+                payload: Self.safeAppleScriptFixture,
+                order: 0,
+                delayAfterMS: 0,
+                timeoutMS: 250,
+                completionCheck: .fileExists(missing.path)
+            )
+        )
+
+        let start = Date()
+        let run = await executor.execute(command, skipAuthorization: true)
+
+        XCTAssertEqual(actions.executionCount, 1)
+        XCTAssertFalse(run.result.overallSuccess)
+        XCTAssertEqual(run.result.logs.count, 2)
+        XCTAssertTrue(run.result.logs[0].isSuccess)
+        let checkLog = run.result.logs[1]
+        XCTAssertEqual(checkLog.kind, .completionCheck)
+        XCTAssertFalse(checkLog.isSuccess)
+        XCTAssertEqual(checkLog.completionCheck?.type, .fileExists)
+        XCTAssertEqual(checkLog.completionCheck?.outcome, .timedOut)
+        XCTAssertGreaterThan(checkLog.completionCheck?.elapsedMs ?? 0, 0)
+        XCTAssertTrue(checkLog.message.localizedCaseInsensitiveContains("timed out"), checkLog.message)
+        XCTAssertTrue(checkLog.message.contains("fileExists"), checkLog.message)
+        XCTAssertTrue(checkLog.message.contains("250"), checkLog.message)
+        let banner = ExecutionResult.failureBannerMessage(from: run.result.logs)
+        XCTAssertEqual(banner, checkLog.message)
+        XCTAssertNotEqual(banner, "Unknown error")
+        XCTAssertLessThan(Date().timeIntervalSince(start), 3)
+    }
+
+    func testContinueOnErrorRunsLaterActionAfterCompletionTimeout() async {
+        UserDefaults.standard.set(
+            AppSettings.CommandFailureBehavior.continueOnError.rawValue,
+            forKey: "commandFailureBehavior"
+        )
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("console-review-17-missing-\(UUID().uuidString)")
+        let laterPayload = "return \"later\""
+        let actions = SequenceActionExecutor(results: [
+            .success("ok"),
+            .success("later-ok")
+        ])
+        let executor = makeExecutor(actions: actions)
+        let command = Command(
+            name: "Synthetic Continue After Check",
+            triggerPhrases: ["synthetic executor policy"],
+            actions: [
+                CommandAction(
+                    type: .appleScript,
+                    payload: Self.safeAppleScriptFixture,
+                    order: 0,
+                    delayAfterMS: 0,
+                    timeoutMS: 200,
+                    completionCheck: .fileExists(missing.path)
+                ),
+                CommandAction(
+                    type: .appleScript,
+                    payload: laterPayload,
+                    order: 1,
+                    delayAfterMS: 0
+                )
+            ],
+            executionMode: .appleScript,
+            requiresConfirmation: false
+        )
+
+        let run = await executor.execute(command, skipAuthorization: true)
+
+        XCTAssertFalse(run.result.overallSuccess)
+        XCTAssertEqual(actions.payloads, [Self.safeAppleScriptFixture, laterPayload])
+        XCTAssertEqual(run.result.logs.count, 3)
+        XCTAssertTrue(run.result.logs[2].isSuccess)
+        XCTAssertNotEqual(ExecutionResult.failureBannerMessage(from: run.result.logs), "Unknown error")
+    }
+
     // MARK: - Helpers
 
     private func makeExecutor(actions: any CommandActionExecuting) -> LocalCommandExecutor {
@@ -524,6 +765,16 @@ final class LocalCommandExecutorTests: XCTestCase {
             name: name,
             triggerPhrases: ["synthetic executor overlap"],
             actions: actions,
+            executionMode: .appleScript,
+            requiresConfirmation: false
+        )
+    }
+
+    private func makePolicyCommand(name: String, action: CommandAction) -> Command {
+        Command(
+            name: name,
+            triggerPhrases: ["synthetic executor policy"],
+            actions: [action],
             executionMode: .appleScript,
             requiresConfirmation: false
         )
@@ -686,6 +937,110 @@ private final class GatingActionExecutor: CommandActionExecuting, @unchecked Sen
             }
         }
         return "ok"
+    }
+
+    func resume(with output: String = "ok") {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        _isHolding = false
+        lock.unlock()
+        pending?.resume(returning: output)
+    }
+}
+
+private final class SequenceActionExecutor: CommandActionExecuting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var remaining: [Result<String, Error>]
+    private var _payloads: [String] = []
+    private var _executionCount = 0
+
+    var payloads: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _payloads
+    }
+
+    var executionCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _executionCount
+    }
+
+    init(results: [Result<String, Error>]) {
+        remaining = results
+    }
+
+    func execute(_ action: CommandAction) async throws -> String {
+        lock.lock()
+        _executionCount += 1
+        _payloads.append(action.payload)
+        let next: Result<String, Error>
+        if remaining.isEmpty {
+            next = .failure(ActionExecutionError.appleScriptError("synthetic exhausted"))
+        } else {
+            next = remaining.removeFirst()
+        }
+        lock.unlock()
+        switch next {
+        case .success(let output):
+            return output
+        case .failure(let error):
+            throw error
+        }
+    }
+}
+
+private final class FailThenHoldActionExecutor: CommandActionExecuting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    private var continuation: CheckedContinuation<String, Error>?
+    private var _payloads: [String] = []
+    private var _isHolding = false
+
+    var executionCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return count
+    }
+
+    var isHolding: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _isHolding
+    }
+
+    var payloads: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _payloads
+    }
+
+    func execute(_ action: CommandAction) async throws -> String {
+        let attempt: Int = {
+            lock.lock(); defer { lock.unlock() }
+            count += 1
+            _payloads.append(action.payload)
+            return count
+        }()
+        if attempt == 1 {
+            throw ActionExecutionError.appleScriptError("synthetic first fail")
+        }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                self.lock.lock()
+                if Task.isCancelled {
+                    self.lock.unlock()
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                self.continuation = continuation
+                self._isHolding = true
+                self.lock.unlock()
+            }
+        } onCancel: {
+            self.lock.lock()
+            let pending = self.continuation
+            self.continuation = nil
+            self._isHolding = false
+            self.lock.unlock()
+            pending?.resume(throwing: CancellationError())
+        }
     }
 
     func resume(with output: String = "ok") {

@@ -112,17 +112,18 @@ final class CommandExecutor {
             context.state = .executing
             context.log("Action \(index): \(action.actionDescription)")
 
-            // Execute with retry logic
+            let policy = ActionAttemptPolicy(action: action)
             var lastError: Error?
             var attempts = 0
-            let maxAttempts = action.retryOnFailure ? (action.maxRetries ?? 3) : 1
 
-            while attempts < maxAttempts {
+            while attempts < policy.primaryAttemptCount {
+                if cancellationToken?.isCancelled == true {
+                    context.log("Cancelled by user")
+                    return .cancelled(atAction: index, log: context.fullLog)
+                }
                 attempts += 1
                 if attempts > 1 {
-                    context.log("Retry \(attempts)/\(maxAttempts)")
-                    let backoff = TimeInterval(1 << (attempts - 2))
-                    try? await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
+                    context.log("Retry \(attempts)/\(policy.primaryAttemptCount)")
                 }
 
                 do {
@@ -136,14 +137,23 @@ final class CommandExecutor {
                 }
             }
 
-            // Handle failure with optional fallback
             if let error = lastError {
-                if let fallback = action.fallbackAction {
+                let cancelled = cancellationToken?.isCancelled == true
+                if policy.shouldRunFallback(primarySucceeded: false, isCancelled: cancelled),
+                   let fallback = action.fallbackAction {
                     context.log("Trying fallback for action \(index)")
-                    let fallbackCommandAction = CommandAction(
-                        type: fallback.type,
-                        payload: fallback.payload
+                    let fallbackCommandAction = fallback.asCommandAction(
+                        timeoutMS: action.timeoutMS,
+                        order: action.order
                     )
+                    if let validationError = validator.validatePayload(fallbackCommandAction) {
+                        context.state = .failed
+                        return .failed(
+                            error: "Action \(index) fallback is invalid: \(validationError)",
+                            atAction: index,
+                            log: context.fullLog
+                        )
+                    }
                     do {
                         let fallbackResult = try await actionExecutor.execute(fallbackCommandAction)
                         context.log("Fallback succeeded: \(fallbackResult)")
@@ -156,6 +166,9 @@ final class CommandExecutor {
                             log: context.fullLog
                         )
                     }
+                } else if cancelled {
+                    context.log("Cancelled by user")
+                    return .cancelled(atAction: index, log: context.fullLog)
                 } else {
                     context.state = .failed
                     return .failed(
@@ -176,12 +189,28 @@ final class CommandExecutor {
             if let check = action.completionCheck {
                 context.log("Completion check: \(check.type.rawValue) = '\(check.value)'")
                 let timeout = TimeInterval(action.timeoutMS) / 1000.0
-                let passed = await completionChecker.waitForCompletion(check, timeout: timeout)
-                if !passed {
-                    context.log("Completion check timed out after \(action.timeoutMS)ms")
+                let checkRun = await completionChecker.evaluate(check, timeout: timeout)
+                switch checkRun.outcome {
+                case .passed:
+                    context.log("Completion check passed (\(checkRun.elapsedMs)ms)")
+                case .cancelled:
+                    context.log("Completion check cancelled after \(checkRun.elapsedMs)ms")
+                    return .cancelled(atAction: index, log: context.fullLog)
+                case .timedOut:
+                    context.log("Completion check timed out after \(checkRun.elapsedMs)ms")
                     return .timeout(atAction: index, log: context.fullLog)
+                case .failed:
+                    context.log("Completion check failed after \(checkRun.elapsedMs)ms")
+                    return .failed(
+                        error: CompletionCheckError.failed(
+                            type: checkRun.type,
+                            value: checkRun.value,
+                            elapsedMs: checkRun.elapsedMs
+                        ).localizedDescription,
+                        atAction: index,
+                        log: context.fullLog
+                    )
                 }
-                context.log("Completion check passed")
             }
         }
 
