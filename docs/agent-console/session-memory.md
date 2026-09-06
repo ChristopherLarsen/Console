@@ -6,11 +6,11 @@ _Rewritten 2026-09-06 during review-item implementation._
 
 ## Next Intended Move
 
-Continue `docs/reviews/2026-09-06-ios-workflow-review.md`. On `main` after merging 18: 01–19, 20a, 20b, 22, 24. In flight: 20c (results UI). After 20c: 21, then 23. Max three isolated worktrees.
+Continue `docs/reviews/2026-09-06-ios-workflow-review.md`. On `main` after merging 20c: 01–20, 22, 24. Next: 21 (Simulator install/launch), then 23 (keyboard actions). Those are the last remaining slices.
 
 ## Working Findings
 
-- P0/P1 complete. 18: collapsible/resizable session list and Focus Session (⌘⇧F); item 22 sheets kept. Live 800×500 / 1100×700 light/dark visual check was not performed.
+- P0/P1 complete. 20c: Settings iOS job panel; Open Result/Source, Copy Error, Rerun Failed Tests from validated IDs. No live Simulator smoke.
 - Item 02 branch remains in the shared Cursor tree. Do not `worktree remove` that path.
 - Uncommitted on `main`: `docs/reviews/` and 800×500 overview fact. Do not commit unless asked.
 
