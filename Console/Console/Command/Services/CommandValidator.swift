@@ -98,12 +98,14 @@ struct CommandValidator {
     }
 
     private func validateShellPayload(_ payload: String) -> String? {
-        let components = payload.components(separatedBy: " ")
-        guard let command = components.first, !command.isEmpty else {
-            return "Shell command cannot be empty"
+        let parsed: ShellPayload
+        do {
+            parsed = try ShellPayload.resolve(payload)
+        } catch {
+            return error.localizedDescription
         }
-        if !isAllowedShellCommand(command) {
-            return "Command '\(command)' is not allowed for safety reasons"
+        if !isAllowedShellCommand(parsed.command) {
+            return "Command '\(parsed.command)' is not allowed for safety reasons"
         }
         return nil
     }

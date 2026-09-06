@@ -152,18 +152,19 @@ final class ActionExecutor: CommandActionExecuting {
         processRunner: any ProcessRunning,
         timeoutMS: Int
     ) async throws -> String {
-        let components = payload.components(separatedBy: " ")
-        guard let command = components.first, !command.isEmpty else {
-            throw ActionExecutionError.invalidPayload("Empty shell command")
+        let launch: ProcessLaunchSpec
+        do {
+            launch = try ShellPayload.resolve(payload).processLaunch
+        } catch {
+            throw ActionExecutionError.invalidPayload(error.localizedDescription)
         }
 
-        let args = Array(components.dropFirst())
         let result: ProcessResult
         do {
             result = try await processRunner.run(
-                executablePath: "/usr/bin/env",
-                arguments: [command] + args,
-                workingDirectory: nil
+                executablePath: launch.executablePath,
+                arguments: launch.arguments,
+                workingDirectory: launch.workingDirectory
             )
         } catch is CancellationError {
             throw ActionExecutionError.cancelled
