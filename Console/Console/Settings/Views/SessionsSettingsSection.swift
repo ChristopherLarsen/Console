@@ -5,6 +5,7 @@ import SwiftUI
 /// and opaque hashes — never source content.
 struct SessionsSettingsSection: View {
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
+    @Environment(IOSProjectProfileStore.self) private var iosProfileStore
     @State private var renamingID: UUID?
     @State private var renameText = ""
 
@@ -89,6 +90,7 @@ struct SessionsSettingsSection: View {
                         workspaceStore.setDefault(id: workspace.id)
                     }
                     Button("Remove", role: .destructive) {
+                        iosProfileStore.removeProfile(for: workspace.id)
                         workspaceStore.remove(id: workspace.id)
                     }
                 } label: {

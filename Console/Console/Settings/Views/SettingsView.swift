@@ -54,6 +54,7 @@ struct SettingsView: View {
                 generalSection
                 claudeSection
                 SessionsSettingsSection()
+                IOSProjectSettingsSection()
                 urlsSection
                 popupsSection
                 permissionsSection
