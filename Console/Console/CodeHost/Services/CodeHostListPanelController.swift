@@ -42,10 +42,16 @@ final class CodeHostListPanelController {
     private(set) var presentation: Presentation = .cards
     private(set) var isRefreshing = false
 
+    /// True when in-flight work was cancelled because the panel disappeared.
+    private(set) var isSuspended = false
+
+    /// True when the next appearance should start or resume extraction
+    /// rather than preserving the current cards.
+    private(set) var needsExtraction = false
+
     private var generation = 0
     private var extractionTask: Task<Void, Never>?
     private var lastConfiguredURLString: String?
-    private var hasStarted = false
 
     init(
         kind: CodeHostListKind,
@@ -71,26 +77,23 @@ final class CodeHostListPanelController {
 
     // MARK: - Lifecycle
 
-    /// Loads the configured list and extracts it once when the view appears.
+    /// Loads, resumes, or re-binds the configured list when the view appears.
     func startIfNeeded() {
-        guard !hasStarted else {
-            reevaluateConfiguration()
-            return
-        }
-        hasStarted = true
-        refresh()
+        syncWithConfiguration(resumeIncomplete: true)
     }
 
     /// Called when the configured URL may have changed; restarts work only if
     /// the effective URL actually changed.
     func configurationChanged() {
-        guard hasStarted else {
-            reevaluateConfiguration()
-            return
-        }
-        let urlString = configuredURLStringProvider().flatMap(ListURLNormalization.normalized)
-        if urlString != lastConfiguredURLString {
-            refresh(forceReload: true)
+        syncWithConfiguration(resumeIncomplete: false)
+    }
+
+    /// Starts or resumes extraction if the current URL still needs work;
+    /// otherwise performs a manual reload. The first load is not doubled.
+    func startOrRefresh() {
+        startIfNeeded()
+        if !isRefreshing {
+            refresh()
         }
     }
 
@@ -98,44 +101,24 @@ final class CodeHostListPanelController {
     /// retained until a complete successful extraction replaces them; a
     /// failed refresh marks them stale instead of showing a false zero.
     func refresh(forceReload: Bool = true) {
-        extractionTask?.cancel()
-        generation += 1
-        let currentGeneration = generation
-
-        guard let raw = configuredURLStringProvider(),
-              !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            lastConfiguredURLString = nil
-            state = .unconfigured
-            return
-        }
-
-        guard let url = ListURLNormalization.url(from: raw) else {
-            lastConfiguredURLString = nil
-            state = .unconfigured
-            return
-        }
-
-        lastConfiguredURLString = url.absoluteString
-        isRefreshing = true
-        switch state {
-        case .loaded, .stale:
-            break // keep prior cards visible during the refresh
-        default:
-            state = .loadingPage
-        }
-
-        extractionTask = Task { [weak self] in
-            await self?.runExtraction(url: url, requestedGeneration: currentGeneration)
-        }
+        beginExtraction(invalidatingSource: false, forceReload: forceReload)
     }
 
     /// Cancels pending extraction when the view is torn down. The retained
-    /// page itself stays alive in the session store.
+    /// page itself stays alive in the session store. Incomplete first-loads
+    /// are marked suspended so the next appearance can resume them.
     func cancelPendingWork() {
+        let wasInFlight = extractionTask != nil || isRefreshing
         extractionTask?.cancel()
         extractionTask = nil
         isRefreshing = false
+        if wasInFlight {
+            generation += 1
+            if Self.isIncomplete(state) {
+                isSuspended = true
+                needsExtraction = true
+            }
+        }
     }
 
     // MARK: - Presentation
@@ -178,40 +161,48 @@ final class CodeHostListPanelController {
     // MARK: - Extraction pipeline
 
     private func runExtraction(url: URL, requestedGeneration: Int) async {
-        let didLoad = await pageLoader(page, URLRequest(url: url))
+        defer { settleRefreshingIfCurrent(requestedGeneration) }
 
-        guard !Task.isCancelled, generation == requestedGeneration else { return }
+        let didLoad = await pageLoader(page, URLRequest(url: url))
+        guard isCurrent(requestedGeneration) else { return }
 
         guard didLoad else {
             retainOr(.extractionFailed, reason: .extractionFailed)
-            isRefreshing = false
             return
+        }
+
+        switch state {
+        case .loaded, .stale:
+            break
+        default:
+            state = .extracting
         }
 
         var outcome: MergeRequestListExtractionResult?
         for attempt in 0..<readinessAttempts where !Task.isCancelled {
+            guard isCurrent(requestedGeneration) else { return }
             if let result = await extractOnce() {
                 // A decisive answer ends the readiness loop; `unsupported`
                 // keeps waiting briefly because the host may still be rendering.
+                guard isCurrent(requestedGeneration) else { return }
                 outcome = result
                 if !isIndeterminate(result) { break }
             }
             if attempt < readinessAttempts - 1 {
                 try? await Task.sleep(nanoseconds: readinessIntervalNanoseconds)
+                guard isCurrent(requestedGeneration) else { return }
             }
         }
 
-        guard !Task.isCancelled, generation == requestedGeneration else { return }
+        guard isCurrent(requestedGeneration) else { return }
 
         guard let outcome else {
             // No attempt ever produced a readable payload: our extraction
             // machinery failed; this is not evidence of an unsupported page.
             retainOr(.extractionFailed, reason: .extractionFailed)
-            isRefreshing = false
             return
         }
-        apply(outcome)
-        isRefreshing = false
+        apply(outcome, generation: requestedGeneration)
     }
 
     /// Returns true when the main-frame navigation reached `.finished`.
@@ -262,6 +253,8 @@ final class CodeHostListPanelController {
         guard appliedGeneration == self.generation else { return }
         apply(outcome)
         isRefreshing = false
+        needsExtraction = false
+        isSuspended = false
     }
 
     private func apply(_ outcome: MergeRequestListExtractionResult) {
@@ -295,12 +288,88 @@ final class CodeHostListPanelController {
         }
     }
 
-    private func reevaluateConfiguration() {
-        let hasURL = configuredURLStringProvider()
-            .map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            ?? false
-        if !hasURL {
+    private func syncWithConfiguration(resumeIncomplete: Bool) {
+        guard let url = effectiveConfiguredURL() else {
+            applyMissingConfiguration()
+            return
+        }
+
+        if lastConfiguredURLString != url.absoluteString {
+            beginExtraction(invalidatingSource: true)
+            return
+        }
+
+        if resumeIncomplete, !isRefreshing, needsExtraction || Self.isIncomplete(state) {
+            beginExtraction(invalidatingSource: false)
+        }
+    }
+
+    private func applyMissingConfiguration() {
+        extractionTask?.cancel()
+        extractionTask = nil
+        generation += 1
+        lastConfiguredURLString = nil
+        needsExtraction = false
+        isSuspended = false
+        isRefreshing = false
+        state = .unconfigured
+    }
+
+    private func beginExtraction(invalidatingSource: Bool, forceReload _: Bool = true) {
+        extractionTask?.cancel()
+        extractionTask = nil
+        generation += 1
+        let currentGeneration = generation
+        needsExtraction = false
+        isSuspended = false
+
+        guard let url = effectiveConfiguredURL() else {
+            lastConfiguredURLString = nil
+            isRefreshing = false
             state = .unconfigured
+            return
+        }
+
+        lastConfiguredURLString = url.absoluteString
+        isRefreshing = true
+        if invalidatingSource {
+            state = .loadingPage
+        } else {
+            switch state {
+            case .loaded, .stale:
+                break // keep prior cards visible during a same-source refresh
+            default:
+                state = .loadingPage
+            }
+        }
+
+        extractionTask = Task { [weak self] in
+            await self?.runExtraction(url: url, requestedGeneration: currentGeneration)
+        }
+    }
+
+    private func effectiveConfiguredURL() -> URL? {
+        configuredURLStringProvider().flatMap(ListURLNormalization.url(from:))
+    }
+
+    private func isCurrent(_ requestedGeneration: Int) -> Bool {
+        !Task.isCancelled && generation == requestedGeneration
+    }
+
+    private func settleRefreshingIfCurrent(_ requestedGeneration: Int) {
+        guard generation == requestedGeneration else { return }
+        isRefreshing = false
+        needsExtraction = false
+        isSuspended = false
+        extractionTask = nil
+    }
+
+    private static func isIncomplete(_ state: MergeRequestListPanelState) -> Bool {
+        switch state {
+        case .loadingPage, .extracting:
+            return true
+        default:
+            return false
         }
     }
 }
