@@ -5,11 +5,43 @@ struct CompletionCheck: Codable, Hashable {
     let value: String
 }
 
-enum CompletionCheckType: String, Codable {
+enum CompletionCheckType: String, Codable, Sendable {
     case appRunning
     case fileExists
     case windowTitle
     case delay
+}
+
+enum CompletionCheckOutcome: String, Equatable, Sendable {
+    case passed
+    case timedOut
+    case failed
+    case cancelled
+}
+
+struct CompletionCheckRun: Equatable, Sendable {
+    let type: CompletionCheckType
+    let value: String
+    let elapsedMs: Int
+    let outcome: CompletionCheckOutcome
+
+    var passedMessage: String {
+        "Completion check passed: \(type.rawValue) '\(value)' (\(elapsedMs)ms)"
+    }
+}
+
+enum CompletionCheckError: LocalizedError, Equatable {
+    case timedOut(type: CompletionCheckType, value: String, timeoutMS: Int, elapsedMs: Int)
+    case failed(type: CompletionCheckType, value: String, elapsedMs: Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .timedOut(let type, let value, let timeoutMS, let elapsedMs):
+            return "Completion check timed out: \(type.rawValue) '\(value)' did not succeed within \(timeoutMS)ms (waited \(elapsedMs)ms)"
+        case .failed(let type, let value, let elapsedMs):
+            return "Completion check failed: \(type.rawValue) '\(value)' after \(elapsedMs)ms"
+        }
+    }
 }
 
 // MARK: - Factory Methods

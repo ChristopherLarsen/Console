@@ -150,6 +150,21 @@ struct CommandAction: Codable, Identifiable, Hashable {
 struct FallbackAction: Codable, Hashable {
     let type: CommandActionType
     let payload: String
+
+    /// Fallback runs once: no nested retry, delay, or completion check.
+    func asCommandAction(timeoutMS: Int, order: Int = 0) -> CommandAction {
+        CommandAction(
+            type: type,
+            payload: payload,
+            order: order,
+            delayAfterMS: 0,
+            timeoutMS: timeoutMS,
+            retryOnFailure: false,
+            maxRetries: nil,
+            completionCheck: nil,
+            fallbackAction: nil
+        )
+    }
 }
 
 // MARK: - Action Payload Protocol

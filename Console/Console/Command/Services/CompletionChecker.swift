@@ -8,43 +8,60 @@ final class CompletionChecker {
         _ check: CompletionCheck,
         timeout: TimeInterval
     ) async -> Bool {
-        if Task.isCancelled { return false }
+        await evaluate(check, timeout: timeout).outcome == .passed
+    }
+
+    func evaluate(
+        _ check: CompletionCheck,
+        timeout: TimeInterval
+    ) async -> CompletionCheckRun {
+        let start = Date()
+        func finish(_ outcome: CompletionCheckOutcome) -> CompletionCheckRun {
+            CompletionCheckRun(
+                type: check.type,
+                value: check.value,
+                elapsedMs: max(0, Int(Date().timeIntervalSince(start) * 1000)),
+                outcome: outcome
+            )
+        }
+
+        if Task.isCancelled { return finish(.cancelled) }
         let deadline = Date().addingTimeInterval(timeout)
         let pollInterval: UInt64 = 100_000_000
 
         switch check.type {
         case .delay:
-            guard let ms = Int(check.value), ms >= 0 else { return false }
+            guard let ms = Int(check.value), ms >= 0 else { return finish(.failed) }
             do {
                 try await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
-                return !Task.isCancelled
+                return finish(Task.isCancelled ? .cancelled : .passed)
             } catch {
-                return false
+                return finish(.cancelled)
             }
 
         case .appRunning:
             while Date() < deadline {
-                if Task.isCancelled { return false }
-                if isAppRunning(check.value) { return true }
-                if await sleepOrCancel(nanoseconds: pollInterval) { return false }
+                if Task.isCancelled { return finish(.cancelled) }
+                if isAppRunning(check.value) { return finish(.passed) }
+                if await sleepOrCancel(nanoseconds: pollInterval) { return finish(.cancelled) }
             }
 
         case .fileExists:
             while Date() < deadline {
-                if Task.isCancelled { return false }
-                if doesFileExist(check.value) { return true }
-                if await sleepOrCancel(nanoseconds: pollInterval) { return false }
+                if Task.isCancelled { return finish(.cancelled) }
+                if doesFileExist(check.value) { return finish(.passed) }
+                if await sleepOrCancel(nanoseconds: pollInterval) { return finish(.cancelled) }
             }
 
         case .windowTitle:
             while Date() < deadline {
-                if Task.isCancelled { return false }
-                if doesWindowExist(withTitle: check.value) { return true }
-                if await sleepOrCancel(nanoseconds: pollInterval) { return false }
+                if Task.isCancelled { return finish(.cancelled) }
+                if doesWindowExist(withTitle: check.value) { return finish(.passed) }
+                if await sleepOrCancel(nanoseconds: pollInterval) { return finish(.cancelled) }
             }
         }
 
-        return false
+        return finish(.timedOut)
     }
 
     /// Returns `true` when the wait ended because the task was cancelled.

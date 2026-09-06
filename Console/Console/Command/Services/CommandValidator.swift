@@ -26,11 +26,29 @@ struct CommandValidator {
             if !isValidActionType(action) {
                 return .failure("Unsupported action type: \(action.type.rawValue)")
             }
+            if let fallback = action.fallbackAction {
+                let fallbackCommand = fallback.asCommandAction(timeoutMS: action.timeoutMS)
+                if !isValidActionType(fallbackCommand) {
+                    return .failure("Unsupported fallback action type: \(fallback.type.rawValue)")
+                }
+            }
         }
 
         for (index, action) in command.actions.enumerated() {
             if let error = validatePayload(action) {
                 return .failure("Action \(index + 1): \(error)")
+            }
+            if let fallback = action.fallbackAction {
+                let fallbackCommand = fallback.asCommandAction(timeoutMS: action.timeoutMS)
+                if let error = validatePayload(fallbackCommand) {
+                    return .failure("Action \(index + 1) fallback: \(error)")
+                }
+            }
+            if let message = ActionAttemptPolicy.retryLimitValidationMessage(
+                retryOnFailure: action.retryOnFailure,
+                maxRetries: action.maxRetries
+            ) {
+                return .failure("Action \(index + 1): \(message)")
             }
         }
 
@@ -137,14 +155,17 @@ struct CommandValidator {
         ]
 
         for action in command.actions {
-            let text = action.payload.lowercased()
+            let payloads = [action.payload] + [action.fallbackAction?.payload].compactMap { $0 }
+            for payload in payloads {
+                let text = payload.lowercased()
 
-            for (pattern, severity, message) in dangerousPatterns {
-                if text.contains(pattern) {
-                    return DangerDetection(
-                        message: "\(message). Payload: \(action.payload)",
-                        severity: severity
-                    )
+                for (pattern, severity, message) in dangerousPatterns {
+                    if text.contains(pattern) {
+                        return DangerDetection(
+                            message: "\(message). Payload: \(payload)",
+                            severity: severity
+                        )
+                    }
                 }
             }
         }
