@@ -60,6 +60,22 @@ final class Command: Identifiable {
 
     var isDangerous: Bool { requiresConfirmation }
 
+    /// Behavioral duplicate: new command identity and name, identical configuration.
+    func duplicating(name: String? = nil) -> Command {
+        Command(
+            name: name ?? "\(self.name) Copy",
+            commandDescription: commandDescription,
+            triggerPhrases: triggerPhrases,
+            actions: actions.map { $0.duplicating() },
+            executionMode: executionMode,
+            requiresConfirmation: requiresConfirmation,
+            catalogVersion: catalogVersion,
+            isEnabled: isEnabled,
+            shortSummary: shortSummary,
+            actionDescription: actionDescription
+        )
+    }
+
     /// Returns actionDescription if available, otherwise builds one from actions
     var displayActionDescription: String {
         if !actionDescription.isEmpty { return actionDescription }

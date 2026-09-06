@@ -147,12 +147,7 @@ final class CommandCreationViewModel {
 
     func updateActionPayload(at index: Int, payload: String) {
         guard editableActions.indices.contains(index) else { return }
-        editableActions[index] = CommandAction(
-            id: editableActions[index].id,
-            type: editableActions[index].type,
-            payload: payload,
-            order: editableActions[index].order
-        )
+        editableActions[index].payload = payload
         draftDidChange()
     }
 
@@ -355,12 +350,7 @@ final class CommandCreationViewModel {
 
     private func reorderActions() {
         for i in editableActions.indices {
-            editableActions[i] = CommandAction(
-                id: editableActions[i].id,
-                type: editableActions[i].type,
-                payload: editableActions[i].payload,
-                order: i
-            )
+            editableActions[i].order = i
         }
     }
 }

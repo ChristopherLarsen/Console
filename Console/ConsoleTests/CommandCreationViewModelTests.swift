@@ -178,6 +178,79 @@ final class CommandCreationViewModelTests: XCTestCase {
         XCTAssertTrue(saved[0].requiresConfirmation)
     }
 
+    // MARK: - Action setting preservation (review item 09)
+
+    func testUpdatingPayloadChangesOnlyPayload() {
+        let viewModel = makeViewModel()
+        let original = fullyConfiguredAction(
+            payload: Self.safeAppleScriptFixture,
+            order: 0
+        )
+        viewModel.presentGeneratedCommand(makeCommand(actions: [original]))
+
+        viewModel.updateActionPayload(at: 0, payload: Self.alternateSafeAppleScriptFixture)
+
+        XCTAssertEqual(viewModel.editableActions.count, 1)
+        let updated = viewModel.editableActions[0]
+        XCTAssertEqual(updated.payload, Self.alternateSafeAppleScriptFixture)
+        assertActionSettingsEqual(updated, original, expectingSameID: true, ignoringPayload: true)
+        XCTAssertNotEqual(updated.payload, original.payload)
+    }
+
+    func testRemovingActionReordersWithoutResettingSettings() {
+        let viewModel = makeViewModel()
+        let first = fullyConfiguredAction(
+            payload: Self.safeAppleScriptFixture,
+            order: 0,
+            delayAfterMS: 2100,
+            timeoutMS: 11111,
+            maxRetries: 2,
+            completionValue: "/tmp/console-review-09-first",
+            fallbackPayload: "return \"first-fallback\""
+        )
+        let second = fullyConfiguredAction(
+            payload: Self.alternateSafeAppleScriptFixture,
+            order: 1,
+            delayAfterMS: 3200,
+            timeoutMS: 22222,
+            maxRetries: 4,
+            completionValue: "/tmp/console-review-09-second",
+            fallbackPayload: "return \"second-fallback\""
+        )
+        viewModel.presentGeneratedCommand(makeCommand(actions: [first, second]))
+
+        viewModel.removeAction(at: 0)
+
+        XCTAssertEqual(viewModel.editableActions.count, 1)
+        let remaining = viewModel.editableActions[0]
+        XCTAssertEqual(remaining.order, 0)
+        XCTAssertEqual(remaining.id, second.id)
+        XCTAssertEqual(remaining.payload, second.payload)
+        XCTAssertEqual(remaining.type, second.type)
+        XCTAssertEqual(remaining.delayAfterMS, second.delayAfterMS)
+        XCTAssertEqual(remaining.timeoutMS, second.timeoutMS)
+        XCTAssertEqual(remaining.retryOnFailure, second.retryOnFailure)
+        XCTAssertEqual(remaining.maxRetries, second.maxRetries)
+        XCTAssertEqual(remaining.completionCheck, second.completionCheck)
+        XCTAssertEqual(remaining.fallbackAction, second.fallbackAction)
+    }
+
+    func testSaveRoundTripsAllActionFields() throws {
+        let viewModel = makeViewModel()
+        let original = fullyConfiguredAction(
+            payload: Self.safeAppleScriptFixture,
+            order: 0
+        )
+        viewModel.presentGeneratedCommand(makeCommand(actions: [original]))
+
+        XCTAssertTrue(viewModel.save())
+
+        let saved = try fetchSavedCommands()
+        XCTAssertEqual(saved.count, 1)
+        XCTAssertEqual(saved[0].actions.count, 1)
+        assertActionSettingsEqual(saved[0].actions[0], original, expectingSameID: true)
+    }
+
     // MARK: - Helpers
 
     private func makeViewModel() -> CommandCreationViewModel {
@@ -204,12 +277,78 @@ final class CommandCreationViewModelTests: XCTestCase {
         )
     }
 
+    private func makeCommand(actions: [CommandAction]) -> Command {
+        Command(
+            name: "Synthetic Full Action Settings",
+            triggerPhrases: ["synthetic full action settings"],
+            actions: actions,
+            executionMode: .appleScript,
+            requiresConfirmation: false
+        )
+    }
+
+    private func fullyConfiguredAction(
+        payload: String,
+        order: Int,
+        delayAfterMS: Int = 2500,
+        timeoutMS: Int = 12345,
+        maxRetries: Int? = 3,
+        completionValue: String = "/tmp/console-review-09-check",
+        fallbackPayload: String = "return \"fallback\""
+    ) -> CommandAction {
+        CommandAction(
+            type: .appleScript,
+            payload: payload,
+            order: order,
+            delayAfterMS: delayAfterMS,
+            timeoutMS: timeoutMS,
+            retryOnFailure: true,
+            maxRetries: maxRetries,
+            completionCheck: .fileExists(completionValue),
+            fallbackAction: FallbackAction(type: .appleScript, payload: fallbackPayload)
+        )
+    }
+
+    private func assertActionSettingsEqual(
+        _ actual: CommandAction,
+        _ expected: CommandAction,
+        expectingSameID: Bool,
+        ignoringPayload: Bool = false,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        if expectingSameID {
+            XCTAssertEqual(actual.id, expected.id, file: file, line: line)
+        } else {
+            XCTAssertNotEqual(actual.id, expected.id, file: file, line: line)
+        }
+        XCTAssertEqual(actual.type, expected.type, file: file, line: line)
+        if !ignoringPayload {
+            XCTAssertEqual(actual.payload, expected.payload, file: file, line: line)
+        }
+        XCTAssertEqual(actual.order, expected.order, file: file, line: line)
+        XCTAssertEqual(actual.delayAfterMS, expected.delayAfterMS, file: file, line: line)
+        XCTAssertEqual(actual.timeoutMS, expected.timeoutMS, file: file, line: line)
+        XCTAssertEqual(actual.retryOnFailure, expected.retryOnFailure, file: file, line: line)
+        XCTAssertEqual(actual.maxRetries, expected.maxRetries, file: file, line: line)
+        XCTAssertEqual(actual.completionCheck, expected.completionCheck, file: file, line: line)
+        XCTAssertEqual(actual.fallbackAction, expected.fallbackAction, file: file, line: line)
+        XCTAssertEqual(actual.completionCheck?.type, .fileExists, file: file, line: line)
+        XCTAssertNotNil(actual.fallbackAction, file: file, line: line)
+        XCTAssertNotEqual(actual.delayAfterMS, 500, file: file, line: line)
+        XCTAssertNotEqual(actual.timeoutMS, 5000, file: file, line: line)
+        XCTAssertTrue(actual.retryOnFailure, file: file, line: line)
+        XCTAssertNotNil(actual.maxRetries, file: file, line: line)
+    }
+
     private func fetchSavedCommands() throws -> [Command] {
         try modelContext.fetch(FetchDescriptor<Command>())
     }
 
     /// Inert AppleScript. If executed it only returns a string.
     private static let safeAppleScriptFixture = "return \"ok\""
+
+    private static let alternateSafeAppleScriptFixture = "return \"ok-edited\""
 
     /// Inert AppleScript whose source contains a dangerous token so validation flags it.
     /// The token lives in a comment; the script only returns a string.
