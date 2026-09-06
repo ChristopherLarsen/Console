@@ -16,16 +16,14 @@ struct SystemControlTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        try await MainActor.run {
-            switch arguments.controlType.lowercased() {
-            case "setvolume":
-                let level = arguments.value ?? 50
-                return try AppleScriptRunner.setVolume(level: level)
-            case "toggledarkmode":
-                return try AppleScriptRunner.toggleDarkMode()
-            default:
-                return "Unknown system control action: \(arguments.controlType)"
-            }
+        switch arguments.controlType.lowercased() {
+        case "setvolume":
+            let level = arguments.value ?? 50
+            return try await AppleScriptRunner.setVolume(level: level)
+        case "toggledarkmode":
+            return try await AppleScriptRunner.toggleDarkMode()
+        default:
+            return "Unknown system control action: \(arguments.controlType)"
         }
     }
 }
