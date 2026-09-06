@@ -82,6 +82,10 @@ struct JiraView: View {
                         .accessibilityIdentifier("JiraWebView")
                 }
                 .onAppear {
+                    if let pending = JiraDeepLink.shared.consume() {
+                        JiraWebSession.shared.navigate(to: pending)
+                        return
+                    }
                     loadIfNeeded(url: url, force: false)
                 }
                 .onChange(of: webViewJiraURL) { _, newValue in

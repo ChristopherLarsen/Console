@@ -37,6 +37,9 @@ struct NextView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear(perform: autoCheckIfNeeded)
+        .onChange(of: sessionFingerprint) { _, _ in
+            model.invalidateCachedSessionIfNeeded(sessionStore: sessionStore)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("NextView")
     }
@@ -71,6 +74,15 @@ struct NextView: View {
             sessionStore: sessionStore,
             jiraController: JiraWebSession.shared.panelController
         )
+    }
+
+    private var sessionFingerprint: String {
+        guard let sessionStore else { return "" }
+        return sessionStore.sessions.map { session in
+            let state = displayedSessionState(activity: session.activity, attention: session.attention)
+            return "\(session.id.uuidString):\(state.rawValue)"
+        }
+        .joined(separator: "|")
     }
 }
 

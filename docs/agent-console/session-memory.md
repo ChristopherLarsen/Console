@@ -2,17 +2,17 @@
 
 # Session Memory
 
-_Rewritten 2026-09-06 during review-item implementation._
+_Rewritten 2026-09-06 after review item 14 in an isolated worktree._
 
 ## Next Intended Move
 
-Continue `docs/reviews/2026-09-06-ios-workflow-review.md`. On `main` after merging 16: 01–05, 08, 10, 12, 03, 16. In flight: 06 (Stop/timeouts), 13 (Brief edits). Next slice: 11 (git remotes for worktrees). Not 07/09 in parallel with 06. Max three isolated worktrees.
+Merge `review-14-next-honest-navigation` when Christopher asks. Do not push or delete that worktree from here. Continue isolated review items; max three worktrees.
 
 ## Working Findings
 
-- 01 local Next; 02 ticket/MR out of Claude; 03 one Next model; 04 confirmation; 05 pipe drain; 08 one execution owner; 10 launch errors; 12 MR extraction resume; 16 optional bridge degrade, no phantom sessions.
-- Item 02 branch remains in the shared Cursor tree. Do not `worktree remove` that path.
-- Uncommitted on `main`: `docs/reviews/` and 800×500 overview fact. Do not commit unless asked.
+- Item 14 is implemented on `review-14-next-honest-navigation`: Next snapshots carry source availability, last successful extraction, and failure. Signed-out/unconfigured/failed sources yield "Could not check these sources", not an unqualified all-clear. Loaded empty lists say "No work in the loaded lists". Stale picks get one "Showing previous results" label.
+- Open verifies the candidate still exists. Synthetic tickets use `JiraDeepLink` + the captured issue URL on the retained Jira page. Missing session IDs never match another session by name; Open source / Refresh is offered instead. Cached session recommendations reselect locally when the session disappears or leaves needs-you. No LLM path, no new timer or API client. Item 03's single model and sibling Refresh/Open remain.
+- Targeted tests passed: NextContextBuilderTests, NextButtonModelTests, NextTaskNavigationTests. Debug Console build succeeded (`/tmp/console-review-14-derived`).
 
 ## Dead Ends
 
