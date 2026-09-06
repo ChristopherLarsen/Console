@@ -516,10 +516,17 @@ struct ConsoleApp: App {
     /// cached over a real one.
     private func prepareMorningBriefIfNeeded() {
         guard !Self.isRunningUnitTests else { return }
-        let paths = workspaceStore.availableWorkspaces.map(\.directoryPath)
-        guard !paths.isEmpty else { return }
+        let workspaces = workspaceStore.availableWorkspaces.map(BriefWorkspaceSnapshot.init)
+        guard !workspaces.isEmpty else { return }
         Task {
-            _ = await BriefGenerationService().ensureBrief(for: Date(), workspacePaths: paths)
+            let attribution = BriefAttributionStore()
+            let collector = BriefActivityCollector()
+            let sources = await attribution.sources(for: workspaces, probing: collector)
+            _ = await BriefGenerationService(collector: collector).ensureBrief(
+                for: Date(),
+                sources: sources,
+                range: attribution.dateRange
+            )
         }
     }
 

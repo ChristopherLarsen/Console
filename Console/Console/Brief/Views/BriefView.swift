@@ -6,8 +6,14 @@ import SwiftUI
 struct BriefView: View {
     @State private var viewModel: BriefViewModel
 
-    init(workspacePathsProvider: @escaping () -> [String] = { [] }) {
-        _viewModel = State(initialValue: BriefViewModel(workspacePathsProvider: workspacePathsProvider))
+    init(workspacePathsProvider: @escaping () -> [String] = { [] },
+         workspacesProvider: (() -> [BriefWorkspaceSnapshot])? = nil,
+         identityReader: (any BriefIdentityReading)? = BriefActivityCollector()) {
+        _viewModel = State(initialValue: BriefViewModel(
+            workspacePathsProvider: workspacePathsProvider,
+            workspacesProvider: workspacesProvider,
+            identityReader: identityReader
+        ))
     }
 
     var body: some View {
@@ -32,6 +38,7 @@ struct BriefView: View {
         VStack(spacing: 0) {
             HomePanelHeader(title: "Morning Brief") {
                 HomePanelDetail(headerDateString,
+                                rangeSummary,
                                 sourceString)
             } accessory: {
                 HStack(spacing: 6) {
@@ -58,7 +65,7 @@ struct BriefView: View {
                         }
                     }
                     .disabled(viewModel.isLoading)
-                    .help("Rebuild from yesterday's commits. Cancels an in-flight AI polish.")
+                    .help("Rebuild from the selected author and date range. Cancels an in-flight AI polish.")
 
                     Button {
                         viewModel.refineWithAI(
@@ -82,6 +89,10 @@ struct BriefView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 14) {
+                attributionSection
+
+                Divider()
+
                 section(title: "YESTERDAY") {
                     if let lines = viewModel.brief?.yesterdayLines, !lines.isEmpty {
                         ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
@@ -135,6 +146,127 @@ struct BriefView: View {
                 .textSelection(.enabled)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    // MARK: - Attribution
+
+    private var attributionSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Activity range", selection: rangePresetBinding) {
+                Text("Yesterday").tag(BriefDateRangePreset.yesterday)
+                Text("Choose dates").tag(BriefDateRangePreset.custom)
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("BriefDateRangePreset")
+
+            if viewModel.dateRange.preset == .custom {
+                HStack(spacing: 12) {
+                    DatePicker(
+                        "From",
+                        selection: customStartBinding,
+                        displayedComponents: .date
+                    )
+                    .accessibilityIdentifier("BriefDateRangeCustomStart")
+                    DatePicker(
+                        "To",
+                        selection: customEndBinding,
+                        displayedComponents: .date
+                    )
+                    .accessibilityIdentifier("BriefDateRangeCustomEnd")
+                }
+            }
+
+            if !rangeSummary.isEmpty {
+                Text("Reporting \(rangeSummary)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("BriefActivityRange")
+            }
+
+            if !sourceRepositoriesSummary.isEmpty {
+                Text("Sources: \(sourceRepositoriesSummary)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("BriefSourceRepositories")
+            }
+
+            ForEach(viewModel.authorRows) { row in
+                authorRow(row)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Activity range and author")
+    }
+
+    private func authorRow(_ row: BriefAuthorDisplayRow) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(row.workspaceName)
+                    .font(.system(size: 12, weight: .medium))
+                Text(row.identity.displaySummary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Spacer(minLength: 4)
+                if !row.confirmed {
+                    Button("Confirm identity") {
+                        viewModel.confirmAuthor(for: row.workspaceID)
+                    }
+                    .accessibilityIdentifier("BriefConfirmAuthor")
+                }
+            }
+
+            HStack(spacing: 6) {
+                TextField(
+                    "Add email alias",
+                    text: aliasBinding(for: row.workspaceID)
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11))
+                .accessibilityIdentifier("BriefAddAliasField")
+
+                Button("Add") {
+                    viewModel.addAlias(for: row.workspaceID)
+                }
+                .disabled((viewModel.aliasDrafts[row.workspaceID] ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("BriefAddAlias")
+            }
+
+            if !row.confirmed {
+                Text("From Git config — confirm or add aliases before sharing this report.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var rangePresetBinding: Binding<BriefDateRangePreset> {
+        Binding(
+            get: { viewModel.dateRange.preset },
+            set: { viewModel.setDateRangePreset($0) }
+        )
+    }
+
+    private var customStartBinding: Binding<Date> {
+        Binding(
+            get: { viewModel.dateRange.customStart ?? Date() },
+            set: { viewModel.setCustomStart($0) }
+        )
+    }
+
+    private var customEndBinding: Binding<Date> {
+        Binding(
+            get: { viewModel.dateRange.customEnd ?? Date() },
+            set: { viewModel.setCustomEnd($0) }
+        )
+    }
+
+    private func aliasBinding(for workspaceID: UUID) -> Binding<String> {
+        Binding(
+            get: { viewModel.aliasDrafts[workspaceID] ?? "" },
+            set: { viewModel.setAliasDraft($0, for: workspaceID) }
+        )
     }
 
     // MARK: - Task editing
@@ -201,6 +333,20 @@ struct BriefView: View {
     private var headerDateString: String {
         let day = viewModel.brief?.day ?? Date()
         return day.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private var rangeSummary: String {
+        if let summary = viewModel.brief?.activityRangeDescription(), !summary.isEmpty {
+            return summary
+        }
+        let calendar = Calendar.current
+        let day = viewModel.brief?.day ?? Date()
+        let interval = viewModel.dateRange.interval(relativeTo: day, calendar: calendar)
+        return BriefDateRangeSelection.description(of: interval, calendar: calendar)
+    }
+
+    private var sourceRepositoriesSummary: String {
+        viewModel.brief?.sourceRepositoryNames.joined(separator: ", ") ?? ""
     }
 
     private var sourceString: String {

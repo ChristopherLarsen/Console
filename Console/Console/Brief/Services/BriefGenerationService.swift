@@ -76,7 +76,20 @@ final class BriefGenerationService {
     /// generation is actually required.
     func ensureBrief(for day: Date,
                      workspacePaths: [String],
-                     calendar: Calendar = .current) async -> MorningBrief {
+                     calendar: Calendar = .current,
+                     range: BriefDateRangeSelection = .yesterday) async -> MorningBrief {
+        await ensureBrief(
+            for: day,
+            sources: Self.sources(from: workspacePaths),
+            calendar: calendar,
+            range: range
+        )
+    }
+
+    func ensureBrief(for day: Date,
+                     sources: [BriefCollectionSource],
+                     calendar: Calendar = .current,
+                     range: BriefDateRangeSelection = .yesterday) async -> MorningBrief {
         let dayStart = BriefStore.startOfDay(for: day, calendar: calendar)
         if let existing = store.load(forDay: dayStart) {
             return existing
@@ -85,7 +98,8 @@ final class BriefGenerationService {
         return resolvedBrief(
             from: await performGeneration(
                 dayStart: dayStart,
-                workspacePaths: workspacePaths,
+                sources: sources,
+                range: range,
                 calendar: calendar,
                 token: token
             ),
@@ -96,6 +110,21 @@ final class BriefGenerationService {
     func ensureBrief(for day: Date,
                      workspacePaths: [String],
                      calendar: Calendar = .current,
+                     range: BriefDateRangeSelection = .yesterday,
+                     token: BriefOperationToken) async -> BriefOperationOutcome {
+        await ensureBrief(
+            for: day,
+            sources: Self.sources(from: workspacePaths),
+            calendar: calendar,
+            range: range,
+            token: token
+        )
+    }
+
+    func ensureBrief(for day: Date,
+                     sources: [BriefCollectionSource],
+                     calendar: Calendar = .current,
+                     range: BriefDateRangeSelection = .yesterday,
                      token: BriefOperationToken) async -> BriefOperationOutcome {
         let dayStart = BriefStore.startOfDay(for: day, calendar: calendar)
         if let existing = store.load(forDay: dayStart) {
@@ -104,7 +133,8 @@ final class BriefGenerationService {
         }
         return await performGeneration(
             dayStart: dayStart,
-            workspacePaths: workspacePaths,
+            sources: sources,
+            range: range,
             calendar: calendar,
             token: token
         )
@@ -115,13 +145,27 @@ final class BriefGenerationService {
     /// already-recorded report.
     func regenerate(for day: Date,
                     workspacePaths: [String],
-                    calendar: Calendar = .current) async -> MorningBrief {
+                    calendar: Calendar = .current,
+                    range: BriefDateRangeSelection = .yesterday) async -> MorningBrief {
+        await regenerate(
+            for: day,
+            sources: Self.sources(from: workspacePaths),
+            calendar: calendar,
+            range: range
+        )
+    }
+
+    func regenerate(for day: Date,
+                    sources: [BriefCollectionSource],
+                    calendar: Calendar = .current,
+                    range: BriefDateRangeSelection = .yesterday) async -> MorningBrief {
         let dayStart = BriefStore.startOfDay(for: day, calendar: calendar)
         let token = beginOperation(.generate, for: dayStart, calendar: calendar)
         return resolvedBrief(
             from: await performGeneration(
                 dayStart: dayStart,
-                workspacePaths: workspacePaths,
+                sources: sources,
+                range: range,
                 calendar: calendar,
                 token: token
             ),
@@ -132,25 +176,43 @@ final class BriefGenerationService {
     func regenerate(for day: Date,
                     workspacePaths: [String],
                     calendar: Calendar = .current,
+                    range: BriefDateRangeSelection = .yesterday,
+                    token: BriefOperationToken) async -> BriefOperationOutcome {
+        await regenerate(
+            for: day,
+            sources: Self.sources(from: workspacePaths),
+            calendar: calendar,
+            range: range,
+            token: token
+        )
+    }
+
+    func regenerate(for day: Date,
+                    sources: [BriefCollectionSource],
+                    calendar: Calendar = .current,
+                    range: BriefDateRangeSelection = .yesterday,
                     token: BriefOperationToken) async -> BriefOperationOutcome {
         await performGeneration(
             dayStart: BriefStore.startOfDay(for: day, calendar: calendar),
-            workspacePaths: workspacePaths,
+            sources: sources,
+            range: range,
             calendar: calendar,
             token: token
         )
     }
 
     private func performGeneration(dayStart: Date,
-                                   workspacePaths: [String],
+                                   sources: [BriefCollectionSource],
+                                   range: BriefDateRangeSelection,
                                    calendar: Calendar,
                                    token: BriefOperationToken) async -> BriefOperationOutcome {
-        let previousDay = calendar.date(byAdding: .day, value: -1, to: dayStart) ?? dayStart
-        let activities = await collector.collectActivities(
-            workspacePaths: workspacePaths,
-            day: previousDay,
+        let request = BriefCollectionRequest(
+            sources: sources,
+            range: range,
+            briefDay: dayStart,
             calendar: calendar
         )
+        let collected = await collector.collectActivities(request)
         guard isCurrent(token) else { return .superseded }
 
         let latest = store.load(forDay: dayStart)
@@ -163,8 +225,10 @@ final class BriefGenerationService {
         )
         var brief = BriefComposer.compose(
             day: dayStart,
-            activities: activities,
-            carriedTasks: carriedTasks
+            activities: collected.activities,
+            carriedTasks: carriedTasks,
+            activityRange: request.interval,
+            sourceRepositoryNames: collected.sourceRepositories.map(\.displayName)
         )
         if let latest {
             brief.tasksManuallyEdited = latest.tasksManuallyEdited
@@ -172,6 +236,9 @@ final class BriefGenerationService {
             if brief.yesterdayLines == [BriefComposer.quietDayLine],
                latest.yesterdayLines != [BriefComposer.quietDayLine] {
                 brief.yesterdayLines = latest.yesterdayLines
+                brief.activityRangeStart = latest.activityRangeStart
+                brief.activityRangeEnd = latest.activityRangeEnd
+                brief.sourceRepositoryNames = latest.sourceRepositoryNames
                 if !brief.tasksManuallyEdited { brief.source = latest.source }
             }
         }
@@ -200,6 +267,17 @@ final class BriefGenerationService {
         case .superseded:
             return store.load(forDay: dayStart)
                 ?? BriefComposer.compose(day: dayStart, activities: [], carriedTasks: [])
+        }
+    }
+
+    static func sources(from workspacePaths: [String]) -> [BriefCollectionSource] {
+        workspacePaths.map { path in
+            BriefCollectionSource(
+                workspaceID: nil,
+                path: path,
+                displayName: URL(fileURLWithPath: path).lastPathComponent,
+                identity: BriefAuthorIdentity()
+            )
         }
     }
 

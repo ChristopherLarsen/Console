@@ -221,8 +221,8 @@ struct MainView: View {
         case .next:
             NextView(selection: $sidebarSelection)
         case .brief:
-            BriefView(workspacePathsProvider: {
-                workspaceStore.availableWorkspaces.map(\.directoryPath)
+            BriefView(workspacesProvider: {
+                workspaceStore.availableWorkspaces.map(BriefWorkspaceSnapshot.init)
             })
         case .jira:
             JiraView()

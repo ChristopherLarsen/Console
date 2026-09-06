@@ -38,6 +38,9 @@ final class BriefStoreAndServiceTests: XCTestCase {
         )
         brief.tasksManuallyEdited = true
         brief.source = .ai
+        brief.activityRangeStart = day
+        brief.activityRangeEnd = calendar.date(byAdding: .day, value: 1, to: day)
+        brief.sourceRepositoryNames = ["Alpha"]
 
         store.save(brief)
         let loaded = try XCTUnwrap(store.load(forDay: day))
@@ -47,6 +50,9 @@ final class BriefStoreAndServiceTests: XCTestCase {
         XCTAssertEqual(loaded.todayTasks, brief.todayTasks)
         XCTAssertTrue(loaded.tasksManuallyEdited)
         XCTAssertEqual(loaded.source, .ai)
+        XCTAssertEqual(loaded.activityRangeStart, brief.activityRangeStart)
+        XCTAssertEqual(loaded.activityRangeEnd, brief.activityRangeEnd)
+        XCTAssertEqual(loaded.sourceRepositoryNames, ["Alpha"])
     }
 
     func testLoadMissingDayReturnsNil() {
@@ -262,6 +268,77 @@ final class BriefStoreAndServiceTests: XCTestCase {
         XCTAssertFalse(reloadedToday.yesterdayLines.contains(where: { $0.contains("Yesterday collect") }))
     }
 
+    func testRegenerateUsesCustomDateRangeAndRecordsSources() async throws {
+        let collector = RecordingCollector(activityCount: 1)
+        let service = BriefGenerationService(store: store, collector: collector)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let monday = calendar.startOfDay(for: dateInNewYork("2026-09-07T09:00:00"))
+        let friday = calendar.startOfDay(for: dateInNewYork("2026-09-04T09:00:00"))
+        let sunday = calendar.startOfDay(for: dateInNewYork("2026-09-06T09:00:00"))
+        let range = BriefDateRangeSelection(preset: .custom, customStart: friday, customEnd: sunday)
+        let sources = [
+            BriefCollectionSource(
+                workspaceID: UUID(),
+                path: "/tmp/Console",
+                displayName: "Console",
+                identity: BriefAuthorIdentity(name: "Dev", emails: ["dev@example.test"])
+            )
+        ]
+
+        let brief = await service.regenerate(
+            for: monday,
+            sources: sources,
+            calendar: calendar,
+            range: range
+        )
+
+        let request = try XCTUnwrap(collector.lastRequest)
+        XCTAssertEqual(request.rangeStart, friday)
+        XCTAssertEqual(request.rangeEnd, monday)
+        XCTAssertEqual(brief.sourceRepositoryNames, ["Console"])
+        XCTAssertEqual(brief.activityRangeStart, friday)
+        XCTAssertEqual(brief.activityRangeEnd, monday)
+    }
+
+    func testAttributionStorePersistsAliasesAndDoesNotOverwriteConfirmedIdentity() throws {
+        let suite = "brief-attr-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let store = BriefAttributionStore(defaults: defaults)
+        let workspaceID = UUID()
+        store.recordDefault(
+            BriefAuthorIdentity(name: "Alice", emails: ["alice@example.test"]),
+            for: workspaceID
+        )
+        XCTAssertFalse(store.selection(for: workspaceID)?.confirmed ?? true)
+
+        store.addEmail("alice.work@example.test", for: workspaceID)
+        XCTAssertEqual(
+            store.selection(for: workspaceID)?.identity.emails,
+            ["alice@example.test", "alice.work@example.test"]
+        )
+        XCTAssertTrue(store.selection(for: workspaceID)?.confirmed ?? false)
+
+        store.recordDefault(
+            BriefAuthorIdentity(name: "Other", emails: ["other@example.test"]),
+            for: workspaceID
+        )
+        XCTAssertEqual(store.selection(for: workspaceID)?.identity.emails.last, "alice.work@example.test")
+
+        let reloaded = BriefAttributionStore(defaults: defaults)
+        XCTAssertEqual(reloaded.selection(for: workspaceID)?.identity.emails.count, 2)
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    private func dateInNewYork(_ string: String) -> Date {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "America/New_York")
+        return formatter.date(from: string)!
+    }
+
     private func waitUntil(_ condition: @escaping () -> Bool,
                            timeout: TimeInterval = 3,
                            file: StaticString = #filePath,
@@ -280,15 +357,43 @@ final class BriefStoreAndServiceTests: XCTestCase {
 struct StubCollector: BriefActivityCollecting {
     let activityCount: Int
 
-    func collectActivities(workspacePaths: [String], day: Date, calendar: Calendar) async -> [CommitActivity] {
-        guard !workspacePaths.isEmpty else { return [] }
-        return (0..<activityCount).map { index in
+    func collectActivities(_ request: BriefCollectionRequest) async -> BriefCollectionResult {
+        guard !request.sources.isEmpty else { return .empty }
+        let activities = (0..<activityCount).map { index in
             CommitActivity(
                 repositoryName: "Repo\(index)",
                 subject: "Commit \(index)",
-                committedAt: calendar.startOfDay(for: day)
+                committedAt: request.rangeStart
             )
         }
+        let repositories = request.sources.map {
+            BriefSourceRepository(displayName: $0.displayName, identity: $0.path)
+        }
+        return BriefCollectionResult(activities: activities, sourceRepositories: repositories)
+    }
+}
+
+/// Records the last collection request so tests can assert date-range wiring.
+final class RecordingCollector: BriefActivityCollecting, @unchecked Sendable {
+    private let inner: StubCollector
+    private let lock = NSLock()
+    private var _lastRequest: BriefCollectionRequest?
+
+    var lastRequest: BriefCollectionRequest? {
+        lock.lock()
+        defer { lock.unlock() }
+        return _lastRequest
+    }
+
+    init(activityCount: Int) {
+        inner = StubCollector(activityCount: activityCount)
+    }
+
+    func collectActivities(_ request: BriefCollectionRequest) async -> BriefCollectionResult {
+        lock.lock()
+        _lastRequest = request
+        lock.unlock()
+        return await inner.collectActivities(request)
     }
 }
 
@@ -304,9 +409,12 @@ final class SuspendableActivityCollector: BriefActivityCollecting, @unchecked Se
         self.activities = activities
     }
 
-    func collectActivities(workspacePaths: [String], day: Date, calendar: Calendar) async -> [CommitActivity] {
+    func collectActivities(_ request: BriefCollectionRequest) async -> BriefCollectionResult {
         await gate.wait()
-        return activities
+        let repositories = request.sources.map {
+            BriefSourceRepository(displayName: $0.displayName, identity: $0.path)
+        }
+        return BriefCollectionResult(activities: activities, sourceRepositories: repositories)
     }
 
     func releaseOldest() {
