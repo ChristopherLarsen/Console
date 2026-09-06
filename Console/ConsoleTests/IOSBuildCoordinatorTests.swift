@@ -6,6 +6,7 @@ final class IOSBuildCoordinatorTests: XCTestCase {
 
     private var tmpRoot: URL!
     private var runner: FakeBuildProcessRunner!
+    private var parser: FakeResultParser!
     private var coordinator: IOSBuildCoordinator!
 
     override func setUpWithError() throws {
@@ -15,6 +16,7 @@ final class IOSBuildCoordinatorTests: XCTestCase {
             .appendingPathComponent("ios-build-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tmpRoot, withIntermediateDirectories: true)
         runner = FakeBuildProcessRunner()
+        parser = FakeResultParser()
         coordinator = makeCoordinator()
     }
 
@@ -28,6 +30,7 @@ final class IOSBuildCoordinatorTests: XCTestCase {
         try? FileManager.default.removeItem(at: tmpRoot)
         coordinator = nil
         runner = nil
+        parser = nil
     }
 
     // MARK: - Argv
@@ -136,7 +139,7 @@ final class IOSBuildCoordinatorTests: XCTestCase {
 
     // MARK: - Job states
 
-    func testSuccessfulBuildRecordsExitCodeAndBundlePathWithoutParsing() async throws {
+    func testSuccessfulBuildRecordsExitCodeBundlePathAndParsedSummary() async throws {
         runner.result = ProcessResult(
             exitCode: 0,
             standardOutput: "BUILD SUCCEEDED\nAll tests passed",
@@ -168,6 +171,11 @@ final class IOSBuildCoordinatorTests: XCTestCase {
             value(after: "-resultBundlePath", in: runner.invocations[0].arguments),
             job.resultBundleURL.path
         )
+        XCTAssertEqual(parser.calls.count, 1)
+        XCTAssertEqual(parser.calls[0].bundleURL, job.resultBundleURL)
+        XCTAssertEqual(parser.calls[0].jobKind, .build)
+        XCTAssertEqual(job.resultSummary?.parseStatus, .parsed)
+        XCTAssertFalse(job.resultSummary?.recordsIndicateFailure ?? true)
     }
 
     func testCompileFailureIsFailedEvenWhenOutputLooksSuccessful() async throws {
@@ -183,6 +191,8 @@ final class IOSBuildCoordinatorTests: XCTestCase {
         XCTAssertEqual(job.exitCode, 65)
         XCTAssertTrue(job.output.contains("compile failed"))
         XCTAssertTrue(job.output.contains("BUILD SUCCEEDED"))
+        XCTAssertEqual(parser.calls.count, 1)
+        XCTAssertEqual(job.resultSummary?.parseStatus, .parsed)
     }
 
     func testFailingSelectedTestIsFailedFromExitCode() async throws {
@@ -277,32 +287,84 @@ final class IOSBuildCoordinatorTests: XCTestCase {
         XCTAssertEqual(runner.invocations.count, 1)
     }
 
-    func testMissingAndMalformedBundlesAreRecordedWithoutParsing() async throws {
-        runner.result = ProcessResult(exitCode: 0, standardOutput: "ok", standardError: "")
+    func testMissingBundleKeepsExitSuccessAndRecordsParseStatus() async throws {
+        parser.summary = .unparsed(.missingBundle, message: "missing")
+        runner.result = ProcessResult(exitCode: 0, standardOutput: "BUILD SUCCEEDED", standardError: "")
         let missingID = try coordinator.submitBuild(profile: sampleProfile())
         let missing = try await waitForJob(missingID)
+
         XCTAssertEqual(missing.state, .succeeded)
         XCTAssertEqual(missing.exitCode, 0)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: missing.resultBundleURL.path))
+        XCTAssertEqual(missing.resultSummary?.parseStatus, .missingBundle)
+        XCTAssertFalse(missing.resultSummary?.recordsIndicateFailure ?? true)
+        XCTAssertEqual(parser.calls.count, 1)
+        XCTAssertEqual(parser.calls[0].bundleURL, missing.resultBundleURL)
+    }
 
-        runner.writeBundleData = Data("{not-valid-xcresult".utf8)
-        runner.result = ProcessResult(exitCode: 65, standardOutput: "failed", standardError: "")
+    func testMalformedJSONDoesNotPromoteFailureToSuccess() async throws {
+        parser.summary = .unparsed(.schemaMismatch, message: "malformed JSON")
+        runner.result = ProcessResult(
+            exitCode: 65,
+            standardOutput: "TEST SUCCEEDED\nAll tests passed",
+            standardError: ""
+        )
         let malformedID = try coordinator.submitBuild(profile: sampleProfile())
         let malformed = try await waitForJob(malformedID)
 
         XCTAssertEqual(malformed.state, .failed)
         XCTAssertEqual(malformed.exitCode, 65)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: malformed.resultBundleURL.path))
-        XCTAssertEqual(
-            try String(contentsOf: malformed.resultBundleURL, encoding: .utf8),
-            "{not-valid-xcresult"
+        XCTAssertEqual(malformed.resultSummary?.parseStatus, .schemaMismatch)
+        XCTAssertFalse(malformed.resultSummary?.recordsIndicateFailure ?? true)
+    }
+
+    func testParsedTestFailureOverridesZeroExitAndIgnoresLogWording() async throws {
+        parser.summary = .parsed(
+            outcome: .failed,
+            issues: [
+                IOSResultIssue(
+                    kind: .testFailure,
+                    message: "XCTAssertEqual failed",
+                    fileURL: URL(fileURLWithPath: "/tmp/App/LoginTests.swift"),
+                    line: 42,
+                    testIdentifier: "AppTests/LoginTests/testLogin"
+                )
+            ],
+            failedTestCount: 1
         )
-        for invocation in runner.invocations {
-            XCTAssertEqual(invocation.executablePath, "/usr/bin/xcodebuild")
-            XCTAssertFalse(invocation.arguments.contains("xcresulttool"))
-            XCTAssertFalse(invocation.arguments.contains("get"))
-            XCTAssertFalse(invocation.arguments.contains("test-results"))
-        }
+        runner.result = ProcessResult(
+            exitCode: 0,
+            standardOutput: "TEST SUCCEEDED\nAll tests passed",
+            standardError: ""
+        )
+        let id = try coordinator.submitSelectedTests(
+            profile: sampleProfile(),
+            identifiers: ["AppTests/LoginTests/testLogin"]
+        )
+        let job = try await waitForJob(id)
+
+        XCTAssertEqual(job.state, .failed)
+        XCTAssertEqual(job.exitCode, 0)
+        XCTAssertEqual(job.errorMessage, "The result bundle reported failures.")
+        XCTAssertEqual(job.resultSummary?.issues.first?.testIdentifier, "AppTests/LoginTests/testLogin")
+        XCTAssertTrue(job.output.contains("TEST SUCCEEDED"))
+    }
+
+    func testQueuedCancelDoesNotParseResults() async throws {
+        runner.hold = true
+        let first = try coordinator.submitBuild(profile: sampleProfile())
+        let second = try coordinator.submitBuild(profile: sampleProfile())
+        try await waitUntil { self.coordinator.job(id: first)?.state == .running }
+
+        coordinator.cancel(second)
+        XCTAssertEqual(coordinator.job(id: second)?.state, .cancelled)
+        XCTAssertNil(coordinator.job(id: second)?.resultSummary)
+        XCTAssertTrue(parser.calls.allSatisfy { $0.bundleURL != coordinator.job(id: second)?.resultBundleURL })
+
+        runner.releaseOne()
+        _ = try await waitForJob(first)
+        let cancelled = try await waitForJob(second)
+        XCTAssertEqual(cancelled.state, .cancelled)
+        XCTAssertNil(cancelled.resultSummary)
     }
 
     func testConfigurableTimeoutsArePassedAsDeadlineAndTestFlags() async throws {
@@ -369,6 +431,7 @@ final class IOSBuildCoordinatorTests: XCTestCase {
     private func makeCoordinator(timeouts: IOSBuildTimeouts = .default) -> IOSBuildCoordinator {
         IOSBuildCoordinator(
             processRunner: runner,
+            resultParser: parser,
             timeouts: timeouts,
             resultsDirectory: tmpRoot
         )
@@ -541,5 +604,30 @@ private final class FakeBuildProcessRunner: ProcessRunning, @unchecked Sendable 
             throw error
         }
         return result
+    }
+}
+
+private final class FakeResultParser: IOSResultParsing, @unchecked Sendable {
+    struct Call: Equatable, Sendable {
+        var bundleURL: URL
+        var jobKind: IOSBuildJobKind
+    }
+
+    private let lock = NSLock()
+    private var callsStorage: [Call] = []
+    var summary = IOSResultSummary.parsed(outcome: .succeeded, issues: [])
+
+    var calls: [Call] {
+        lock.lock()
+        defer { lock.unlock() }
+        return callsStorage
+    }
+
+    func parseBundle(at url: URL, jobKind: IOSBuildJobKind) async -> IOSResultSummary {
+        lock.lock()
+        callsStorage.append(Call(bundleURL: url, jobKind: jobKind))
+        let summary = self.summary
+        lock.unlock()
+        return summary
     }
 }

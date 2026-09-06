@@ -99,8 +99,8 @@ nonisolated enum IOSBuildRequestError: LocalizedError, Equatable {
 
 /// One Build or Run Selected Tests request. The profile is snapshotted at
 /// enqueue and does not change if Settings is edited later. Success is the
-/// process exit code, never a natural-language summary. Result-bundle parsing
-/// is a later slice; this type only records the path and exit status.
+/// process exit code plus structured result records, never a natural-language
+/// summary. The `.xcresult` stays local.
 nonisolated struct IOSBuildJob: Equatable, Identifiable, Sendable {
     let id: UUID
     let kind: IOSBuildJobKind
@@ -116,6 +116,7 @@ nonisolated struct IOSBuildJob: Equatable, Identifiable, Sendable {
     var standardError: String
     var outputTruncated: Bool
     var errorMessage: String?
+    var resultSummary: IOSResultSummary?
 
     var output: String {
         let parts = [standardOutput, standardError]
@@ -146,8 +147,26 @@ nonisolated struct IOSBuildJob: Equatable, Identifiable, Sendable {
             standardOutput: "",
             standardError: "",
             outputTruncated: false,
-            errorMessage: nil
+            errorMessage: nil,
+            resultSummary: nil
         )
+    }
+
+    /// Exit status and parsed result records determine the terminal state.
+    /// Parser errors never promote a failure (or cancel/timeout) to success.
+    static func resolvedState(
+        processState: IOSBuildJobState,
+        resultSummary: IOSResultSummary?
+    ) -> IOSBuildJobState {
+        switch processState {
+        case .queued, .running, .cancelled, .timedOut, .failed:
+            return processState
+        case .succeeded:
+            if resultSummary?.recordsIndicateFailure == true {
+                return .failed
+            }
+            return .succeeded
+        }
     }
 }
 
