@@ -5,7 +5,9 @@ import WebKit
 /// state, card/browser presentation, loading/readiness/extraction orchestration,
 /// manual reload with stale-result protection, and card navigation.
 ///
-/// No polling timer: extraction runs once after an explicit load or refresh.
+/// No polling timer: extraction runs after an explicit load or refresh, or
+/// after an observed navigation while sign-in recovery is active. Authentication
+/// is not treated as an ordinary extraction failure.
 @MainActor
 @Observable
 final class CodeHostListPanelController {
@@ -18,6 +20,10 @@ final class CodeHostListPanelController {
     /// Decodes one extractor JSON payload. Production uses the shared
     /// `MergeRequestListExtractor`; tests substitute deterministic decoders.
     typealias PayloadDecoder = (String) throws -> MergeRequestListExtractionResult
+
+    /// Yields navigation events on the retained page. Production forwards
+    /// `WebPage.navigations`; tests substitute a controllable stream.
+    typealias NavigationEventSource = @MainActor (WebPage) -> AsyncStream<WebPage.NavigationEvent>
 
     // MARK: - Configuration
 
@@ -35,6 +41,7 @@ final class CodeHostListPanelController {
     /// tests substitute deterministic implementations.
     private let pageLoader: @MainActor (WebPage, URLRequest) async -> Bool
     private let extractionExecutor: @MainActor (WebPage) async throws -> String?
+    private let navigationEvents: NavigationEventSource
 
     // MARK: - Observable state
 
@@ -49,8 +56,21 @@ final class CodeHostListPanelController {
     /// rather than preserving the current cards.
     private(set) var needsExtraction = false
 
+    /// True while sign-in recovery should observe later navigations.
+    /// Survives a cancelled watch so appearance can resume it.
+    private(set) var wantsAuthenticationObservation = false
+
+    /// True while a navigation-watch task is actually running.
+    private(set) var isObservingSignInNavigations = false
+
+    /// Prior cards kept only in memory while authentication is underway.
+    /// Never presented, never persisted, never logged.
+    private(set) var hiddenItems: [MergeRequestSummary] = []
+
+    private var hiddenRefreshedAt: Date?
     private var generation = 0
     private var extractionTask: Task<Void, Never>?
+    private var navigationWatchTask: Task<Void, Never>?
     private var lastConfiguredURLString: String?
 
     init(
@@ -62,7 +82,8 @@ final class CodeHostListPanelController {
         readinessIntervalNanoseconds: UInt64 = 250_000_000,
         pageLoader: (@MainActor (WebPage, URLRequest) async -> Bool)? = nil,
         extractionExecutor: (@MainActor (WebPage) async throws -> String?)? = nil,
-        payloadDecoder: PayloadDecoder? = nil
+        payloadDecoder: PayloadDecoder? = nil,
+        navigationEvents: NavigationEventSource? = nil
     ) {
         self.kind = kind
         self.page = page
@@ -73,6 +94,7 @@ final class CodeHostListPanelController {
         self.readinessIntervalNanoseconds = readinessIntervalNanoseconds
         self.pageLoader = pageLoader ?? CodeHostListPanelController.defaultLoadPage
         self.extractionExecutor = extractionExecutor ?? CodeHostListPanelController.defaultExecuteExtraction
+        self.navigationEvents = navigationEvents ?? CodeHostListPanelController.defaultNavigationEvents
     }
 
     // MARK: - Lifecycle
@@ -106,15 +128,18 @@ final class CodeHostListPanelController {
 
     /// Cancels pending extraction when the view is torn down. The retained
     /// page itself stays alive in the session store. Incomplete first-loads
-    /// are marked suspended so the next appearance can resume them.
+    /// and in-flight sign-in observation are marked suspended so the next
+    /// appearance can resume them.
     func cancelPendingWork() {
-        let wasInFlight = extractionTask != nil || isRefreshing
+        let wasWatching = navigationWatchTask != nil || wantsAuthenticationObservation
+        let wasInFlight = extractionTask != nil || isRefreshing || wasWatching
         extractionTask?.cancel()
         extractionTask = nil
+        stopAuthenticationWatch(keepingIntent: true)
         isRefreshing = false
         if wasInFlight {
             generation += 1
-            if Self.isIncomplete(state) {
+            if Self.isIncomplete(state) || wantsAuthenticationObservation {
                 isSuspended = true
                 needsExtraction = true
             }
@@ -132,15 +157,38 @@ final class CodeHostListPanelController {
     /// progress; after a failure state it returns to cards and retries the
     /// configured list so the button always makes progress instead of dying
     /// silently with no way back out of browser mode.
+    ///
+    /// Authentication is different: the login WebView stays revealed. Show
+    /// Cards is not a way to cover the sign-in page.
     func showCardsIfAvailable() {
         switch state {
         case .loaded, .empty, .stale, .loadingPage, .extracting:
             presentation = .cards
-        case .unconfigured:
+        case .unconfigured, .authenticationRequired:
             break
-        case .authenticationRequired, .unsupportedPage, .extractionFailed:
+        case .unsupportedPage:
+            if wantsAuthenticationObservation {
+                presentation = .browser
+                return
+            }
             presentation = .cards
             refresh()
+        case .extractionFailed:
+            presentation = .cards
+            refresh()
+        }
+    }
+
+    /// True when Show Cards may cover the retained page. Sign-in keeps the
+    /// WebView interactive, so it is not offered here.
+    var canShowCards: Bool {
+        switch state {
+        case .loaded, .empty, .stale, .loadingPage, .extracting:
+            return true
+        case .unsupportedPage, .extractionFailed:
+            return !wantsAuthenticationObservation
+        case .authenticationRequired, .unconfigured:
+            return false
         }
     }
 
@@ -158,24 +206,49 @@ final class CodeHostListPanelController {
     /// `apply(_:generation:)` deterministically.
     var currentGeneration: Int { generation }
 
+    // MARK: - Sign-in navigation
+
+    /// Forwards a navigation event from the retained page. Tests call this
+    /// directly with a synthetic completed-sign-in sequence; production
+    /// forwards `WebPage.navigations` while sign-in recovery is active.
+    func handleObservedNavigation(_ event: WebPage.NavigationEvent) {
+        guard wantsAuthenticationObservation else { return }
+        switch event {
+        case .startedProvisionalNavigation, .committed:
+            cancelInFlightDOMExtraction()
+        case .finished:
+            beginExtraction(invalidatingSource: false, forceReload: false)
+        case .receivedServerRedirect:
+            break
+        @unknown default:
+            break
+        }
+    }
+
     // MARK: - Extraction pipeline
 
-    private func runExtraction(url: URL, requestedGeneration: Int) async {
+    private func runExtraction(url: URL, requestedGeneration: Int, forceReload: Bool) async {
         defer { settleRefreshingIfCurrent(requestedGeneration) }
 
-        let didLoad = await pageLoader(page, URLRequest(url: url))
-        guard isCurrent(requestedGeneration) else { return }
+        if forceReload {
+            let didLoad = await pageLoader(page, URLRequest(url: url))
+            guard isCurrent(requestedGeneration) else { return }
 
-        guard didLoad else {
-            retainOr(.extractionFailed, reason: .extractionFailed)
-            return
+            guard didLoad else {
+                applyOrdinaryFailure(.extractionFailed, reason: .extractionFailed)
+                return
+            }
         }
 
         switch state {
-        case .loaded, .stale:
+        case .loaded, .stale, .authenticationRequired:
+            break
+        case .unsupportedPage where wantsAuthenticationObservation:
             break
         default:
-            state = .extracting
+            if forceReload {
+                state = .extracting
+            }
         }
 
         var outcome: MergeRequestListExtractionResult?
@@ -199,7 +272,7 @@ final class CodeHostListPanelController {
         guard let outcome else {
             // No attempt ever produced a readable payload: our extraction
             // machinery failed; this is not evidence of an unsupported page.
-            retainOr(.extractionFailed, reason: .extractionFailed)
+            applyOrdinaryFailure(.extractionFailed, reason: .extractionFailed)
             return
         }
         apply(outcome, generation: requestedGeneration)
@@ -229,6 +302,26 @@ final class CodeHostListPanelController {
     /// callJavaScript and return the JSON payload string.
     private static func defaultExecuteExtraction(_ page: WebPage) async throws -> String? {
         try await page.callJavaScript(GitLabListExtractorJavaScript.source) as? String
+    }
+
+    /// Forwards every later navigation on the retained page. Never reloads,
+    /// never reads cookies, and never issues network probes.
+    private static func defaultNavigationEvents(_ page: WebPage) -> AsyncStream<WebPage.NavigationEvent> {
+        AsyncStream { continuation in
+            let task = Task { @MainActor in
+                do {
+                    for try await event in page.navigations {
+                        continuation.yield(event)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish()
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
     }
 
     private func extractOnce() async -> MergeRequestListExtractionResult? {
@@ -262,17 +355,64 @@ final class CodeHostListPanelController {
 
         switch outcome {
         case .items(let items):
+            clearHiddenItems()
+            stopAuthenticationWatch(keepingIntent: false)
             state = items.isEmpty ? .empty(refreshedAt: timestamp) : .loaded(items: items, refreshedAt: timestamp)
+            presentation = .cards
 
         case .empty:
+            clearHiddenItems()
+            stopAuthenticationWatch(keepingIntent: false)
             state = .empty(refreshedAt: timestamp)
+            presentation = .cards
 
         case .authenticationRequired:
-            retainOr(.authenticationRequired, reason: .signInRequired)
+            enterAuthenticationRequired()
 
         case .unsupportedPage:
-            retainOr(.unsupportedPage, reason: .pageWasNotAList)
+            applyUnsupportedPage()
         }
+    }
+
+    private func enterAuthenticationRequired() {
+        stashPresentedItems()
+        state = .authenticationRequired
+        presentation = .browser
+        wantsAuthenticationObservation = true
+        startAuthenticationNavigationWatch()
+    }
+
+    private func applyUnsupportedPage() {
+        if wantsAuthenticationObservation {
+            // Same-origin (or SSO) non-list page stays usable in the
+            // retained WebView. Keep watching for a later list.
+            state = .unsupportedPage
+            presentation = .browser
+            startAuthenticationNavigationWatch()
+            return
+        }
+        retainOr(.unsupportedPage, reason: .pageWasNotAList)
+    }
+
+    /// Ordinary extraction/navigation failure: keep labelled stale cards when
+    /// they exist, including cards that were only hidden for sign-in.
+    private func applyOrdinaryFailure(
+        _ failureState: MergeRequestListPanelState,
+        reason: MergeRequestRefreshFailureReason
+    ) {
+        if !hiddenItems.isEmpty, let hiddenRefreshedAt {
+            state = .stale(items: hiddenItems, refreshedAt: hiddenRefreshedAt, reason: reason)
+            presentation = .cards
+            clearHiddenItems()
+            stopAuthenticationWatch(keepingIntent: false)
+            return
+        }
+        if wantsAuthenticationObservation {
+            // No prior cards to restore: leave the current page usable.
+            presentation = .browser
+            return
+        }
+        retainOr(failureState, reason: reason)
     }
 
     /// On failure states, keep prior cards as stale rather than presenting a
@@ -288,6 +428,60 @@ final class CodeHostListPanelController {
         }
     }
 
+    private func stashPresentedItems() {
+        switch state {
+        case .loaded(let items, let refreshedAt), .stale(let items, let refreshedAt, _):
+            hiddenItems = items
+            hiddenRefreshedAt = refreshedAt
+        default:
+            break
+        }
+    }
+
+    private func clearHiddenItems() {
+        hiddenItems = []
+        hiddenRefreshedAt = nil
+    }
+
+    private func startAuthenticationNavigationWatch() {
+        wantsAuthenticationObservation = true
+        if navigationWatchTask != nil {
+            isObservingSignInNavigations = true
+            return
+        }
+        isObservingSignInNavigations = true
+        let page = self.page
+        let source = self.navigationEvents
+        navigationWatchTask = Task { [weak self] in
+            let stream = source(page)
+            for await event in stream {
+                guard let self else { break }
+                self.handleObservedNavigation(event)
+            }
+            self?.navigationWatchTask = nil
+            self?.isObservingSignInNavigations = false
+        }
+    }
+
+    private func stopAuthenticationWatch(keepingIntent: Bool) {
+        navigationWatchTask?.cancel()
+        navigationWatchTask = nil
+        isObservingSignInNavigations = false
+        if !keepingIntent {
+            wantsAuthenticationObservation = false
+        }
+    }
+
+    /// Drops an in-flight DOM readiness loop so a newer navigation can own
+    /// the next extraction. Does not reload the page.
+    private func cancelInFlightDOMExtraction() {
+        guard extractionTask != nil || isRefreshing else { return }
+        extractionTask?.cancel()
+        extractionTask = nil
+        generation += 1
+        isRefreshing = false
+    }
+
     private func syncWithConfiguration(resumeIncomplete: Bool) {
         guard let url = effectiveConfiguredURL() else {
             applyMissingConfiguration()
@@ -300,22 +494,32 @@ final class CodeHostListPanelController {
         }
 
         if resumeIncomplete, !isRefreshing, needsExtraction || Self.isIncomplete(state) {
+            if wantsAuthenticationObservation {
+                startAuthenticationNavigationWatch()
+                beginExtraction(invalidatingSource: false, forceReload: false)
+                return
+            }
             beginExtraction(invalidatingSource: false)
+        } else if resumeIncomplete, wantsAuthenticationObservation, navigationWatchTask == nil {
+            startAuthenticationNavigationWatch()
         }
     }
 
     private func applyMissingConfiguration() {
         extractionTask?.cancel()
         extractionTask = nil
+        stopAuthenticationWatch(keepingIntent: false)
+        clearHiddenItems()
         generation += 1
         lastConfiguredURLString = nil
         needsExtraction = false
         isSuspended = false
         isRefreshing = false
+        presentation = .cards
         state = .unconfigured
     }
 
-    private func beginExtraction(invalidatingSource: Bool, forceReload _: Bool = true) {
+    private func beginExtraction(invalidatingSource: Bool, forceReload: Bool = true) {
         extractionTask?.cancel()
         extractionTask = nil
         generation += 1
@@ -326,6 +530,8 @@ final class CodeHostListPanelController {
         guard let url = effectiveConfiguredURL() else {
             lastConfiguredURLString = nil
             isRefreshing = false
+            stopAuthenticationWatch(keepingIntent: false)
+            clearHiddenItems()
             state = .unconfigured
             return
         }
@@ -333,18 +539,26 @@ final class CodeHostListPanelController {
         lastConfiguredURLString = url.absoluteString
         isRefreshing = true
         if invalidatingSource {
+            stopAuthenticationWatch(keepingIntent: false)
+            clearHiddenItems()
             state = .loadingPage
-        } else {
+        } else if forceReload {
             switch state {
             case .loaded, .stale:
                 break // keep prior cards visible during a same-source refresh
+            case .authenticationRequired:
+                break
             default:
                 state = .loadingPage
             }
         }
 
         extractionTask = Task { [weak self] in
-            await self?.runExtraction(url: url, requestedGeneration: currentGeneration)
+            await self?.runExtraction(
+                url: url,
+                requestedGeneration: currentGeneration,
+                forceReload: forceReload
+            )
         }
     }
 

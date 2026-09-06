@@ -33,21 +33,27 @@ struct MergeRequestsPanelView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            webViewLayer
-
+        VStack(spacing: 0) {
             if controller.presentation == .browser {
                 MergeRequestsNavigationBar(
                     page: sessionStore.page(for: kind),
                     showCardsAction: { controller.showCardsIfAvailable() },
-                    showCardsAvailable: controller.state != .unconfigured
+                    showCardsAvailable: controller.canShowCards
                 )
                 .transition(.opacity)
+
+                if case .authenticationRequired = controller.state {
+                    signInNotice
+                }
             }
 
-            if controller.presentation == .cards {
-                cardSurface
-                    .transition(.opacity)
+            ZStack(alignment: .top) {
+                webViewLayer
+
+                if controller.presentation == .cards {
+                    cardSurface
+                        .transition(.opacity)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -81,7 +87,9 @@ struct MergeRequestsPanelView: View {
     // MARK: - WebView layer (always attached)
 
     /// The shared list page. Covered in card mode: hit testing off and hidden
-    /// from accessibility, but attached so state is never lost.
+    /// from accessibility, but attached so state is never lost. Authentication
+    /// uses browser presentation so the page is interactive and VoiceOver can
+    /// reach it.
     private var webViewLayer: some View {
         let isCovered = controller.presentation == .cards
         return WebView(sessionStore.page(for: kind))
@@ -89,7 +97,36 @@ struct MergeRequestsPanelView: View {
             .webViewMagnificationGestures(.enabled)
             .allowsHitTesting(!isCovered)
             .accessibilityHidden(isCovered)
+            .accessibilityIdentifier("\(idPrefix)WebView")
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Generic sign-in copy shown outside the WebView. Never includes URLs,
+    /// hostnames, or credentials.
+    private var signInNotice: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "lock.shield")
+                .font(.system(size: 12, weight: .medium))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Sign in to GitLab")
+                    .font(.system(size: 11, weight: .medium))
+                Text("Complete sign-in in the page below. Console never sees your credentials. Cards return when the list is available.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Sign in to GitLab. Complete sign-in in the embedded browser. Console never sees your credentials. Cards return when the list is available.")
+        .accessibilityIdentifier("\(idPrefix)SignInNotice")
     }
 
     // MARK: - Card surface
@@ -248,9 +285,9 @@ struct MergeRequestsPanelView: View {
         panelMessage(
             systemImage: "lock.shield",
             title: "Sign in to GitLab to load your review list.",
-            detail: "Use Show GitLab to sign in; Console never sees your credentials.",
-            actionTitle: "Show GitLab",
-            action: { controller.showBrowser() },
+            detail: "Complete sign-in in the embedded browser. Console never sees your credentials.",
+            actionTitle: nil,
+            action: nil,
             accessibilityIdentifier: "\(idPrefix)AuthenticationState"
         )
     }
