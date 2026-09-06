@@ -6,6 +6,8 @@ import SwiftTerm
 struct SessionTerminalPane: View {
     let session: ConsoleSession
     let displayedState: DisplayedSessionState
+    let isFocusMode: Bool
+    let onToggleFocus: () -> Void
     let onTerminate: () -> Void
 
     var body: some View {
@@ -44,14 +46,28 @@ struct SessionTerminalPane: View {
                     .font(.caption)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.secondary.opacity(0.15)))
-                    .foregroundStyle(.secondary)
+                    .background(Capsule().fill(displayedState.tint.opacity(0.15)))
+                    .foregroundStyle(displayedState.tint)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Session \(session.name), \(displayedState.label)")
             .accessibilityIdentifier("Sessions.Header")
+            .help(session.workingDirectory.path)
 
             Spacer()
+
+            Button(action: onToggleFocus) {
+                Text("Focus Session")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(isFocusMode ? Color.accentColor : .primary)
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .help(isFocusMode ? "Exit Focus Session" : "Focus Session")
+            .accessibilityLabel("Focus Session")
+            .accessibilityValue(isFocusMode ? "On" : "Off")
+            .accessibilityAddTraits(isFocusMode ? [.isSelected] : [])
+            .accessibilityIdentifier("Sessions.FocusToggle")
 
             Button(action: onTerminate) {
                 Text("Terminate")

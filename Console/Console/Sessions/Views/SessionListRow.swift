@@ -34,6 +34,7 @@ struct SessionListRow: View {
                             .font(.caption2)
                             .lineLimit(1)
                             .foregroundStyle(.tertiary)
+                            .help(session.workingDirectory.path)
 
                         Text(displayedState.label)
                             .font(.caption2)
