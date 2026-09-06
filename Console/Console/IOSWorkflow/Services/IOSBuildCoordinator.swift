@@ -5,14 +5,16 @@ import Foundation
 /// Constructs structured `xcodebuild` argv from an immutable
 /// `IOSProjectProfile` snapshot (item 19) and runs it through `ProcessRunning`
 /// (items 05–07). One job runs at a time; later submits stay `.queued`.
-/// Result bundles are distinct paths recorded on the job; parsing them is a
-/// later slice. Success is the exit code, never log wording.
+/// After the process finishes, the local `.xcresult` is inspected with
+/// `xcresulttool`. Success is the exit code plus structured result records,
+/// never log wording. Bundles are never uploaded.
 @MainActor
 @Observable
 final class IOSBuildCoordinator {
     private(set) var jobs: [IOSBuildJob] = []
 
     private let processRunner: any ProcessRunning
+    private let resultParser: any IOSResultParsing
     private let timeouts: IOSBuildTimeouts
     private let xcodebuildPath: String
     private let resultsDirectory: URL
@@ -34,6 +36,7 @@ final class IOSBuildCoordinator {
 
     init(
         processRunner: any ProcessRunning,
+        resultParser: (any IOSResultParsing)? = nil,
         timeouts: IOSBuildTimeouts = .default,
         xcodebuildPath: String = IOSXcodebuildCommand.defaultXcodebuildPath,
         resultsDirectory: URL? = nil,
@@ -41,6 +44,7 @@ final class IOSBuildCoordinator {
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.processRunner = processRunner
+        self.resultParser = resultParser ?? IOSResultParser(processRunner: processRunner)
         self.timeouts = timeouts
         self.xcodebuildPath = xcodebuildPath
         self.resultsDirectory = resultsDirectory ?? Self.defaultResultsDirectory(fileManager: fileManager)
@@ -202,43 +206,81 @@ final class IOSBuildCoordinator {
             let result = try await task.value
             runningTask = nil
             runningJobID = nil
-            finish(id, result: result)
+            await finish(id, result: result)
         } catch {
             runningTask = nil
             runningJobID = nil
-            finish(id, error: error)
+            await finish(id, error: error)
         }
     }
 
-    private func finish(_ id: UUID, result: ProcessResult) {
-        let state: IOSBuildJobState = result.exitCode == 0 ? .succeeded : .failed
-        complete(id, state: state, result: result)
+    private func finish(_ id: UUID, result: ProcessResult) async {
+        let processState: IOSBuildJobState = result.exitCode == 0 ? .succeeded : .failed
+        let summary = await parseResults(for: id)
+        let state = IOSBuildJob.resolvedState(processState: processState, resultSummary: summary)
+        var errorMessage: String?
+        if processState == .succeeded, state == .failed {
+            errorMessage = "The result bundle reported failures."
+        }
+        complete(id, state: state, result: result, errorMessage: errorMessage, resultSummary: summary)
     }
 
-    private func finish(_ id: UUID, error: Error) {
+    private func finish(_ id: UUID, error: Error) async {
+        let summary = await parseResults(for: id)
         if let processError = error as? ProcessRunError {
             switch processError {
             case .cancelled:
-                complete(id, state: .cancelled, errorMessage: processError.localizedDescription)
+                complete(
+                    id,
+                    state: .cancelled,
+                    errorMessage: processError.localizedDescription,
+                    resultSummary: summary
+                )
             case .timedOut:
-                complete(id, state: .timedOut, errorMessage: processError.localizedDescription)
+                complete(
+                    id,
+                    state: .timedOut,
+                    errorMessage: processError.localizedDescription,
+                    resultSummary: summary
+                )
             case .executableMissing, .launchFailed:
-                complete(id, state: .failed, errorMessage: processError.localizedDescription)
+                complete(
+                    id,
+                    state: .failed,
+                    errorMessage: processError.localizedDescription,
+                    resultSummary: summary
+                )
             }
             return
         }
         if error is CancellationError {
-            complete(id, state: .cancelled, errorMessage: ProcessRunError.cancelled.localizedDescription)
+            complete(
+                id,
+                state: .cancelled,
+                errorMessage: ProcessRunError.cancelled.localizedDescription,
+                resultSummary: summary
+            )
             return
         }
-        complete(id, state: .failed, errorMessage: error.localizedDescription)
+        complete(
+            id,
+            state: .failed,
+            errorMessage: error.localizedDescription,
+            resultSummary: summary
+        )
+    }
+
+    private func parseResults(for id: UUID) async -> IOSResultSummary? {
+        guard let job = job(id: id) else { return nil }
+        return await resultParser.parseBundle(at: job.resultBundleURL, jobKind: job.kind)
     }
 
     private func complete(
         _ id: UUID,
         state: IOSBuildJobState,
         result: ProcessResult? = nil,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        resultSummary: IOSResultSummary? = nil
     ) {
         guard var job = job(id: id), !job.state.isTerminal else { return }
         job.state = state
@@ -250,6 +292,9 @@ final class IOSBuildCoordinator {
             job.outputTruncated = result.standardOutputTruncated || result.standardErrorTruncated
         }
         job.errorMessage = errorMessage
+        if let resultSummary {
+            job.resultSummary = resultSummary
+        }
         replace(job)
         resumeWaiters(job)
     }
