@@ -63,6 +63,7 @@ struct ConsoleApp: App {
     @State private var sessionStore: SessionStore
     @State private var nextButtonModel: NextButtonModel
     @State private var workspaceStore: SessionWorkspaceStore
+    @State private var iosProfileStore: IOSProjectProfileStore
     @State private var launchCoordinator: SessionLaunchCoordinator
     private var syntheticTranscriptSource: SyntheticTranscriptSource?
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
@@ -91,6 +92,7 @@ struct ConsoleApp: App {
 
         let workspaceStore = SessionWorkspaceStore()
         _workspaceStore = State(initialValue: workspaceStore)
+        _iosProfileStore = State(initialValue: IOSProjectProfileStore())
 
         // Always open on Home for each process launch (do not restore last sidebar page).
         UserDefaults.standard.set(SidebarSelection.home.rawValue, forKey: ConsoleNavigation.sidebarKey)
@@ -334,6 +336,7 @@ struct ConsoleApp: App {
             .environment(sessionStore)
             .environment(nextButtonModel)
             .environment(workspaceStore)
+            .environment(iosProfileStore)
             .environment(launchCoordinator)
             #if DEBUG
             .environment(developerModeManager)

@@ -230,6 +230,7 @@ struct MainView: View {
         .environment(SessionStore())
         .environment(NextButtonModel())
         .environment(SessionWorkspaceStore())
+        .environment(IOSProjectProfileStore())
         .environment(SessionLaunchCoordinator(store: SessionStore(), workspaceStore: SessionWorkspaceStore()))
         .modelContainer(for: [Command.self, WakeWord.self], inMemory: true)
 }

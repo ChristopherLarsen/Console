@@ -55,7 +55,8 @@ to add files.
 | **Logging** | `Logging/` | Command execution logs + retention cleanup. |
 | **MenuBar** | `MenuBar/` | Menu bar state/manager, toast overlay, error banner. |
 | **Intents** | `Intents/` | App Intents for Shortcuts (create/execute/list commands, toggle listening). |
-| **Settings** | `Settings/` | SettingsView sections incl. AI provider config, model selection, hotkey recorder, sessions section, WebView URL fields (JIRA/GitLab). |
+| **iOS workflow** | `IOSWorkflow/` | Per-workspace saved Xcode project/scheme/configuration/test-plan/Simulator profile. Discovery uses bounded `xcodebuild -list -json`, `-showTestPlans`, and `-showdestinations` via `ProcessRunner`. No signing credentials, source content, or builds in this slice. |
+| **Settings** | `Settings/` | SettingsView sections incl. AI provider config, model selection, hotkey recorder, sessions section, iOS project profile, WebView URL fields (JIRA/GitLab). |
 | **Utilities/Extensions/Styles/Views** | misc | Keychain (`KeychainManager`, `AIKeychain` — all API keys live here, never in code), MarkdownRenderer, SyntaxHighlighter, shared components. |
 
 ## Cross-cutting invariants
