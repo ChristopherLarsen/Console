@@ -16,17 +16,20 @@ final class CodeHostListPanelControllerTests: XCTestCase {
         page: WebPage,
         loader: (@MainActor (WebPage, URLRequest) async -> Bool)? = nil,
         executor: (@MainActor (WebPage) async throws -> String?)? = nil,
-        provider: (() -> String?)? = nil
+        provider: (() -> String?)? = nil,
+        navigationEvents: CodeHostListPanelController.NavigationEventSource? = nil,
+        readinessAttempts: Int = 1
     ) -> CodeHostListPanelController {
         CodeHostListPanelController(
             kind: .reviewsRequested,
             page: page,
             configuredURLStringProvider: provider ?? { [weak self] in self?.configuredURLString },
             now: { [weak self] in self?.currentDate ?? Date() },
-            readinessAttempts: 1,
+            readinessAttempts: readinessAttempts,
             readinessIntervalNanoseconds: 0,
             pageLoader: loader,
-            extractionExecutor: executor
+            extractionExecutor: executor,
+            navigationEvents: navigationEvents ?? { _ in AsyncStream { $0.finish() } }
         )
     }
 
@@ -159,13 +162,40 @@ final class CodeHostListPanelControllerTests: XCTestCase {
         await waitForSettled(controller)
 
         XCTAssertEqual(controller.state, .authenticationRequired)
+        XCTAssertEqual(controller.presentation, .browser, "Sign-in must reveal the retained WebView")
+        XCTAssertTrue(controller.wantsAuthenticationObservation)
+        XCTAssertFalse(controller.canShowCards, "Show Cards must not cover the login page")
+        XCTAssertTrue(controller.hiddenItems.isEmpty)
+        XCTAssertEqual(controller.itemCount, 0)
+    }
+
+    func testAuthenticationWithPriorCardsHidesThemAndRevealsBrowser() async {
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in true },
+            executor: { _ in "{\"outcome\":\"authenticationRequired\",\"items\":[]}" }
+        )
+
+        controller.apply(.items([summary(index: 1)]), generation: 0)
+        XCTAssertEqual(controller.presentation, .cards)
+
+        controller.refresh()
+        await waitForSettled(controller)
+
+        XCTAssertEqual(controller.state, .authenticationRequired)
+        XCTAssertEqual(controller.presentation, .browser)
+        XCTAssertEqual(controller.state.retainedItems, [], "Cards must not stay presented during sign-in")
+        XCTAssertEqual(controller.hiddenItems, [summary(index: 1)], "Prior rows stay in memory only")
+        XCTAssertEqual(controller.itemCount, 0)
+        XCTAssertFalse(controller.canShowCards)
+        XCTAssertTrue(controller.wantsAuthenticationObservation)
     }
 
     func testRefreshFailureKeepsPriorCardsStaleInsteadOfFalseZero() async {
         let controller = makeController(
             page: makePage(),
             loader: { _, _ in true },
-            executor: { _ in "{\"outcome\":\"authenticationRequired\",\"items\":[]}" }
+            executor: { _ in "definitely not json" }
         )
 
         controller.apply(.items([summary(index: 1)]), generation: 0)
@@ -177,7 +207,8 @@ final class CodeHostListPanelControllerTests: XCTestCase {
         }
         XCTAssertEqual(items, [summary(index: 1)], "Prior cards must survive a failed refresh")
         XCTAssertEqual(refreshedAt, currentDate, "refreshedAt reflects the last successful extraction")
-        XCTAssertEqual(reason, .signInRequired)
+        XCTAssertEqual(reason, .extractionFailed)
+        XCTAssertEqual(controller.presentation, .cards)
     }
 
     func testUnsupportedPageWithoutPriorCards() async {
@@ -312,6 +343,23 @@ final class CodeHostListPanelControllerTests: XCTestCase {
         controller.apply(.items([summary(index: 0)]), generation: controller.currentGeneration)
         controller.showCardsIfAvailable()
         XCTAssertEqual(controller.presentation, .cards)
+    }
+
+    func testShowCardsDuringAuthenticationLeavesLoginWebViewRevealed() async {
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in true },
+            executor: { _ in "{\"outcome\":\"authenticationRequired\",\"items\":[]}" }
+        )
+        controller.apply(.items([summary(index: 3)]), generation: 0)
+        controller.refresh()
+        await waitForSettled(controller)
+
+        controller.showCardsIfAvailable()
+
+        XCTAssertEqual(controller.presentation, .browser)
+        XCTAssertEqual(controller.state, .authenticationRequired)
+        XCTAssertFalse(controller.canShowCards)
     }
 
     func testShowCardsFromFailureStateReturnsToCardsAndRetries() async {
@@ -708,6 +756,210 @@ final class CodeHostListPanelControllerTests: XCTestCase {
         XCTAssertEqual(controller.state, .empty(refreshedAt: currentDate))
     }
 
+    // MARK: - Authentication recovery
+
+    func testCompletedSignInNavigationWithRowsRestoresCards() async {
+        let events = NavigationEventBox()
+        var payload = "{\"outcome\":\"authenticationRequired\",\"items\":[]}"
+        let loads = CounterBox()
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in
+                loads.increment()
+                return true
+            },
+            executor: { _ in payload },
+            navigationEvents: events.stream
+        )
+
+        controller.apply(.items([summary(index: 1)]), generation: 0)
+        controller.refresh()
+        await waitForSettled(controller)
+        XCTAssertEqual(controller.state, .authenticationRequired)
+        XCTAssertEqual(controller.presentation, .browser)
+        XCTAssertEqual(loads.value, 1)
+        XCTAssertEqual(controller.hiddenItems, [summary(index: 1)])
+        await waitUntil { events.isSubscribed }
+
+        payload = itemsJSON(count: 2)
+        events.yield(.finished)
+        await waitUntil {
+            if case .loaded = controller.state { return true }
+            return false
+        }
+
+        guard case .loaded(let items, _) = controller.state else {
+            return XCTFail("Expected restored cards, got \(controller.state)")
+        }
+        XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(controller.presentation, .cards)
+        XCTAssertTrue(controller.hiddenItems.isEmpty)
+        XCTAssertFalse(controller.wantsAuthenticationObservation)
+        XCTAssertTrue(controller.canShowCards)
+        XCTAssertEqual(loads.value, 1, "Sign-in recovery must not reload the page")
+    }
+
+    func testCompletedSignInNavigationWithEmptyListOffersCards() async {
+        var payload = "{\"outcome\":\"authenticationRequired\",\"items\":[]}"
+        let loads = CounterBox()
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in
+                loads.increment()
+                return true
+            },
+            executor: { _ in payload }
+        )
+
+        controller.refresh()
+        await waitForSettled(controller)
+        XCTAssertEqual(controller.state, .authenticationRequired)
+        XCTAssertEqual(controller.presentation, .browser)
+        XCTAssertFalse(controller.canShowCards)
+
+        payload = "{\"outcome\":\"empty\",\"items\":[]}"
+        controller.handleObservedNavigation(.finished)
+        await waitForSettled(controller)
+
+        XCTAssertEqual(controller.state, .empty(refreshedAt: currentDate))
+        XCTAssertEqual(controller.presentation, .cards)
+        XCTAssertTrue(controller.canShowCards)
+        XCTAssertFalse(controller.wantsAuthenticationObservation)
+        XCTAssertEqual(loads.value, 1, "Empty-list recovery must not reload the page")
+    }
+
+    func testNewNavigationCancelsOldPostSignInExtraction() async {
+        let extractGate = ContinuationGate<String?>()
+        let extractCount = CounterBox()
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in true },
+            executor: { _ in
+                extractCount.increment()
+                return await extractGate.wait()
+            }
+        )
+
+        controller.startIfNeeded()
+        await waitUntil { extractGate.pendingCount == 1 }
+        extractGate.resume("{\"outcome\":\"authenticationRequired\",\"items\":[]}")
+        await waitForSettled(controller)
+        XCTAssertEqual(controller.state, .authenticationRequired)
+        XCTAssertEqual(extractCount.value, 1)
+
+        controller.handleObservedNavigation(.finished)
+        await waitUntil { extractGate.pendingCount == 1 }
+        let firstPostSignInGeneration = controller.currentGeneration
+        XCTAssertTrue(controller.isRefreshing)
+
+        controller.handleObservedNavigation(.startedProvisionalNavigation)
+        XCTAssertGreaterThan(controller.currentGeneration, firstPostSignInGeneration)
+        XCTAssertFalse(controller.isRefreshing)
+
+        extractGate.resume(itemsJSON(count: 4))
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(controller.state, .authenticationRequired, "Cancelled extraction must not restore cards")
+        XCTAssertEqual(controller.state.retainedItems, [])
+
+        controller.handleObservedNavigation(.finished)
+        await waitUntil { extractGate.pendingCount == 1 }
+        extractGate.resume("{\"outcome\":\"empty\",\"items\":[]}")
+        await waitForSettled(controller)
+
+        XCTAssertEqual(controller.state, .empty(refreshedAt: currentDate))
+        XCTAssertEqual(controller.presentation, .cards)
+        XCTAssertEqual(extractCount.value, 3)
+    }
+
+    func testUnsupportedPageDuringSignInRecoveryLeavesBrowserUsable() async {
+        var payload = "{\"outcome\":\"authenticationRequired\",\"items\":[]}"
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in true },
+            executor: { _ in payload },
+            readinessAttempts: 1
+        )
+        controller.apply(.items([summary(index: 8)]), generation: 0)
+        controller.refresh()
+        await waitForSettled(controller)
+        XCTAssertEqual(controller.hiddenItems, [summary(index: 8)])
+
+        payload = "{\"outcome\":\"unsupported\",\"items\":[]}"
+        controller.handleObservedNavigation(.finished)
+        await waitForSettled(controller)
+
+        XCTAssertEqual(controller.state, .unsupportedPage)
+        XCTAssertEqual(controller.presentation, .browser, "The same-origin page must remain usable")
+        XCTAssertTrue(controller.wantsAuthenticationObservation)
+        XCTAssertEqual(controller.hiddenItems, [summary(index: 8)])
+        XCTAssertFalse(controller.canShowCards)
+        XCTAssertEqual(controller.state.retainedItems, [])
+    }
+
+    func testOrdinaryFailureAfterSignInRestoresLabelledStaleCards() async {
+        var payload = "{\"outcome\":\"authenticationRequired\",\"items\":[]}"
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in true },
+            executor: { _ in payload }
+        )
+        controller.apply(.items([summary(index: 2)]), generation: 0)
+        controller.refresh()
+        await waitForSettled(controller)
+        XCTAssertEqual(controller.hiddenItems, [summary(index: 2)])
+
+        payload = "definitely not json"
+        controller.handleObservedNavigation(.finished)
+        await waitForSettled(controller)
+
+        guard case .stale(let items, let refreshedAt, let reason) = controller.state else {
+            return XCTFail("Expected labelled stale cards, got \(controller.state)")
+        }
+        XCTAssertEqual(items, [summary(index: 2)])
+        XCTAssertEqual(refreshedAt, currentDate)
+        XCTAssertEqual(reason, .extractionFailed)
+        XCTAssertEqual(controller.presentation, .cards)
+        XCTAssertTrue(controller.hiddenItems.isEmpty)
+        XCTAssertFalse(controller.wantsAuthenticationObservation)
+    }
+
+    func testCancelDuringSignInWatchResumesObservationWithoutReload() async {
+        let loads = CounterBox()
+        let events = NavigationEventBox()
+        var payload = "{\"outcome\":\"authenticationRequired\",\"items\":[]}"
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in
+                loads.increment()
+                return true
+            },
+            executor: { _ in payload },
+            navigationEvents: events.stream
+        )
+
+        controller.startIfNeeded()
+        await waitForSettled(controller)
+        XCTAssertEqual(loads.value, 1)
+        XCTAssertTrue(controller.wantsAuthenticationObservation)
+
+        controller.cancelPendingWork()
+        XCTAssertTrue(controller.isSuspended)
+        XCTAssertTrue(controller.needsExtraction)
+        XCTAssertEqual(controller.state, .authenticationRequired)
+        XCTAssertEqual(controller.presentation, .browser)
+
+        payload = itemsJSON(count: 1)
+        controller.startIfNeeded()
+        await waitForSettled(controller)
+
+        XCTAssertEqual(loads.value, 1, "Resuming sign-in observation must not reload the page")
+        guard case .loaded(let items, _) = controller.state else {
+            return XCTFail("Expected resumed DOM extraction, got \(controller.state)")
+        }
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(controller.presentation, .cards)
+    }
+
     // MARK: - Redaction
 
     func testLoadedStateDescriptionContainsNoExtractedValues() {
@@ -761,5 +1013,20 @@ private final class ContinuationGate<Value> {
     func resume(_ value: Value) {
         guard !pending.isEmpty else { return }
         pending.removeFirst().resume(returning: value)
+    }
+}
+
+@MainActor
+private final class NavigationEventBox {
+    private let pair = AsyncStream.makeStream(of: WebPage.NavigationEvent.self)
+
+    var isSubscribed: Bool { true }
+
+    func stream(_ page: WebPage) -> AsyncStream<WebPage.NavigationEvent> {
+        pair.stream
+    }
+
+    func yield(_ event: WebPage.NavigationEvent) {
+        pair.continuation.yield(event)
     }
 }
