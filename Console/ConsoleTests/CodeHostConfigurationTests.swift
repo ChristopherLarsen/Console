@@ -95,16 +95,16 @@ final class CodeHostConfigurationTests: XCTestCase {
         XCTAssertNil(SessionArtifactKind(rawValue: "github_pull_request"), "GitHub artifact support is removed")
     }
 
-    func testStarterPromptUsesMRWording() {
+    func testStarterPromptNeverIncludesMergeRequestMetadata() {
         let prompt = StarterPromptBuilder.prompt(
             for: .review,
             source: .mergeRequest(
                 iid: "9",
                 title: "Add tests",
-                url: URL(string: "https://gitlab.com/acme/proj/-/merge_requests/9")!
+                url: URL(string: "https://example.test/acme/proj/-/merge_requests/9")!
             )
         )
-        XCTAssertTrue(prompt?.hasPrefix("Review GitLab merge request 9: Add tests") ?? false)
+        XCTAssertNil(prompt)
     }
 
     func testRoutingIdentityMatchesTheRemote() {

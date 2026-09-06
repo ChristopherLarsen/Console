@@ -107,21 +107,21 @@ final class SessionsPackagingTests: XCTestCase {
     }
 
     @MainActor
-    func testLaunchArgumentsCarryIdentityNamePluginAndPreapprovals() {
+    func testLaunchArgumentsCarryIdentityPluginAndPreapprovalsWithoutDisplayName() {
         let args = SessionStore.launchArguments(
             claudeSessionID: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
-            name: "My Task",
             pluginDirectory: "/tmp/plugins/console-bridge"
         )
 
         XCTAssertTrue(args.elementsEqual([
             "--session-id", "11111111-2222-3333-4444-555555555555",
-            "--name", "My Task",
             "--plugin-dir", "/tmp/plugins/console-bridge",
             "--allowedTools",
             "mcp__plugin_console-bridge_console__report_attention",
             "mcp__plugin_console-bridge_console__link_artifact",
             "mcp__plugin_console-bridge_console__report_completion",
         ]) { $0 == $1 })
+        XCTAssertFalse(args.contains("--name"))
+        XCTAssertFalse(args.contains("My Task"))
     }
 }

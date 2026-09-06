@@ -2,24 +2,17 @@ import SwiftUI
 import SwiftTerm
 
 /// Selected terminal pane: header with name and state, optional compact info
-/// strip (summary + artifact chips), starter-prompt banner when a prompt is
-/// still pending delivery, and the persistent terminal view.
+/// strip (summary + artifact chips), and the persistent terminal view.
 struct SessionTerminalPane: View {
     let session: ConsoleSession
     let displayedState: DisplayedSessionState
     let onTerminate: () -> Void
-    var onSendStarterPrompt: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
             header
 
-            if session.pendingStarterPrompt != nil {
-                StarterPromptBanner(
-                    onSend: { onSendStarterPrompt?() }
-                )
-                Divider()
-            } else if showsInfoStrip {
+            if showsInfoStrip {
                 SessionInfoStrip(session: session)
                 Divider()
             }
@@ -67,38 +60,6 @@ struct SessionTerminalPane: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-    }
-}
-
-/// Banner for a starter prompt that has not been submitted yet — either
-/// because bridge instrumentation is unavailable or because automatic start
-/// is disabled. The prompt itself stays memory-only and out of launch
-/// arguments; this banner only offers a manual send.
-struct StarterPromptBanner: View {
-    let onSend: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "text.badge.plus")
-                .font(.caption)
-                .foregroundStyle(Color.accentColor)
-
-            Text("A starter prompt is ready to send.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Spacer(minLength: 8)
-
-            Button("Send Starter Prompt", action: onSend)
-                .controlSize(.small)
-                .accessibilityIdentifier("Sessions.SendStarterPromptButton")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.accentColor.opacity(0.08))
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("Sessions.StarterPromptBanner")
     }
 }
 

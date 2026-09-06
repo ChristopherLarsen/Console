@@ -1,13 +1,12 @@
 import Foundation
 import WebKit
 
-/// A prepared launch: automatic name, generated starter prompt, and an
-/// optional explicit workspace. Views may edit name/workspaceID before
-/// handing the draft back to the coordinator's `launch(draft:)`.
+/// A prepared launch: automatic local display name and an optional explicit
+/// workspace. Views may edit name/workspaceID before handing the draft back
+/// to the coordinator's `launch(draft:)`. Source metadata stays local.
 struct SessionDraft {
     let purpose: SessionPurpose
     let source: SessionLaunchSource?
-    let starterPrompt: String?
     var name: String
     var workspaceID: UUID?
 }
@@ -19,13 +18,17 @@ struct PendingWorkspaceChoice: Identifiable {
     let purpose: SessionPurpose
     let name: String
     let source: SessionLaunchSource?
-    let starterPrompt: String?
 }
 
 /// Central launch entry point for intent-aware session creation. Builds
 /// drafts from four intents, resolves workspaces through the documented
-/// order, hosts unresolved choices at MainView, creates sessions, navigates
-/// to Sessions, and delivers memory-only starter prompts.
+/// order, hosts unresolved choices at MainView, creates sessions, and
+/// navigates to Sessions.
+///
+/// WebView-derived ticket/MR fields are local routing and display data.
+/// Contextual launches may choose a folder and open an idle session; they
+/// never generate or send a source-derived prompt. The developer types work
+/// context into Claude explicitly.
 ///
 /// Resolution order:
 /// 1. Explicit workspace override (Customize).
@@ -62,11 +65,6 @@ final class SessionLaunchCoordinator {
         self.store = store
         self.workspaceStore = workspaceStore
         self.resolver = RepositoryIdentityResolver()
-
-        // Deliver queued starter prompts exactly once, at sessionStarted.
-        store.lifecycleObserver = { [weak self] sessionID, event in
-            self?.handleLifecycleEvent(sessionID: sessionID, event: event)
-        }
     }
 
     // MARK: - Drafts
@@ -75,7 +73,6 @@ final class SessionLaunchCoordinator {
         SessionDraft(
             purpose: purpose,
             source: source,
-            starterPrompt: StarterPromptBuilder.prompt(for: purpose, source: source),
             name: purpose.defaultName(source: source),
             workspaceID: nil
         )
@@ -90,7 +87,8 @@ final class SessionLaunchCoordinator {
     // MARK: - Retained-page pre-population
 
     /// Source parsed from the retained Jira WebView's current URL, if it is
-    /// displaying an issue. Memory-only; nothing is fetched.
+    /// displaying an issue. Memory-only; nothing is fetched. Used to name
+    /// the local session and route a workspace — never sent to Claude.
     func retainedJiraSource() -> SessionLaunchSource? {
         guard let url = JiraWebSession.shared.page.url,
               let key = JiraSourceContext.parseIssueKey(fromURL: url) else {
@@ -144,8 +142,7 @@ final class SessionLaunchCoordinator {
         pendingChoice = PendingWorkspaceChoice(
             purpose: draft.purpose,
             name: draft.name,
-            source: draft.source,
-            starterPrompt: draft.starterPrompt
+            source: draft.source
         )
         return nil
     }
@@ -165,7 +162,6 @@ final class SessionLaunchCoordinator {
         let draft = SessionDraft(
             purpose: choice.purpose,
             source: choice.source,
-            starterPrompt: choice.starterPrompt,
             name: choice.name,
             workspaceID: workspaceID
         )
@@ -207,8 +203,7 @@ final class SessionLaunchCoordinator {
             purpose: draft.purpose,
             name: draft.name,
             workingDirectory: workspace.directoryURL,
-            source: draft.source,
-            starterPrompt: draft.starterPrompt ?? StarterPromptBuilder.prompt(for: draft.purpose, source: draft.source)
+            source: draft.source
         )
 
         do {
@@ -265,40 +260,5 @@ final class SessionLaunchCoordinator {
         }
 
         return nil
-    }
-
-    // MARK: - Starter prompt delivery (memory-only)
-
-    private var automaticallyStartsContextualWork: Bool {
-        workspaceStore.automaticallyStartsContextualWork
-    }
-
-    private func handleLifecycleEvent(sessionID: UUID, event: SessionLifecycleEvent) {
-        switch event {
-        case .sessionStarted:
-            guard automaticallyStartsContextualWork,
-                  let prompt = store.pendingStarterPrompt(for: sessionID) else { return }
-            // Clearing before submitting is the exactly-once guarantee.
-            store.setPendingStarterPrompt(nil, for: sessionID)
-            _ = store.submitStarterPrompt(prompt, to: sessionID)
-
-        case .turnFailed, .processTerminated, .sessionEnded:
-            store.setPendingStarterPrompt(nil, for: sessionID)
-
-        case .promptSubmitted, .permissionRequested, .questionAsked, .turnCompleted,
-             .cwdChanged, .attentionReported, .artifactLinked, .completionReported, .userInputObserved:
-            break
-        }
-    }
-
-    /// Manual Send Starter Prompt (banner). Bypasses the idle-only gate
-    /// because bridge-unavailable sessions never report activity changes.
-    @discardableResult
-    func manuallySendStarterPrompt(to sessionID: UUID) -> SubmissionResult {
-        guard let prompt = store.pendingStarterPrompt(for: sessionID) else {
-            return .rejected(.emptyPrompt)
-        }
-        store.setPendingStarterPrompt(nil, for: sessionID)
-        return store.submitStarterPrompt(prompt, to: sessionID)
     }
 }

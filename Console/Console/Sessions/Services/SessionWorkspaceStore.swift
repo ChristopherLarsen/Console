@@ -22,16 +22,8 @@ final class SessionWorkspaceStore {
     private enum Key {
         static let workspaces = "sessionWorkspaces.list"
         static let defaultID = "sessionWorkspaces.defaultID"
-        static let autoStart = "sessionWorkspaces.autoStartContextualWork"
         static func lastUsed(_ purpose: SessionPurpose) -> String { "sessionWorkspaces.lastUsed.\(purpose.rawValue)" }
         static let associations = "sessionWorkspaces.associations"
-    }
-
-    /// When false, Existing Ticket and Review sessions open idle and show a
-    /// Send Starter Prompt banner instead of submitting automatically.
-    var automaticallyStartsContextualWork: Bool {
-        get { defaults.object(forKey: Key.autoStart) as? Bool ?? true }
-        set { defaults.set(newValue, forKey: Key.autoStart) }
     }
 
     init(defaults: UserDefaults = .standard) {
