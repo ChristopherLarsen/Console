@@ -476,13 +476,10 @@ private struct JiraTicketCard: View {
 
                 // The state dot becomes the red attention badge when this
                 // ticket demands a human; the leading x never moves.
-                if showsAttentionBadge {
-                    AttentionBadge()
-                } else {
-                    Circle()
-                        .fill(statusChannel.color)
-                        .frame(width: 6, height: 6)
-                }
+                HomeCardGlyph(
+                    color: statusChannel.color,
+                    needsYou: showsAttentionBadge
+                )
 
                 Text(ticket.key)
                     .font(HomeCardMetrics.identityFont)

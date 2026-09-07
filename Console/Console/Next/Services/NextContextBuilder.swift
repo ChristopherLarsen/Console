@@ -108,6 +108,17 @@ enum NextContextBuilder {
             )
         }
 
+        if let ticket = firstNeedsYouTicket(in: snapshot.tickets) {
+            return NextTask(
+                kind: .newTicket,
+                headline: "Unblock \(ticket.key)",
+                lines: blockedTicketLines(ticket),
+                targetURL: ticket.issueURL,
+                openTarget: .jiraIssue(key: ticket.key, url: ticket.issueURL),
+                freshnessNote: freshnessNote(for: snapshot.ticketsStatus)
+            )
+        }
+
         if let ticket = firstParkedTicket(in: snapshot.tickets) {
             return NextTask(
                 kind: .newTicket,
@@ -251,7 +262,28 @@ enum NextContextBuilder {
             .min { $0.sourceOrder < $1.sourceOrder }
     }
 
+    /// Blocked tickets the user owes attention — they must reach the Next
+    /// card, otherwise a loaded list with only blocked work reads as an
+    /// unqualified all-clear.
+    private static func firstNeedsYouTicket(in tickets: [JiraTicketSummary]) -> JiraTicketSummary? {
+        tickets
+            .filter { AttentionChannel.forTicketStatus($0.status) == .needsYou }
+            .min { $0.sourceOrder < $1.sourceOrder }
+    }
+
     // MARK: - Copy helpers
+
+    /// Status plus truncated summary for a blocked-ticket task card.
+    private static func blockedTicketLines(_ ticket: JiraTicketSummary) -> [String] {
+        var lines: [String] = []
+        if let status = ticket.status, !status.isEmpty {
+            lines.append(status)
+        }
+        if !ticket.summary.isEmpty {
+            lines.append(contentsOf: clampedLines(ticket.summary))
+        }
+        return lines
+    }
 
     private static func shortTitle(for item: MergeRequestSummary) -> String {
         if let iid = item.iidText, !iid.isEmpty {

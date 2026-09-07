@@ -135,6 +135,36 @@ final class CodeHostWebSessionStoreTests: XCTestCase {
         )
     }
 
+    // MARK: - Optimistic load record
+
+    func testLoadIfNeededRecordsURLSynchronously() {
+        let store = CodeHostWebSessionStore(dataStore: WKWebsiteDataStore.nonPersistent())
+        let url = URL(string: "https://gitlab.probe.invalid/-/merge_requests/list")!
+
+        store.loadIfNeeded(.reviewsRequested, url: url)
+
+        XCTAssertEqual(store.recordedURLString(for: .reviewsRequested), url.absoluteString)
+    }
+
+    func testFailedFirstLoadDoesNotBlockRetry() async {
+        let store = CodeHostWebSessionStore(dataStore: WKWebsiteDataStore.nonPersistent())
+        let url = URL(string: "https://console-load-failure.invalid/unreachable")!
+
+        store.loadIfNeeded(.authored, url: url)
+
+        // The record was written before the load ran; the failed load must
+        // clear it so the same URL can be requested again.
+        let deadline = Date().addingTimeInterval(10)
+        while store.recordedURLString(for: .authored) == url.absoluteString, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertNil(store.recordedURLString(for: .authored), "A load that never finished must not permanently skip its URL")
+
+        // Second request with force=false issues a new load (record was cleared).
+        store.loadIfNeeded(.authored, url: url)
+        XCTAssertEqual(store.recordedURLString(for: .authored), url.absoluteString)
+    }
+
     // MARK: - Plumbing
 
     private func simulateLoad(_ page: WebPage, url: URL, body: String) async throws {

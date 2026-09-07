@@ -290,9 +290,16 @@ enum DeveloperActionCatalog {
         workspaces: [SessionWorkspace],
         defaultWorkspaceID: UUID?
     ) -> SessionWorkspace? {
-        if let directory = selectedSessionDirectory,
-           let match = workspaces.first(where: { workspaceContains($0, directory: directory) }) {
-            return match
+        if let directory = selectedSessionDirectory {
+            // Nested workspaces both contain the session directory; the most
+            // specific (longest) root owns it, so a parent can never steal a
+            // session that lives inside a registered child workspace.
+            let best = workspaces
+                .filter { workspaceContains($0, directory: directory) }
+                .max { $0.directoryPath.count < $1.directoryPath.count }
+            if let best {
+                return best
+            }
         }
         if let defaultWorkspaceID,
            let match = workspaces.first(where: { $0.id == defaultWorkspaceID }) {

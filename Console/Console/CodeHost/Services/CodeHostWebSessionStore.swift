@@ -46,11 +46,40 @@ final class CodeHostWebSessionStore {
     }
 
     /// Loads `url` unless this page already had that exact URL requested.
+    ///
+    /// The record is written before the load runs; a load that never reaches
+    /// `.finished` clears it again so the same URL can be retried on the next
+    /// appearance instead of being silently skipped forever.
     func loadIfNeeded(_ kind: CodeHostListKind, url: URL, force: Bool = false) {
         let normalized = url.absoluteString
         if !force, lastLoadedURLStrings[kind] == normalized { return }
         lastLoadedURLStrings[kind] = normalized
-        page(for: kind).load(URLRequest(url: url))
+        let page = page(for: kind)
+        let events = page.load(URLRequest(url: url))
+        Task { [weak self] in
+            var finished = false
+            do {
+                for try await event in events {
+                    if case .finished = event {
+                        finished = true
+                        break
+                    }
+                }
+            } catch {
+                finished = false
+            }
+            guard let self, !finished else { return }
+            // Only forget the URL if this load is still the one recorded; a
+            // later explicit load supersedes it.
+            if self.lastLoadedURLStrings[kind] == normalized {
+                self.lastLoadedURLStrings[kind] = nil
+            }
+        }
+    }
+
+    /// Recorded last requested URL for a page (inspection/testing seam).
+    func recordedURLString(for kind: CodeHostListKind) -> String? {
+        lastLoadedURLStrings[kind]
     }
 
     /// Builds one page bound to `dataStore`. Shared by both list kinds; every

@@ -34,13 +34,10 @@ struct MergeRequestCardView: View {
             HStack(spacing: 5) {
                 // The state dot becomes the red attention badge when this MR
                 // demands a human; the leading x never moves.
-                if showsAttentionBadge {
-                    AttentionBadge()
-                } else {
-                    Circle()
-                        .fill(resolvedChannel.color)
-                        .frame(width: 6, height: 6)
-                }
+                HomeCardGlyph(
+                    color: resolvedChannel.color,
+                    needsYou: showsAttentionBadge
+                )
 
                 if let iid = item.iidText {
                     Text("!\(iid)")

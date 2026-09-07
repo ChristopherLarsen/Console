@@ -102,6 +102,21 @@ final class JiraListExtractorTests: XCTestCase {
         XCTAssertNil(tickets[0].updatedText)
     }
 
+    func testTicketsPayloadWithAllRowsDroppedIsFailureNeverFalseEmpty() {
+        // Every row unusable (bad scheme): a data/selector failure, never a
+        // legitimate empty list.
+        let data = Data(#"{"kind":"tickets","rows":[{"key":"DEMO-1","summary":"bad url","url":"javascript:void(0)"}]}"#.utf8)
+        XCTAssertEqual(JiraListExtractor.decode(payloadData: data), .failed)
+    }
+
+    func testTicketsPayloadKeepsValidRowsWhenOthersDrop() {
+        let data = Data(#"{"kind":"tickets","rows":[{"key":"DEMO-1","summary":"bad url","url":"javascript:void(0)"},{"key":"DEMO-2","summary":"good","url":"https://jira.example.com/browse/DEMO-2"}]}"#.utf8)
+        guard case let .tickets(tickets) = JiraListExtractor.decode(payloadData: data) else {
+            return XCTFail("expected tickets")
+        }
+        XCTAssertEqual(tickets.map(\.key), ["DEMO-2"])
+    }
+
     func testRowsWithoutUsableIssueURLAreDropped() {
         let rows = [
             row(key: "DEMO-1", summary: "empty url", status: nil, priority: nil, updated: nil, url: ""),

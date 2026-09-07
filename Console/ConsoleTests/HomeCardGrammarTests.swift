@@ -36,7 +36,8 @@ final class HomeCardGrammarTests: XCTestCase {
     }
 
     func testMergeRequestPrecedence() {
-        // failed > blocked > running > draft > passed
+        // failed > blocked > running > draft > passed — by condition rank,
+        // not by which side rendered the state.
         XCTAssertEqual(
             mrState(draft: true, pipeline: "Failed")?.channel,
             .needsYou,
@@ -44,13 +45,34 @@ final class HomeCardGrammarTests: XCTestCase {
         )
         XCTAssertEqual(
             mrState(pipeline: "Running", review: "Failed")?.channel,
+            .needsYou,
+            "a human-blocking review outranks a moving pipeline"
+        )
+        XCTAssertEqual(
+            mrState(pipeline: "Running", review: "Changes requested")?.channel,
+            .needsYou,
+            "changes requested outranks running"
+        )
+        XCTAssertEqual(
+            mrState(pipeline: "Running", review: "Approved")?.channel,
             .inFlight,
-            "pipeline is checked before review"
+            "a settled review does not outrank a moving pipeline"
+        )
+        XCTAssertEqual(
+            mrState(pipeline: "Passed", review: "Changes requested")?.channel,
+            .needsYou,
+            "changes requested outranks a settled pipeline"
         )
         XCTAssertEqual(mrState(pipeline: "Passed", review: nil)?.channel, .clear)
         XCTAssertEqual(mrState(draft: true, pipeline: "Passed")?.label, "Draft", "draft beats passed")
         XCTAssertEqual(mrState(draft: true, pipeline: nil)?.label, "Draft")
         XCTAssertNil(mrState(), "no rendered conditions means no state text")
+    }
+
+    func testReviewApprovalBecomesCardState() {
+        XCTAssertEqual(mrState(pipeline: nil, review: "Approved")?.channel, .clear)
+        XCTAssertEqual(mrState(pipeline: nil, review: "Approved")?.label, "Approved")
+        XCTAssertEqual(mrState(pipeline: "Failed", review: "Approved")?.channel, .needsYou)
     }
 
     func testMergeRequestLabelsAreVerbatim() {

@@ -181,6 +181,10 @@ final class CodeHostListPanelController {
             presentation = .cards
             refresh()
         case .extractionFailed:
+            if wantsAuthenticationObservation {
+                presentation = .browser
+                return
+            }
             presentation = .cards
             refresh()
         }
@@ -422,7 +426,11 @@ final class CodeHostListPanelController {
             return
         }
         if wantsAuthenticationObservation {
-            // No prior cards to restore: leave the current page usable.
+            // No prior cards to restore: surface the concrete failure instead
+            // of lingering in authenticationRequired after sign-in finished.
+            // The navigation watch stays active, so a later list still
+            // recovers, and the retained page remains usable.
+            state = failureState
             presentation = .browser
             return
         }

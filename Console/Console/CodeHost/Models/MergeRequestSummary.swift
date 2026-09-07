@@ -8,10 +8,12 @@ enum CodeHostListKind: String, CaseIterable, Sendable {
     case reviewsRequested
     case authored
 
-    /// Short label used in panel chrome and sidebar controls.
+    /// Short label used in panel chrome and sidebar controls. Matches the
+    /// Home quadrant titles ("MRs to Review" / "My MRs") so one surface never
+    /// renames the same list.
     var displayTitle: String {
         switch self {
-        case .reviewsRequested: return "Reviews Requested"
+        case .reviewsRequested: return "MRs to Review"
         case .authored: return "My MRs"
         }
     }

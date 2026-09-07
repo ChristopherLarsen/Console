@@ -28,7 +28,17 @@ enum NextTaskNavigation {
         switch task.resolvedOpenTarget {
         case .mergeRequest(let url, let list):
             let items = list == .reviewsRequested ? snapshot.reviewItems : snapshot.authoredItems
-            if items.contains(where: { $0.mergeRequestURL == url || $0.id == url }) {
+            let item = items.first { $0.mergeRequestURL == url || $0.id == url }
+            // Reviews-list rows want a review by definition; an authored row
+            // is only still actionable while its condition still asks the
+            // author for work (same rule that shows the red badge).
+            if let item,
+               list == .reviewsRequested
+                   || AttentionChannel.forMergeRequest(
+                       isDraft: item.isDraft,
+                       pipelineDisplayState: item.pipelineDisplayState,
+                       reviewDisplayState: item.reviewDisplayState
+                   )?.channel == .needsYou {
                 return .navigate(Plan(
                     destination: .mergeRequests,
                     mergeRequestURL: url,
@@ -42,10 +52,12 @@ enum NextTaskNavigation {
             ))
 
         case .jiraIssue(let key, let url):
-            let stillPresent = snapshot.tickets.contains { ticket in
-                ticket.issueURL == url || (!key.isEmpty && ticket.key == key)
-            }
-            if stillPresent {
+            // Only a ticket Next would still pick is still openable: parked
+            // ("start something new") or blocked (needs-you). Anything else
+            // moved on under the stale imperative.
+            let ticket = snapshot.tickets.first { $0.issueURL == url || (!key.isEmpty && $0.key == key) }
+            if let ticket,
+               [AttentionChannel.parked, .needsYou].contains(AttentionChannel.forTicketStatus(ticket.status)) {
                 return .navigate(Plan(
                     destination: .jira,
                     jiraIssueURL: url

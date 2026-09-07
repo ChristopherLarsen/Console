@@ -236,6 +236,56 @@ final class NextContextBuilderTests: XCTestCase {
         XCTAssertEqual(task.openTarget, .source(.jira))
     }
 
+    /// A loaded list holding only blocked work must never read as an
+    /// unqualified all-clear.
+    func testBlockedTicketIsSelectedInsteadOfAllClear() {
+        let blocked = JiraTicketSummary(
+            key: "SYN-40",
+            summary: "Fix background refresh after sign-in",
+            status: "Blocked",
+            priority: nil,
+            updatedText: nil,
+            issueURL: URL(string: "https://jira.example.com/browse/SYN-40")!,
+            sourceOrder: 0
+        )
+        let snapshot = NextContextSnapshot(
+            tickets: [blocked],
+            reviewsStatus: NextSourceStatus(check: .current, lastSuccessfulExtraction: Date()),
+            authoredStatus: NextSourceStatus(check: .current, lastSuccessfulExtraction: Date()),
+            ticketsStatus: NextSourceStatus(check: .current, lastSuccessfulExtraction: Date())
+        )
+        let task = NextContextBuilder.recommendedTask(for: snapshot)
+
+        XCTAssertEqual(task.headline, "Unblock SYN-40")
+        XCTAssertEqual(task.openTarget, .jiraIssue(key: "SYN-40", url: blocked.issueURL))
+        XCTAssertTrue(task.lines.contains("Blocked"))
+    }
+
+    func testParkedTicketStillPreferredOverBlockedWhenNewer() {
+        // A blocked ticket outranks parked for the Next card: needs-you work
+        // leads, backlog stays the fallback.
+        let parked = JiraTicketSummary(
+            key: "SYN-50",
+            summary: "Backlog item",
+            status: "To Do",
+            priority: nil,
+            updatedText: nil,
+            issueURL: URL(string: "https://jira.example.com/browse/SYN-50")!,
+            sourceOrder: 0
+        )
+        let blocked = JiraTicketSummary(
+            key: "SYN-51",
+            summary: "Blocked item",
+            status: "Blocked",
+            priority: nil,
+            updatedText: nil,
+            issueURL: URL(string: "https://jira.example.com/browse/SYN-51")!,
+            sourceOrder: 1
+        )
+        let task = NextContextBuilder.recommendedTask(for: NextContextSnapshot(tickets: [parked, blocked]))
+        XCTAssertEqual(task.headline, "Unblock SYN-51")
+    }
+
     func testStaleReviewIsLabelledOnce() {
         let snapshot = NextContextSnapshot(
             reviewItems: [mr(iid: "7", title: "Stale review", order: 0)],

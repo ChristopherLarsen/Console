@@ -384,6 +384,42 @@ final class JiraPanelControllerTests: XCTestCase {
         XCTAssertEqual(service.lastLoadedURLString, listURL2.absoluteString)
     }
 
+    /// A superseded refresh aborts at its generation guard, so configure(nil)
+    /// itself must clear the refreshing flag or Refresh stays disabled forever.
+    func testConfigureNilClearsStuckRefreshingFlag() async {
+        service.readinessResult = .pending(hasRows: true, hasContainer: true)
+        service.extractionResult = .tickets(sampleTickets)
+        controller.configure(url: listURL1)
+        await waitFor(controller.state.hasCards)
+
+        service.holdNextExtraction()
+        controller.refresh()
+        await waitFor(service.extractionCount >= 2)
+        XCTAssertTrue(controller.isRefreshing)
+
+        controller.configure(url: nil)
+
+        XCTAssertFalse(controller.isRefreshing, "Abandoned in-flight refresh must not keep Refresh disabled")
+        service.releaseHeldExtraction()
+    }
+
+    /// A container without rows can be a legitimate signed-in empty list; the
+    /// readiness pipeline must finish on a stable container instead of always
+    /// burning the full 15-second deadline.
+    func testContainerOnlyReadinessFinishesWellBeforeFullDeadline() async {
+        service.readinessResult = .pending(hasRows: false, hasContainer: true)
+        service.extractionResult = .empty
+
+        let start = Date()
+        controller.configure(url: listURL1)
+
+        await waitFor({
+            if case .empty = controller.state { return true }
+            return false
+        }(), timeout: 10)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 14, "Empty list decided without the full deadline")
+    }
+
     private func isStaleWithKeys(_ keys: [String]) -> Bool {
         if case let .stale(tickets, _, _) = controller.state {
             return tickets.map(\.key) == keys

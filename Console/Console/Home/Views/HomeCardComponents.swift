@@ -24,6 +24,12 @@ enum HomeCardMetrics {
     /// even when empty — that is what makes occlusion structurally impossible.
     static let actionSlotWidth: CGFloat = 16
 
+    /// Fixed-width leading slot for the row-one glyph (6pt state dot, or the
+    /// 12pt needs-you badge). Reserving the slot keeps the identity text's
+    /// x-origin identical whether or not the card needs you
+    /// (Design/HomeCards/DESIGN_PROMPT.md §3).
+    static let glyphSlotWidth: CGFloat = 12
+
     // Row-one type ramp.
     static let identityFont = Font.system(size: 10, design: .monospaced)
     static let stateFont = Font.system(size: 10, weight: .medium)
@@ -110,6 +116,27 @@ struct HomePanelHeader<Detail: View, Accessory: View>: View {
         .padding(.horizontal, 10)
         .frame(height: HomeCardMetrics.headerHeight)
         .accessibilityElement(children: .contain)
+    }
+}
+
+/// Row-one leading glyph shared by the card views: the 6pt state dot, or the
+/// red needs-you badge in the same fixed-width slot, so the identity text's
+/// leading x is identical in both states (DESIGN_PROMPT.md §3).
+struct HomeCardGlyph: View {
+    let color: Color
+    let needsYou: Bool
+
+    var body: some View {
+        Group {
+            if needsYou {
+                AttentionBadge()
+            } else {
+                Circle()
+                    .fill(color)
+                    .frame(width: 6, height: 6)
+            }
+        }
+        .frame(width: HomeCardMetrics.glyphSlotWidth, alignment: .leading)
     }
 }
 

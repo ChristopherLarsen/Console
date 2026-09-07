@@ -1,0 +1,45 @@
+import XCTest
+@testable import Console
+
+/// One-shot semantics of the Merge Requests handoff (H36-F01 class): a
+/// kind-only hint must not stick forever, while a URL handoff keeps its kind
+/// pending until the URL is consumed.
+@MainActor
+final class MergeRequestDeepLinkTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        MergeRequestDeepLink.shared.reset()
+    }
+
+    override func tearDown() {
+        MergeRequestDeepLink.shared.reset()
+        super.tearDown()
+    }
+
+    func testKindOnlyHintIsOneShot() {
+        MergeRequestDeepLink.shared.set(url: nil, kind: .reviewsRequested)
+
+        XCTAssertEqual(MergeRequestDeepLink.shared.consumeKindHint(), .reviewsRequested)
+        XCTAssertNil(MergeRequestDeepLink.shared.consumeKindHint(), "A consumed hint must not force the segment again")
+        XCTAssertNil(MergeRequestDeepLink.shared.consume(matching: .reviewsRequested))
+    }
+
+    func testURLHandoffKeepsKindUntilURLIsConsumed() {
+        let url = URL(string: "https://gitlab.example.com/group/project/-/merge_requests/7")!
+        MergeRequestDeepLink.shared.set(url: url, kind: .authored)
+
+        // Destination creation consumes the segment hint...
+        XCTAssertEqual(MergeRequestDeepLink.shared.consumeKindHint(), .authored)
+        // ...and onAppear still lands the URL.
+        XCTAssertEqual(MergeRequestDeepLink.shared.consume(matching: .authored), url)
+        XCTAssertNil(MergeRequestDeepLink.shared.consume(matching: .authored))
+    }
+
+    func testURLHintDoesNotLeakToOtherSegment() {
+        let url = URL(string: "https://gitlab.example.com/group/project/-/merge_requests/9")!
+        MergeRequestDeepLink.shared.set(url: url, kind: .reviewsRequested)
+
+        XCTAssertEqual(MergeRequestDeepLink.shared.consume(matching: .authored), nil)
+        XCTAssertEqual(MergeRequestDeepLink.shared.consume(matching: .reviewsRequested), url)
+    }
+}

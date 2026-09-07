@@ -38,6 +38,8 @@ final class DeveloperActionRunner {
     }
 
     func presentPicker() {
+        // A fresh presentation must not show the previous session's failure.
+        lastActionMessage = nil
         isPickerPresented = true
     }
 
