@@ -513,6 +513,66 @@ final class DeveloperActionTests: XCTestCase {
         )
     }
 
+    // MARK: - Simulator route workspace scoping
+
+    func testSimulatorRouteOnlyConsidersSucceededJobsInTheSelectedWorkspace() {
+        let workspaceA = SessionWorkspace(id: UUID(), name: "Alpha", directoryPath: "/tmp/Alpha")
+        let workspaceB = SessionWorkspace(id: UUID(), name: "Beta", directoryPath: "/tmp/Beta")
+        var otherJob = IOSBuildJob.queued(
+            id: UUID(),
+            kind: .build,
+            profile: validProfile(workspaceID: workspaceB.id).normalized(),
+            testSelection: nil,
+            resultBundleURL: URL(fileURLWithPath: "/tmp/Beta/b.xcresult"),
+            createdAt: Date()
+        )
+        otherJob.state = .succeeded
+
+        let foreignSnapshot = DeveloperActionCatalog.makeSnapshot(
+            selectedSessionName: nil,
+            hasSelectedSession: false,
+            selectedSessionDirectory: nil,
+            isFocusMode: false,
+            workspaces: [workspaceA, workspaceB],
+            defaultWorkspaceID: workspaceA.id,
+            profiles: [workspaceA.id: validProfile(workspaceID: workspaceA.id).normalized()],
+            jobs: [otherJob],
+            devices: [sampleDevice()],
+            isSimulatorInstalling: false,
+            bundleExists: { _ in false }
+        )
+        XCTAssertNil(foreignSnapshot.latestSucceededJobID)
+        let foreignItem = DeveloperActionCatalog.item(for: .runInSelectedSimulator, in: foreignSnapshot)
+        XCTAssertFalse(foreignItem.isEnabled)
+        if case .unavailable = foreignItem.route {} else {
+            XCTFail("expected unavailable route, got \(foreignItem.route)")
+        }
+
+        var ownJob = IOSBuildJob.queued(
+            id: UUID(),
+            kind: .build,
+            profile: validProfile(workspaceID: workspaceA.id).normalized(),
+            testSelection: nil,
+            resultBundleURL: URL(fileURLWithPath: "/tmp/Alpha/a.xcresult"),
+            createdAt: Date()
+        )
+        ownJob.state = .succeeded
+        let ownSnapshot = DeveloperActionCatalog.makeSnapshot(
+            selectedSessionName: nil,
+            hasSelectedSession: false,
+            selectedSessionDirectory: nil,
+            isFocusMode: false,
+            workspaces: [workspaceA, workspaceB],
+            defaultWorkspaceID: workspaceA.id,
+            profiles: [workspaceA.id: validProfile(workspaceID: workspaceA.id).normalized()],
+            jobs: [otherJob, ownJob],
+            devices: [sampleDevice()],
+            isSimulatorInstalling: false,
+            bundleExists: { _ in false }
+        )
+        XCTAssertEqual(ownSnapshot.latestSucceededJobID, ownJob.id)
+    }
+
     private func waitForJob(_ id: UUID, seconds: TimeInterval = 8) async throws -> IOSBuildJob {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {

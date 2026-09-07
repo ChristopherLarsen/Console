@@ -190,12 +190,9 @@ nonisolated struct IOSBuildJobPresentation: Equatable, Sendable {
 
     static func diagnosticText(for job: IOSBuildJob) -> String? {
         guard let summary = job.resultSummary else { return nil }
-        switch summary.parseStatus {
-        case .parsed:
-            return nil
-        case .missingBundle, .incompleteBundle, .corruptBundle, .schemaMismatch, .toolFailed:
-            return IOSProjectProfile.nilIfEmpty(summary.diagnosticMessage)
-        }
+        // A `.parsed` summary can still carry a diagnostic from a partially
+        // failed tool pass; that incompleteness must be surfaced, not hidden.
+        return IOSProjectProfile.nilIfEmpty(summary.diagnosticMessage)
     }
 
     static func errorCopyText(

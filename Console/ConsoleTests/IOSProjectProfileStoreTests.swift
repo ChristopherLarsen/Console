@@ -271,6 +271,108 @@ final class IOSProjectSettingsModelTests: XCTestCase {
         XCTAssertEqual(loaded.configuration, "Debug")
         XCTAssertNil(model.errorMessage)
     }
+
+    func testRefreshClearsStaleOptionsWhileSearching() async throws {
+        let projectURL = tmpRoot.appendingPathComponent("App.xcodeproj", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectURL, withIntermediateDirectories: true)
+        let workspace = SessionWorkspace(name: "App", directoryPath: tmpRoot.path)
+        let store = IOSProjectProfileStore(defaults: defaults)
+        let runner = ScriptedSettingsRunner(listJSON: Self.singleOptionListJSON)
+        runner.listDelaysFromSecondCall = 0.6
+        let model = IOSProjectSettingsModel(discovery: IOSProjectDiscovery(processRunner: runner))
+
+        await model.refreshAndWait(workspace: workspace, store: store)
+        XCTAssertEqual(model.candidates.count, 1)
+        XCTAssertTrue(model.destinationsLookupSucceeded)
+
+        let task = Task { await model.refreshAndWait(workspace: workspace, store: store) }
+        try await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertTrue(model.isDiscovering)
+        XCTAssertTrue(model.candidates.isEmpty)
+        XCTAssertNil(model.listing)
+        XCTAssertTrue(model.destinations.isEmpty)
+        XCTAssertFalse(model.destinationsLookupSucceeded)
+
+        await task.value
+        XCTAssertEqual(model.candidates.count, 1)
+        XCTAssertEqual(store.profile(for: workspace.id)?.projectPath, projectURL.standardizedFileURL.path)
+    }
+
+    func testMidRefreshProfileEditsSurviveRepairApply() async throws {
+        let projectURL = tmpRoot.appendingPathComponent("App.xcodeproj", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectURL, withIntermediateDirectories: true)
+        let workspace = SessionWorkspace(name: "App", directoryPath: tmpRoot.path)
+        let store = IOSProjectProfileStore(defaults: defaults)
+        let runner = ScriptedSettingsRunner(listJSON: Self.singleOptionListJSON)
+        runner.listDelaysFromSecondCall = 0.6
+        let model = IOSProjectSettingsModel(discovery: IOSProjectDiscovery(processRunner: runner))
+
+        await model.refreshAndWait(workspace: workspace, store: store)
+
+        runner.destinationJSON = Self.singleDestinationJSON
+        let task = Task { await model.refreshAndWait(workspace: workspace, store: store) }
+        try await Task.sleep(nanoseconds: 150_000_000)
+        model.selectTestPlan("MyPlan", workspaceID: workspace.id, store: store)
+        await task.value
+
+        let loaded = try XCTUnwrap(store.profile(for: workspace.id))
+        XCTAssertEqual(loaded.testPlan, "MyPlan")
+        XCTAssertEqual(loaded.simulatorUDID, "NEW-UDID-1234")
+    }
+
+    func testFailedDestinationLookupKeepsSavedSimulatorWithoutUnavailableLabel() async throws {
+        let projectURL = tmpRoot.appendingPathComponent("App.xcodeproj", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectURL, withIntermediateDirectories: true)
+        let workspace = SessionWorkspace(name: "App", directoryPath: tmpRoot.path)
+        let saved = IOSProjectProfile(
+            workspaceID: workspace.id,
+            projectPath: projectURL.path,
+            scheme: "App",
+            simulatorUDID: "LIVE-UDID"
+        )
+        let store = IOSProjectProfileStore(defaults: defaults)
+        store.save(saved)
+
+        let failing = ScriptedSettingsRunner(listJSON: Self.singleOptionListJSON)
+        failing.destinationError = ProcessRunError.timedOut
+        let model = IOSProjectSettingsModel(discovery: IOSProjectDiscovery(processRunner: failing))
+        await model.refreshAndWait(workspace: workspace, store: store)
+
+        XCTAssertFalse(model.destinationsLookupSucceeded)
+        XCTAssertEqual(store.profile(for: workspace.id)?.simulatorUDID, "LIVE-UDID")
+        XCTAssertFalse(
+            model.issues.contains { if case .savedSimulatorMissing = $0 { return true }; return false }
+        )
+        XCTAssertNil(model.issues.first)
+
+        let listing = ScriptedSettingsRunner(listJSON: Self.singleOptionListJSON)
+        listing.destinationJSON = Self.knownDestinationJSON
+        let confirming = IOSProjectSettingsModel(discovery: IOSProjectDiscovery(processRunner: listing))
+        await confirming.refreshAndWait(workspace: workspace, store: store)
+        XCTAssertTrue(confirming.destinationsLookupSucceeded)
+        XCTAssertFalse(
+            confirming.issues.contains { if case .savedSimulatorMissing = $0 { return true }; return false }
+        )
+    }
+
+    private static let singleOptionListJSON = """
+    {
+      "project" : {
+        "configurations" : [ "Debug" ],
+        "name" : "App",
+        "schemes" : [ "App" ],
+        "targets" : [ "App" ]
+      }
+    }
+    """
+
+    private static let singleDestinationJSON = """
+    {"destinations":[{"id":"NEW-UDID-1234","name":"iPhone 16","OS":"18.4","platform":"iOS Simulator"}]}
+    """
+
+    private static let knownDestinationJSON = """
+    {"destinations":[{"id":"LIVE-UDID","name":"iPhone 16","OS":"18.4","platform":"iOS Simulator"}]}
+    """
 }
 
 private final class FailingListRunner: ProcessRunning, @unchecked Sendable {
@@ -309,6 +411,49 @@ private final class ListingRunner: ProcessRunning, @unchecked Sendable {
         }
         if arguments.contains("-showdestinations") {
             return ProcessResult(exitCode: 0, standardOutput: #"{"destinations":[]}"#, standardError: "")
+        }
+        return ProcessResult(exitCode: 1, standardOutput: "", standardError: "unexpected")
+    }
+}
+
+private final class ScriptedSettingsRunner: ProcessRunning, @unchecked Sendable {
+    let listJSON: String
+    var destinationJSON = #"{"destinations":[]}"#
+    var destinationError: Error?
+    var listDelaysFromSecondCall: TimeInterval = 0
+
+    private let lock = NSLock()
+    private var listCalls = 0
+
+    init(listJSON: String) {
+        self.listJSON = listJSON
+    }
+
+    func run(
+        executablePath: String,
+        arguments: [String],
+        workingDirectory: String?,
+        deadline: Date?
+    ) async throws -> ProcessResult {
+        _ = executablePath
+        _ = workingDirectory
+        _ = deadline
+        if arguments.contains("-list") {
+            lock.lock()
+            listCalls += 1
+            let call = listCalls
+            lock.unlock()
+            if call >= 2, listDelaysFromSecondCall > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(listDelaysFromSecondCall * 1_000_000_000))
+            }
+            return ProcessResult(exitCode: 0, standardOutput: listJSON, standardError: "")
+        }
+        if arguments.contains("-showTestPlans") {
+            return ProcessResult(exitCode: 0, standardOutput: #"{"testPlans":[]}"#, standardError: "")
+        }
+        if arguments.contains("-showdestinations") {
+            if let destinationError { throw destinationError }
+            return ProcessResult(exitCode: 0, standardOutput: destinationJSON, standardError: "")
         }
         return ProcessResult(exitCode: 1, standardOutput: "", standardError: "unexpected")
     }

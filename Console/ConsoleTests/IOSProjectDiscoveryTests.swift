@@ -126,6 +126,30 @@ final class IOSProjectDiscoveryTests: XCTestCase {
         XCTAssertEqual(IOSProjectFileSearch.preferredCandidate(from: found)?.path, workspace.path)
     }
 
+    func testWorkspaceWithExtraProjectIsNotAutoSelected() throws {
+        _ = try plantProject(named: "App.xcworkspace")
+        _ = try plantProject(named: "App.xcodeproj")
+        _ = try plantProject(named: "Other.xcodeproj")
+        let found = IOSProjectFileSearch.find(in: tmpRoot)
+        XCTAssertNil(IOSProjectFileSearch.preferredCandidate(from: found))
+        let repair = IOSProfileRepair.resolve(
+            saved: .empty(workspaceID: UUID()),
+            candidates: found,
+            listing: .skipped,
+            destinations: .skipped
+        )
+        XCTAssertNil(repair.profile.projectPath)
+        XCTAssertEqual(repair.issues, [.needsProjectSelection])
+        XCTAssertFalse(repair.didChangeProfile)
+    }
+
+    func testWorkspaceWithoutMatchingAdjacentProjectIsNotAutoSelected() throws {
+        _ = try plantProject(named: "App.xcworkspace")
+        _ = try plantProject(named: "Other.xcodeproj")
+        let found = IOSProjectFileSearch.find(in: tmpRoot)
+        XCTAssertNil(IOSProjectFileSearch.preferredCandidate(from: found))
+    }
+
     func testSpacedProjectPathIsDiscovered() throws {
         let folder = tmpRoot.appendingPathComponent("My App", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -338,6 +362,39 @@ final class IOSProjectDiscoveryTests: XCTestCase {
         XCTAssertNil(result.listing)
     }
 
+    func testRefreshDistinguishesDestinationLookupFailureFromEmptySuccess() async throws {
+        let project = try plantProject(named: "App.xcodeproj")
+        let saved = IOSProjectProfile(
+            workspaceID: UUID(),
+            projectPath: project.path,
+            scheme: "App"
+        )
+
+        let failingRunner = FakeXcodebuildRunner()
+        failingRunner.listJSON = Self.projectListJSON
+        failingRunner.destinationError = ProcessRunError.timedOut
+        let failedResult = await IOSProjectDiscovery(processRunner: failingRunner)
+            .refresh(saved: saved, workspaceFolder: tmpRoot)
+        if case .failed = failedResult.destinationLookup {} else {
+            XCTFail("expected failed destination lookup, got \(failedResult.destinationLookup)")
+        }
+        XCTAssertTrue(failedResult.destinations.isEmpty)
+        XCTAssertFalse(
+            failedResult.repair.issues.contains { if case .savedSimulatorMissing = $0 { return true }; return false }
+        )
+
+        let emptyRunner = FakeXcodebuildRunner()
+        emptyRunner.listJSON = Self.projectListJSON
+        emptyRunner.destinationJSON = #"{"destinations":[]}"#
+        let emptyResult = await IOSProjectDiscovery(processRunner: emptyRunner)
+            .refresh(saved: saved, workspaceFolder: tmpRoot)
+        if case .succeeded(let devices) = emptyResult.destinationLookup {
+            XCTAssertTrue(devices.isEmpty)
+        } else {
+            XCTFail("expected succeeded empty destination lookup, got \(emptyResult.destinationLookup)")
+        }
+    }
+
     // MARK: - Fixtures
 
     private func plantProject(named relative: String) throws -> IOSProjectCandidate {
@@ -403,6 +460,7 @@ private final class FakeXcodebuildRunner: ProcessRunning, @unchecked Sendable {
     var testPlanJSON = #"{"testPlans":[]}"#
     var destinationJSON = #"{"destinations":[]}"#
     var listError: Error?
+    var destinationError: Error?
     var fallbackWithoutJSON = false
 
     func run(
@@ -429,6 +487,7 @@ private final class FakeXcodebuildRunner: ProcessRunning, @unchecked Sendable {
             return ProcessResult(exitCode: 64, standardOutput: "", standardError: "invalid option '-json'")
         }
         if arguments.contains("-showdestinations") {
+            if let destinationError { throw destinationError }
             if arguments.contains("-json") || !fallbackWithoutJSON {
                 return ProcessResult(exitCode: 0, standardOutput: destinationJSON, standardError: "")
             }

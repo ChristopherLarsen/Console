@@ -160,6 +160,11 @@ enum DeveloperActionCatalog {
             simulatorName = nil
         }
         let latestResultURL = jobs.reversed().first(where: { bundleExists($0.resultBundleURL) })?.resultBundleURL
+        // The Simulator install must target the same workspace the preview
+        // shows: a succeeded build in another workspace is not a candidate.
+        let latestSucceededJobID = workspace.flatMap { ws in
+            jobs.last(where: { $0.state == .succeeded && $0.profile.workspaceID == ws.id })
+        }?.id
         return DeveloperActionSnapshot(
             selectedSessionName: selectedSessionName,
             hasSelectedSession: hasSelectedSession,
@@ -170,7 +175,7 @@ enum DeveloperActionCatalog {
             profile: profile,
             simulatorName: simulatorName,
             latestJobID: jobs.last?.id,
-            latestSucceededJobID: jobs.last(where: { $0.state == .succeeded })?.id,
+            latestSucceededJobID: latestSucceededJobID,
             latestResultURL: latestResultURL,
             isSimulatorInstalling: isSimulatorInstalling
         )

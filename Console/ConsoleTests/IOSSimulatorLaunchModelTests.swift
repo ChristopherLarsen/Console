@@ -111,4 +111,80 @@ final class IOSSimulatorLaunchModelTests: XCTestCase {
         model.selectSimulator(nil, workspaceID: workspaceID, store: store)
         XCTAssertNil(store.profile(for: workspaceID)?.simulatorUDID)
     }
+
+    func testInstallCapturesUDIDThatSurvivesPickerChange() async throws {
+        let job = try succeededJob()
+        let store = IOSProjectProfileStore(defaults: defaults)
+        let workspaceID = UUID()
+        model.selectSimulator(selectedUDID, workspaceID: workspaceID, store: store)
+        runner.holdBootStatus = true
+
+        model.installAndLaunch(job: job, udid: selectedUDID)
+        try await waitUntil {
+            self.model.isInstalling
+                && self.model.activeInstallUDID == self.selectedUDID
+                && self.runner.invocations.contains { $0.kind == .bootstatus }
+        }
+
+        model.selectSimulator(bootedOtherUDID, workspaceID: workspaceID, store: store)
+        XCTAssertEqual(store.profile(for: workspaceID)?.simulatorUDID, bootedOtherUDID)
+        XCTAssertEqual(model.activeInstallUDID, selectedUDID)
+
+        model.cancelWaiting()
+        try await waitUntil { !self.model.isInstalling }
+        XCTAssertNil(model.activeInstallUDID)
+        XCTAssertEqual(runner.mutatedUDIDs.count, 2)
+        XCTAssertTrue(runner.mutatedUDIDs.allSatisfy { $0 == selectedUDID })
+        XCTAssertFalse(runner.mutatedUDIDs.contains(bootedOtherUDID))
+    }
+
+    func testOpenSimulatorFailureDuringInstallDoesNotClobberPhase() async throws {
+        let job = try succeededJob()
+        runner.holdBootStatus = true
+        runner.openResult = ProcessResult(exitCode: 1, standardOutput: "", standardError: "open failed")
+
+        model.installAndLaunch(job: job, udid: selectedUDID)
+        try await waitUntil { self.model.isInstalling }
+
+        model.openSimulator(udid: selectedUDID)
+        XCTAssertTrue(model.isInstalling)
+        if case .running = model.phase {} else {
+            return XCTFail("expected running phase, got \(model.phase)")
+        }
+        XCTAssertFalse(runner.invocations.contains { $0.kind == .open })
+
+        model.cancelWaiting()
+        try await waitUntil { !self.model.isInstalling }
+    }
+
+    private func succeededJob() throws -> IOSBuildJob {
+        var job = IOSBuildJob.queued(
+            id: UUID(),
+            kind: .build,
+            profile: IOSProjectProfile(
+                workspaceID: UUID(),
+                projectPath: "/tmp/App.xcodeproj",
+                scheme: "App",
+                configuration: "Debug",
+                simulatorUDID: selectedUDID
+            ),
+            testSelection: nil,
+            resultBundleURL: tmpRoot.appendingPathComponent("job.xcresult"),
+            createdAt: Date()
+        )
+        job.state = .succeeded
+        return job
+    }
+
+    private func waitUntil(
+        seconds: TimeInterval = 5,
+        _ predicate: @escaping () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if predicate() { return }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("condition not met within \(seconds)s")
+    }
 }

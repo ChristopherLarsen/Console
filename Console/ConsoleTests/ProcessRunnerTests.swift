@@ -316,6 +316,76 @@ final class ProcessRunnerTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
     }
 
+    func testBackgroundedDescendantHoldingPipesDoesNotHangCompletion() async throws {
+        let fixture = try makeScriptFixture(Self.orphanScript, extraFiles: ["child.pid"])
+        let childPIDFile = fixture.directory.appendingPathComponent("child.pid")
+        let start = Date()
+
+        let result = try await runWithTimeout(seconds: 10) {
+            try await SystemProcessRunner(forceStopGrace: 0.5).run(
+                executablePath: fixture.script.path,
+                arguments: [fixture.pidFile.path, childPIDFile.path],
+                workingDirectory: nil
+            )
+        }
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+        if let pid = readPID(from: childPIDFile) {
+            remember(pid)
+            stopPID(pid)
+        }
+    }
+
+    func testLateCancelAfterCleanExitStillReportsSuccess() async throws {
+        let fixture = try makeScriptFixture(Self.orphanScript, extraFiles: ["child.pid"])
+        let childPIDFile = fixture.directory.appendingPathComponent("child.pid")
+        let task = Task {
+            try await SystemProcessRunner(forceStopGrace: 0.5).run(
+                executablePath: fixture.script.path,
+                arguments: [fixture.pidFile.path, childPIDFile.path],
+                workingDirectory: nil
+            )
+        }
+        _ = try await waitForOwnedPID(fixture.pidFile)
+        // The shell has exited on its own; the backgrounded sleep still holds
+        // the pipe write-ends, so EOF has not arrived yet.
+        try await Task.sleep(nanoseconds: 150_000_000)
+        task.cancel()
+
+        let result = try await runThrowingWithTimeout(seconds: 10) { try await task.value }
+
+        XCTAssertEqual(result.exitCode, 0)
+        if let pid = readPID(from: childPIDFile) {
+            remember(pid)
+            stopPID(pid)
+        }
+    }
+
+    func testPIDIdentityTracksLiveProcessAndDropsDeadPID() throws {
+        guard OwnedProcessTree.identity(of: 1) == nil else {
+            return XCTFail("identity must refuse pid 1")
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["5"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let pid = process.processIdentifier
+        remember(pid)
+        defer { process.waitUntilExit() }
+
+        let first = OwnedProcessTree.identity(of: pid)
+        let second = OwnedProcessTree.identity(of: pid)
+        XCTAssertEqual(first, second)
+        XCTAssertNotNil(first)
+
+        stopPID(pid)
+        process.waitUntilExit()
+        XCTAssertNil(OwnedProcessTree.identity(of: pid))
+    }
+
     // MARK: - Fixtures
 
     private struct ScriptFixture {
@@ -345,6 +415,14 @@ final class ProcessRunnerTests: XCTestCase {
     sleep 60 &
     echo $! > "$2"
     wait
+    """
+
+    private static let orphanScript = """
+    #!/bin/sh
+    echo $$ > "$1"
+    sleep 30 &
+    echo $! > "$2"
+    exit 0
     """
 
     private func makeTempDirectory() throws -> URL {

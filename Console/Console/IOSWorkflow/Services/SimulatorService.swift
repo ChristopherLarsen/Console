@@ -92,13 +92,14 @@ nonisolated enum IOSBuildSettingsCommand {
     static func makeLaunchSpec(
         profile: IOSProjectProfile,
         json: Bool,
+        destinationUDID: String? = nil,
         xcodebuildPath: String = IOSXcodebuildCommand.defaultXcodebuildPath
     ) throws -> ProcessLaunchSpec {
         try IOSXcodebuildCommand.validateBuild(profile)
         let projectPath = profile.projectPath!
         let candidate = IOSProjectCandidate(path: projectPath)!
         let scheme = profile.scheme!
-        let udid = profile.simulatorUDID!
+        let udid = destinationUDID ?? profile.simulatorUDID!
 
         var arguments: [String] = ["-showBuildSettings"]
         if json {
@@ -431,7 +432,13 @@ nonisolated struct SimulatorService {
         return try SimulatorDeviceListParser.devices(from: result.standardOutput)
     }
 
-    func resolveProduct(from job: IOSBuildJob) async throws -> IOSBuiltProduct {
+    /// Product resolution runs against the same destination UDID that the
+    /// install/launch phase will mutate, so the built product and the device
+    /// never split across two UDIDs.
+    func resolveProduct(
+        from job: IOSBuildJob,
+        destinationUDID: String? = nil
+    ) async throws -> IOSBuiltProduct {
         guard job.state == .succeeded else {
             throw SimulatorServiceError.failedBuild(job.state)
         }
@@ -439,6 +446,7 @@ nonisolated struct SimulatorService {
         let spec = try IOSBuildSettingsCommand.makeLaunchSpec(
             profile: job.profile,
             json: true,
+            destinationUDID: destinationUDID,
             xcodebuildPath: xcodebuildPath
         )
         let jsonResult = try await runAllowingFailure(spec, timeout: Self.buildSettingsTimeout)
@@ -449,6 +457,7 @@ nonisolated struct SimulatorService {
             let textSpec = try IOSBuildSettingsCommand.makeLaunchSpec(
                 profile: job.profile,
                 json: false,
+                destinationUDID: destinationUDID,
                 xcodebuildPath: xcodebuildPath
             )
             let textResult = try await run(
@@ -497,7 +506,7 @@ nonisolated struct SimulatorService {
         let trimmedUDID = try requireUDID(udid)
         try Task.checkCancellation()
         progress?(.resolvingProduct)
-        let product = try await resolveProduct(from: job)
+        let product = try await resolveProduct(from: job, destinationUDID: trimmedUDID)
 
         try Task.checkCancellation()
         progress?(.listingDevices)

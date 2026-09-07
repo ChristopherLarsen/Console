@@ -19,6 +19,10 @@ final class IOSProjectSettingsModel {
     private(set) var candidates: [IOSProjectCandidate] = []
     private(set) var listing: IOSProjectListing?
     private(set) var destinations: [IOSSimulatorDestination] = []
+    /// True only when the last completed destination lookup succeeded, so the
+    /// UI never labels a saved Simulator "(unavailable)" because the lookup
+    /// itself failed or was skipped.
+    private(set) var destinationsLookupSucceeded = false
     private(set) var issues: [IOSProfileRepair.Issue] = []
 
     private let discovery: IOSProjectDiscovery
@@ -124,6 +128,11 @@ final class IOSProjectSettingsModel {
         generation: Int
     ) async {
         phase = .searchingProjects
+        candidates = []
+        listing = nil
+        destinations = []
+        destinationsLookupSucceeded = false
+        issues = []
         let saved = store.profileOrEmpty(for: workspace.id)
         let expectedGeneration = generation
         let result = await discovery.refresh(
@@ -140,8 +149,22 @@ final class IOSProjectSettingsModel {
         candidates = result.candidates
         listing = result.listing
         destinations = result.destinations
-        issues = result.repair.issues
-        store.applyRefresh(result)
+        if case .succeeded = result.destinationLookup {
+            destinationsLookupSucceeded = true
+        }
+        // Re-resolve against the profile as it stands now, not the snapshot
+        // taken at refresh start, so edits made mid-refresh are not clobbered.
+        let current = store.profileOrEmpty(for: workspace.id)
+        let repair = IOSProfileRepair.resolve(
+            saved: current,
+            candidates: result.candidates,
+            listing: result.listingLookup,
+            destinations: result.destinationLookup
+        )
+        issues = repair.issues
+        if repair.didChangeProfile {
+            store.save(repair.profile)
+        }
         if let errorMessage = result.errorMessage {
             phase = .failed(errorMessage)
         } else {
