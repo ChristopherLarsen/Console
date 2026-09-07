@@ -55,6 +55,13 @@ bar → `MenuBarUITests`, permissions → `PermissionsFlowUITests`, notes →
 `NoteDictationUITests`, speech → `SpeechPipelineUITests`, triggers →
 `TriggersUITests`, commands → `CommandsUITests` / `CommandExecutionUITests`.
 
+The main window presents as an AX dialog. `app.windows.firstMatch` often fails
+on this host (including `NavigationUITests.testLaunchStartsOnHome`). Drive UI
+tests from the menu bar and accessibility identifiers. Developer Actions (⌘⇧K)
+is an overlay in `ConsoleApp`, not a SwiftUI `.sheet`.
+
+Do not commit `*.profraw` coverage files (for example `Console/default.profraw`).
+
 Run the entire UITest suite ONLY when Christopher explicitly asks.
 
 ## Known baseline state (verify before blaming your change)

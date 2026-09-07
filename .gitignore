@@ -52,3 +52,6 @@ DeveloperCommands/
 
 # Backup artifacts
 *.backup
+
+# LLVM/Xcode coverage (xcodebuild can drop these in the project dir)
+*.profraw

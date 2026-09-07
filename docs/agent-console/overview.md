@@ -1,7 +1,7 @@
 # Console — Architecture Ground Truth
 
 One page. Read this before touching code. Last verified against `main` at commit
-`112045d` (2026-08-24). If reality has drifted, fix this file in the same commit.
+`fcc7cb7` (2026-09-06). If reality has drifted, fix this file in the same commit.
 
 ## What Console is
 
@@ -14,7 +14,8 @@ authenticated JIRA and GitLab WebViews.
 App entry point: `Console/Console/ConsoleApp.swift` (`@main`). App-scope managers
 are `@State` properties there plus `Console/Console/App/AppDependencies.swift`,
 injected into the SwiftUI environment. Window defaults to `.defaultSize(1100x700)`;
-**no declared minimum size**.
+`MainView` declares a minimum content size of **800×500** (verified during the
+2026-09-06 source review at `d3f1b25`).
 
 ## Repository layout
 
@@ -29,6 +30,7 @@ Console/
 ├── CatalogGenerator/         # dev-only SPM CLI → generates bundled ActionCatalog.json (never ships)
 ├── Design/HomeCards/         # shared home-card design grammar (DESIGN_PROMPT.md §3)
 ├── Scripts/                  # generate-catalog.sh, clean-install.sh
+├── docs/                     # agent-console ledgers (`overview`, build/test) and `docs/reviews/`
 └── CONSOLE_*.md              # binding spec documents (see docs index in the charter)
 ```
 
