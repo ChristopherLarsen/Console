@@ -101,7 +101,7 @@ struct ConsoleApp: App {
     @State private var didRunAppBootstrap = false
 
     // Detect if running in unit test environment
-    private static var isRunningUnitTests: Bool {
+    static var isRunningUnitTests: Bool {
         return ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
 
@@ -499,12 +499,12 @@ struct ConsoleApp: App {
                     performDeveloperAction(.focusCurrentSession)
                 }
                 .disabled(sessionStore.selectedSession == nil && !sessionWorkspaceLayout.isFocusMode)
-                .help("Select a session before focusing.")
+                .help(developerActionHelp(.focusCurrentSession))
                 Button(DeveloperActionID.newGeneralSession.title) {
                     performDeveloperAction(.newGeneralSession)
                 }
                 .disabled(workspaceStore.availableWorkspaces.isEmpty)
-                .help("Add a workspace folder in Settings → Sessions.")
+                .help(developerActionHelp(.newGeneralSession))
                 Divider()
                 Button(DeveloperActionID.openWorkspaceInXcode.title) {
                     performDeveloperAction(.openWorkspaceInXcode)

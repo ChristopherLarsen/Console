@@ -29,10 +29,14 @@ final class MergeRequestDeepLink {
         return url
     }
 
-    /// Peeks at the targeted list without consuming anything; used to pick
-    /// the destination's initially visible segment.
+    /// Consumes the targeted list when the handoff carries no URL, so a
+    /// kind-only hint cannot force the same segment on a destination created
+    /// much later. A URL handoff keeps the kind pending until
+    /// `consume(matching:)` lands the URL.
     func consumeKindHint() -> CodeHostListKind? {
-        pendingKind
+        guard pendingURL == nil else { return pendingKind }
+        defer { pendingKind = nil }
+        return pendingKind
     }
 
     func reset() {

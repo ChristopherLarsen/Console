@@ -259,12 +259,19 @@ struct MergeRequestsPanelView: View {
     private var unconfiguredState: some View {
         panelMessage(
             systemImage: "link.badge.plus",
-            title: "Set your GitLab review list URL in Settings.",
+            title: unconfiguredTitle,
             detail: kind.listExpectationText,
             actionTitle: "Open Settings",
             action: { sidebarSelection = .settings },
             accessibilityIdentifier: "\(idPrefix)UnconfiguredState"
         )
+    }
+
+    private var unconfiguredTitle: String {
+        switch kind {
+        case .reviewsRequested: return "Set your GitLab review list URL in Settings."
+        case .authored: return "Set your GitLab authored MR list URL in Settings."
+        }
     }
 
     private var loadingState: some View {
@@ -284,12 +291,19 @@ struct MergeRequestsPanelView: View {
     private var authenticationState: some View {
         panelMessage(
             systemImage: "lock.shield",
-            title: "Sign in to GitLab to load your review list.",
+            title: authenticationTitle,
             detail: "Complete sign-in in the embedded browser. Console never sees your credentials.",
             actionTitle: nil,
             action: nil,
             accessibilityIdentifier: "\(idPrefix)AuthenticationState"
         )
+    }
+
+    private var authenticationTitle: String {
+        switch kind {
+        case .reviewsRequested: return "Sign in to GitLab to load your review list."
+        case .authored: return "Sign in to GitLab to load your authored MR list."
+        }
     }
 
     private var emptyState: some View {

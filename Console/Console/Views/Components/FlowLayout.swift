@@ -20,25 +20,40 @@ struct FlowLayout: Layout {
 
     private func arrangeSubviews(proposal: ProposedViewSize, subviews: Subviews) -> (size: CGSize, positions: [CGPoint]) {
         let maxWidth = proposal.width ?? .infinity
+        let widths = subviews.map { $0.sizeThatFits(.unspecified).width }
+        let heights = subviews.map { $0.sizeThatFits(.unspecified).height }
+        let result = Self.arrange(widths: widths, heights: heights, maxWidth: maxWidth, spacing: spacing)
+        return (result.size, result.positions)
+    }
+
+    /// Row-packing for the flow layout. The reported width runs to the last
+    /// item's trailing edge — the inter-item spacing after the final item in a
+    /// row is never included.
+    static func arrange(
+        widths: [CGFloat],
+        heights: [CGFloat],
+        maxWidth: CGFloat,
+        spacing: CGFloat
+    ) -> (positions: [CGPoint], size: CGSize) {
         var positions: [CGPoint] = []
         var x: CGFloat = 0
         var y: CGFloat = 0
         var rowHeight: CGFloat = 0
         var maxX: CGFloat = 0
 
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > maxWidth && x > 0 {
+        for index in widths.indices {
+            let width = widths[index]
+            if x + width > maxWidth && x > 0 {
                 x = 0
                 y += rowHeight + spacing
                 rowHeight = 0
             }
             positions.append(CGPoint(x: x, y: y))
-            rowHeight = max(rowHeight, size.height)
-            x += size.width + spacing
-            maxX = max(maxX, x)
+            rowHeight = max(rowHeight, heights[index])
+            maxX = max(maxX, x + width)
+            x += width + spacing
         }
 
-        return (CGSize(width: maxX, height: y + rowHeight), positions)
+        return (positions, CGSize(width: maxX, height: y + rowHeight))
     }
 }

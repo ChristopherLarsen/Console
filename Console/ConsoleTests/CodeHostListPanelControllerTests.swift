@@ -747,6 +747,32 @@ final class CodeHostListPanelControllerTests: XCTestCase {
         XCTAssertTrue(controller.wantsAuthenticationObservation)
     }
 
+    /// After a completed sign-in, an ordinary extraction failure must surface
+    /// as a failure state — not linger in authenticationRequired — while the
+    /// navigation watch stays active for a later list.
+    func testPostSignInOrdinaryFailureSurfacesFailureStateNotAuth() async {
+        var payload = "{\"outcome\":\"authenticationRequired\",\"items\":[]}"
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in true },
+            executor: { _ in payload },
+            readinessAttempts: 2
+        )
+
+        controller.startIfNeeded()
+        await waitForSettled(controller)
+        XCTAssertEqual(controller.state, .authenticationRequired)
+        XCTAssertTrue(controller.wantsAuthenticationObservation)
+
+        // Sign-in completes; the finished page yields an unreadable payload.
+        payload = "not a payload"
+        controller.handleObservedNavigation(.finished)
+        await waitForSettled(controller)
+
+        XCTAssertEqual(controller.state, .extractionFailed, "Ordinary failure after sign-in must not masquerade as auth")
+        XCTAssertTrue(controller.wantsAuthenticationObservation, "The watch keeps observing for a later list")
+    }
+
     private static func isIncompleteForTest(_ state: MergeRequestListPanelState) -> Bool {
         switch state {
         case .loadingPage, .extracting: return true

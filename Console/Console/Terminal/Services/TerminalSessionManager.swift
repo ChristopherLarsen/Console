@@ -43,12 +43,20 @@ final class TerminalSessionManager {
         return newTerminal
     }
 
-    /// Request keyboard focus for the terminal.
+        /// Request keyboard focus for the terminal.
     func focusTerminal() {
         guard let terminal = terminalView else { return }
         DispatchQueue.main.async {
             terminal.window?.makeFirstResponder(terminal)
         }
+    }
+
+    /// Stops the drawer's zsh on actual app termination — symmetry with
+    /// `SessionStore.terminateAll`, which kills the Claude session PTYs.
+    /// Hiding the window never reaches this path.
+    func stopShellForTermination() {
+        guard let pid = terminalView?.process?.shellPid, pid > 0, kill(pid, 0) == 0 else { return }
+        kill(pid, SIGKILL)
     }
 
     /// Warms the terminal view's layout, font metrics, and draw machinery

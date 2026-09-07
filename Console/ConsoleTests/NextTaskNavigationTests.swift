@@ -153,6 +153,94 @@ final class NextTaskNavigationTests: XCTestCase {
         }
     }
 
+    /// An authored MR that no longer asks the author for work must not be
+    /// opened under the stale "Address feedback" imperative.
+    func testAuthoredMergeRequestNoLongerNeedsYouStays() {
+        let url = URL(string: "https://gitlab.example.com/p/r/-/merge_requests/3")!
+        func authored(_ review: String) -> MergeRequestSummary {
+            MergeRequestSummary(
+                id: url,
+                iidText: "3",
+                title: "Synthetic MR",
+                projectDisplayName: nil,
+                authorDisplayName: nil,
+                isDraft: false,
+                pipelineDisplayState: nil,
+                reviewDisplayState: review,
+                updatedText: nil,
+                mergeRequestURL: url,
+                sourceOrder: 0
+            )
+        }
+        let task = NextTask(
+            kind: .addressComments,
+            headline: "Address feedback on !3",
+            lines: ["Comments"],
+            targetURL: url,
+            openTarget: .mergeRequest(url: url, list: .authored)
+        )
+
+        // Still needs-you: navigates.
+        let actionable = NextContextSnapshot(authoredItems: [authored("Changes requested")])
+        guard case .navigate = NextTaskNavigation.decide(task: task, snapshot: actionable, liveSessionStates: [:]) else {
+            return XCTFail("A still-needs-you authored MR opens")
+        }
+
+        // Mutated to Approved under the old imperative: stay.
+        let approved = NextContextSnapshot(authoredItems: [authored("Approved")])
+        guard case .stay = NextTaskNavigation.decide(task: task, snapshot: approved, liveSessionStates: [:]) else {
+            return XCTFail("An approved MR must not be opened under the address-comments imperative")
+        }
+    }
+
+    /// A ticket that moved on (Done) must not be opened under the stale
+    /// imperative; parked and blocked tickets remain openable.
+    func testTicketNoLongerSelectableStays() {
+        let issueURL = URL(string: "https://jira.example.com/browse/SYN-77")!
+        func task() -> NextTask {
+            NextTask(
+                kind: .newTicket,
+                headline: "Start SYN-77",
+                lines: ["Do SYN-77"],
+                targetURL: issueURL,
+                openTarget: .jiraIssue(key: "SYN-77", url: issueURL)
+            )
+        }
+        func ticket(status: String) -> JiraTicketSummary {
+            JiraTicketSummary(
+                key: "SYN-77",
+                summary: "Do SYN-77",
+                status: status,
+                priority: nil,
+                updatedText: nil,
+                issueURL: issueURL,
+                sourceOrder: 0
+            )
+        }
+
+        guard case .navigate = NextTaskNavigation.decide(
+            task: task(),
+            snapshot: NextContextSnapshot(tickets: [ticket(status: "To Do")]),
+            liveSessionStates: [:]
+        ) else {
+            return XCTFail("A still-parked ticket opens")
+        }
+        guard case .navigate = NextTaskNavigation.decide(
+            task: task(),
+            snapshot: NextContextSnapshot(tickets: [ticket(status: "Blocked")]),
+            liveSessionStates: [:]
+        ) else {
+            return XCTFail("A blocked ticket Next picked still opens")
+        }
+        guard case .stay = NextTaskNavigation.decide(
+            task: task(),
+            snapshot: NextContextSnapshot(tickets: [ticket(status: "Done")]),
+            liveSessionStates: [:]
+        ) else {
+            return XCTFail("A done ticket must not be opened under the start imperative")
+        }
+    }
+
     func testParserSessionTaskWithoutIDOpensSessionsSource() {
         let task = NextTask(
             kind: .sessionAttention,

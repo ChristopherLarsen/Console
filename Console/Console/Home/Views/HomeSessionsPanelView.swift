@@ -146,13 +146,10 @@ private struct HomeSessionCard: View {
                 HStack(spacing: 5) {
                     // The state dot becomes the red attention badge when the
                     // session blocks on a human; the leading x never moves.
-                    if needsYou {
-                        AttentionBadge()
-                    } else {
-                        Circle()
-                            .fill(displayedState.attentionChannel.color)
-                            .frame(width: 6, height: 6)
-                    }
+                    HomeCardGlyph(
+                        color: displayedState.attentionChannel.color,
+                        needsYou: needsYou
+                    )
 
                     Text(displayedState.label)
                         .font(needsYou ? HomeCardMetrics.stateEmphasisFont : HomeCardMetrics.stateFont)

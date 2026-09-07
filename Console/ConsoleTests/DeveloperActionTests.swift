@@ -298,6 +298,30 @@ final class DeveloperActionTests: XCTestCase {
         }
     }
 
+    func testNestedChildWorkspaceWinsSessionResolution() {
+        // A session living inside a registered child workspace must resolve
+        // to the child, never to the containing parent (most specific root).
+        let parent = SessionWorkspace(name: "Mono", directoryPath: "/tmp/mono")
+        let child = SessionWorkspace(name: "App", directoryPath: "/tmp/mono/App")
+
+        let resolved = DeveloperActionCatalog.resolvedWorkspace(
+            selectedSessionDirectory: URL(fileURLWithPath: "/tmp/mono/App/Sources", isDirectory: true),
+            workspaces: [parent, child],
+            defaultWorkspaceID: parent.id
+        )
+
+        XCTAssertEqual(resolved?.id, child.id)
+        XCTAssertEqual(resolved?.name, "App")
+
+        // Parent still resolves when the session sits directly in it.
+        let direct = DeveloperActionCatalog.resolvedWorkspace(
+            selectedSessionDirectory: URL(fileURLWithPath: "/tmp/mono", isDirectory: true),
+            workspaces: [parent, child],
+            defaultWorkspaceID: nil
+        )
+        XCTAssertEqual(direct?.id, parent.id)
+    }
+
     // MARK: - Search is memory-only
 
     func testSearchFilterIsStatelessAndDoesNotPersist() {
@@ -392,6 +416,18 @@ final class DeveloperActionTests: XCTestCase {
         } else {
             XCTFail("Unavailable snapshot must not submit")
         }
+    }
+
+    /// A stale failure from a previous picker session must not greet the
+    /// next ⌘⇧K presentation.
+    func testPresentingPickerClearsStaleFailureMessage() async {
+        await actionRunner.perform(.buildSelectedProfile, snapshot: .empty, hosts: hosts())
+        XCTAssertNotNil(actionRunner.lastActionMessage)
+
+        actionRunner.presentPicker()
+
+        XCTAssertNil(actionRunner.lastActionMessage, "Reopening the picker starts fresh")
+        actionRunner.dismissPicker()
     }
 
     func testOpenWorkspaceAndLatestResultUseOpener() async {

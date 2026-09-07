@@ -64,6 +64,10 @@ final class JiraPanelController {
             configuredURLString = urlString
             state = .unconfigured
             showsBrowser = false
+            // The superseded refresh task aborts at its generation guard
+            // without reaching the finish path, so the flag must be cleared
+            // here or Refresh stays disabled.
+            isRefreshing = false
             return
         }
 
@@ -220,9 +224,16 @@ final class JiraPanelController {
         return state
     }
 
+    /// Consecutive container-only readiness polls (0.5s apart) required before
+    /// the pipeline treats a container without rows as settled and proceeds to
+    /// extraction. Rows normally hydrate well inside this window; a container
+    /// that persists without rows is a legitimate empty list, not partial
+    /// chrome. Never the full deadline — but never a single poll either.
+    private static let containerStabilityPolls = 6
+
     private func waitForListOrAuthentication(generation startGeneration: Int) async -> ReadinessOutcome {
         let deadline = Date().addingTimeInterval(15)
-        var sawListContainer = false
+        var containerOnlyPolls = 0
         while Date() < deadline {
             guard startGeneration == generation else { return .cancelled }
             let snapshot = await service.readiness()
@@ -232,13 +243,24 @@ final class JiraPanelController {
                 return .authenticationDetected
             case let .pending(hasRows, hasContainer):
                 if hasRows { return .ready }
-                if hasContainer { sawListContainer = true }
+                if hasContainer {
+                    containerOnlyPolls += 1
+                    // The list container is present but no rows: this can be
+                    // a legitimate signed-in empty list. Finish on a stable
+                    // container instead of ignoring it and burning the whole
+                    // deadline; the extraction decides empty versus rows.
+                    if containerOnlyPolls >= Self.containerStabilityPolls {
+                        return .ready
+                    }
+                } else {
+                    containerOnlyPolls = 0
+                }
             case .none:
+                containerOnlyPolls = 0
                 break
             }
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
-        _ = sawListContainer
         return .timedOut
     }
 

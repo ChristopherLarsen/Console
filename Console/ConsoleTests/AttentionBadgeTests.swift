@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import Console
 
 /// The red attention badge predicates (Design/HomeCards/DESIGN_PROMPT.md §3):
@@ -81,5 +82,21 @@ final class AttentionBadgeTests: XCTestCase {
             )?.channel,
             .needsYou
         )
+    }
+
+    // MARK: - Row-one glyph slot
+
+    /// The 6pt dot and the 12pt badge share one fixed-width leading slot, so
+    /// the identity text's x-origin never moves between the two states.
+    func testCardGlyphSlotWidthIsFixedAcrossDotAndBadge() {
+        for needsYou in [false, true] {
+            let glyph = HomeCardGlyph(color: .gray, needsYou: needsYou)
+            let host = NSHostingView(rootView: glyph)
+            XCTAssertEqual(
+                host.fittingSize.width,
+                HomeCardMetrics.glyphSlotWidth,
+                "Glyph slot width must not depend on needsYou"
+            )
+        }
     }
 }

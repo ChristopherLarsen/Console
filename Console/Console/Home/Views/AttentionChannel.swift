@@ -50,20 +50,29 @@ enum AttentionChannel: Sendable, Equatable {
     // MARK: - Merge-request condition column
 
     /// One state per MR card, resolved with the precedence rule from §3:
-    /// failed > blocked > running > draft > passed. The label is what the
-    /// host actually rendered (or "Draft"); nil when the host rendered no
-    /// state at all.
+    /// failed > blocked > running > draft > passed. Conditions resolve by
+    /// rank, not by which side of the card rendered them: a human-blocking
+    /// review ("Changes requested") outranks a merely moving pipeline
+    /// ("Running"), and the label is what the host actually rendered (or
+    /// "Draft"); nil when the host rendered no state at all.
     static func forMergeRequest(
         isDraft: Bool,
         pipelineDisplayState: String?,
         reviewDisplayState: String?
     ) -> (channel: AttentionChannel, label: String)? {
-        // Precedence from §3: failed > blocked > running > draft > passed.
-        if let pipeline = nonEmpty(pipelineDisplayState), let channel = urgentConditionChannel(pipeline) {
-            return (channel, pipeline)
+        // Precedence from §3: needs-you conditions > in-flight > draft >
+        // settled. Within one rank the pipeline label wins for stability.
+        if let pipeline = nonEmpty(pipelineDisplayState), urgentConditionChannel(pipeline) == .needsYou {
+            return (.needsYou, pipeline)
         }
-        if let review = nonEmpty(reviewDisplayState), let channel = urgentConditionChannel(review) {
-            return (channel, review)
+        if let review = nonEmpty(reviewDisplayState), urgentConditionChannel(review) == .needsYou {
+            return (.needsYou, review)
+        }
+        if let pipeline = nonEmpty(pipelineDisplayState), urgentConditionChannel(pipeline) == .inFlight {
+            return (.inFlight, pipeline)
+        }
+        if let review = nonEmpty(reviewDisplayState), urgentConditionChannel(review) == .inFlight {
+            return (.inFlight, review)
         }
         if isDraft {
             return (.parked, "Draft")
@@ -124,10 +133,13 @@ enum AttentionChannel: Sendable, Equatable {
         }
     }
 
-    /// Host conditions Draft outranks.
+    /// Host conditions Draft outranks. The pipeline vocabulary is CI-native
+    /// ("passed"/"success"); the review side adds GitLab's approval state so
+    /// host-rendered review text the host actually settled on still becomes
+    /// card state instead of disappearing.
     private static func settledConditionChannel(_ state: String) -> AttentionChannel? {
         switch normalized(state) {
-        case "passed", "success": return .clear
+        case "passed", "success", "approved": return .clear
         default: return nil
         }
     }

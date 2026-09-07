@@ -41,6 +41,13 @@ struct JiraListExtractor {
             return .unsupportedPage
         case "tickets":
             let summaries = Self.summaries(from: payload.rows ?? [])
+            if summaries.isEmpty {
+                // The extraction script only emits kind "tickets" with rows,
+                // so a payload whose every row was dropped (unusable URLs,
+                // missing keys) is a data/selector failure — never a
+                // legitimate empty list, which arrives as kind "empty".
+                return .failed
+            }
             return .tickets(summaries)
         default:
             return .failed

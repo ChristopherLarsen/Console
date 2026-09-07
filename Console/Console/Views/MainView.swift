@@ -10,6 +10,7 @@ struct MainView: View {
     @State private var terminalPanelHeight: CGFloat = 250
     @State private var terminalResizeStartHeight: CGFloat = 250
     @State private var isResizingTerminal = false
+    @State private var didInstallQuitObserver = false
     @Environment(\.modelContext) private var modelContext
     @Environment(PermissionsManager.self) private var permissionsManager
     @Environment(SessionLaunchCoordinator.self) private var launchCoordinator
@@ -91,6 +92,7 @@ struct MainView: View {
             DispatchQueue.main.async {
                 terminalSessionManager.preheatTerminalView()
             }
+            installDrawerTerminationOnQuit()
         }
         .onChange(of: tabSelection) { _, newValue in
             // Legacy callers may still set tabSelection; map to sidebar.
@@ -281,6 +283,25 @@ struct MainView: View {
             SessionsView()
         case .settings:
             SettingsView(modelContext: modelContext)
+        }
+    }
+
+    /// Actual termination must also end the app-owned global zsh drawer —
+    /// symmetry with the session PTYs that ConsoleApp's quit observer stops.
+    /// Hiding or closing the window never reaches this path.
+    private func installDrawerTerminationOnQuit() {
+        guard !didInstallQuitObserver else { return }
+        didInstallQuitObserver = true
+        guard !ConsoleApp.isRunningUnitTests else { return }
+        let manager = terminalSessionManager
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                manager.stopShellForTermination()
+            }
         }
     }
 }
