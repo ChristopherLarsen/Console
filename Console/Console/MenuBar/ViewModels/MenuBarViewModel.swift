@@ -34,6 +34,8 @@ final class MenuBarViewModel {
     @ObservationIgnored private var voiceActivityObserver: Any?
     @ObservationIgnored private var sleepCheckTask: Task<Void, Never>?
     @ObservationIgnored private var lastVolatileTextChange: Date = Date()
+    /// Bumped on every start/stop so a late start task cannot resurrect a stopped session.
+    @ObservationIgnored private var listeningGeneration = 0
 
     // Logging context captured across the voice pipeline
     private var lastDetectedWakeWord: String?
@@ -137,55 +139,76 @@ final class MenuBarViewModel {
     }
 
     func toggleListening() {
+        Task { await toggleListeningAwaited() }
+    }
+
+    @discardableResult
+    func toggleListeningAwaited() async -> Bool {
         let noteDictationActive = AudioSessionController.shared.activeMode?.modeIdentifier == "noteDictation"
 
         if listeningState == .off && !noteDictationActive {
-            startListening()
-        } else {
-            stopListening()
+            return await startListeningAwaited()
         }
+        stopListening()
+        return false
     }
 
     func startListening() {
+        Task { await startListeningAwaited() }
+    }
+
+    /// Starts listening and waits until the audio mode is actually active, so
+    /// callers (App Intents) can report truthful state.
+    @discardableResult
+    func startListeningAwaited() async -> Bool {
         if NotePanelController.shared.isShowing && NotePanelController.shared.isDictationSuspended {
-            resumeWithNoteDictation()
-            return
+            await resumeWithNoteDictation()
+            return listeningState != .off
         }
 
         guard let commandMode else {
             showWarning("Listening services not ready. Try again.")
-            return
+            return false
         }
         guard let wakeWordManager else {
             showWarning("Wake word data not loaded. Try again.")
-            return
+            return false
         }
 
         let enabled = wakeWordManager.enabledWords
         if enabled.isEmpty {
             showWarning("No trigger words configured.")
-            return
+            return false
         }
 
         guard AudioSessionController.shared.checkAudioPermissions() else {
             showWarning("Microphone or Speech Recognition permission required.")
-            return
+            return false
         }
 
-        commandMode.updateWakeWords(enabled, allWakeWords: wakeWordManager.wakeWords.map(\.word))
-        Task {
-            let success = await AudioSessionController.shared.requestMode(commandMode)
+        listeningGeneration += 1
+        let generation = listeningGeneration
+
+        commandMode.updateWakeWords(enabled, allWakeWords: enabled)
+        let success = await AudioSessionController.shared.requestMode(commandMode)
+        guard generation == listeningGeneration else {
+            // A stop happened while the mode request was in flight; stop wins.
             if success {
-                listeningState = .passive
-                startSleepTimer()
-            } else {
-                listeningState = .off
-                showWarning("Could not start audio session.")
+                await AudioSessionController.shared.releaseMode(commandMode)
             }
+            return false
         }
+        if success {
+            listeningState = .passive
+            startSleepTimer()
+        } else {
+            listeningState = .off
+            showWarning("Could not start audio session.")
+        }
+        return success
     }
 
-    private func resumeWithNoteDictation() {
+    private func resumeWithNoteDictation() async {
         guard let commandMode, let wakeWordManager else {
             showWarning("Listening services not ready. Try again.")
             return
@@ -197,21 +220,24 @@ final class MenuBarViewModel {
         }
 
         let enabled = wakeWordManager.enabledWords
-        commandMode.updateWakeWords(enabled, allWakeWords: wakeWordManager.wakeWords.map(\.word))
+        commandMode.updateWakeWords(enabled, allWakeWords: enabled)
 
-        Task {
-            // Start command mode first so it becomes the suspended mode behind note dictation
-            let success = await AudioSessionController.shared.requestMode(commandMode)
-            guard success else {
-                listeningState = .off
-                showWarning("Could not start audio session.")
-                return
-            }
-            // Resume note dictation (preempts command mode, which becomes suspended)
-            await NotePanelController.shared.resumeDictation()
-            listeningState = .passive
-            startSleepTimer()
+        listeningGeneration += 1
+        let generation = listeningGeneration
+
+        // Start command mode first so it becomes the suspended mode behind note dictation
+        let success = await AudioSessionController.shared.requestMode(commandMode)
+        guard success else {
+            guard generation == listeningGeneration else { return }
+            listeningState = .off
+            showWarning("Could not start audio session.")
+            return
         }
+        // Resume note dictation (preempts command mode, which becomes suspended)
+        await NotePanelController.shared.resumeDictation()
+        guard generation == listeningGeneration else { return }
+        if listeningState != .off { listeningState = .passive }
+        startSleepTimer()
     }
 
     private func showWarning(_ message: String) {
@@ -220,6 +246,14 @@ final class MenuBarViewModel {
     }
 
     func stopListening() {
+        listeningGeneration += 1
+
+        // Cancel any pending authorization so an approve can no longer resume
+        // execution after listening was stopped.
+        if AuthorizationManager.shared.isShowingDialog {
+            AuthorizationManager.shared.deny()
+        }
+
         let noteShowing = NotePanelController.shared.isShowing
 
         Task {
@@ -233,6 +267,18 @@ final class MenuBarViewModel {
         listeningState = .off
         lastDetectedTrigger = ""
         stopSleepTimer()
+
+        // Stopping listening is also the reachable voice/hotkey stop for an
+        // in-flight command execution.
+        localCommandExecutor?.cancelExecution()
+    }
+
+    func stopExecution() {
+        localCommandExecutor?.cancelExecution()
+    }
+
+    var isExecutingCommand: Bool {
+        localCommandExecutor?.isExecuting == true
     }
 
     // MARK: - Sleep Timer
@@ -286,7 +332,7 @@ final class MenuBarViewModel {
 
         bringMainWindowToFront()
         ConsoleNavigation.showSettings()
-        listeningState = .passive
+        if listeningState != .off { listeningState = .passive }
     }
 
     func showRecentCommands() async {
@@ -305,7 +351,7 @@ final class MenuBarViewModel {
             wakeWords: activeWakeWords,
             executor: localCommandExecutor
         )
-        listeningState = .passive
+        if listeningState != .off { listeningState = .passive }
     }
 
     func disableSoundFeedback() async {
@@ -319,7 +365,7 @@ final class MenuBarViewModel {
 
         UserDefaults.standard.set(false, forKey: "soundFeedbackEnabled")
         UserDefaults.standard.synchronize()
-        listeningState = .passive
+        if listeningState != .off { listeningState = .passive }
     }
 
     func enableSoundFeedback() async {
@@ -334,7 +380,7 @@ final class MenuBarViewModel {
         UserDefaults.standard.set(true, forKey: "soundFeedbackEnabled")
         UserDefaults.standard.synchronize()
         SoundFeedbackService.shared.previewCue(.happyFish)
-        listeningState = .passive
+        if listeningState != .off { listeningState = .passive }
     }
 
     func showNewCommandCreation() async {
@@ -351,7 +397,7 @@ final class MenuBarViewModel {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             NotificationCenter.default.post(name: .showCommandCreation, object: nil)
         }
-        listeningState = .passive
+        if listeningState != .off { listeningState = .passive }
     }
 
     @discardableResult
@@ -382,6 +428,19 @@ final class MenuBarViewModel {
             let authorized = await authManager.requestAuthorization(for: command)
             guard authorized else {
                 if listeningState != .off { listeningState = .passive }
+                return CommandRun(
+                    id: UUID(),
+                    result: ExecutionResult(
+                        command: command,
+                        logs: [],
+                        overallSuccess: false,
+                        totalDurationMs: 0,
+                        authorizationDenied: true
+                    )
+                )
+            }
+            // Listening was stopped while the dialog was open: do not resume.
+            guard listeningState != .off else {
                 return CommandRun(
                     id: UUID(),
                     result: ExecutionResult(
@@ -432,6 +491,9 @@ final class MenuBarViewModel {
     // MARK: - Voice Pipeline
 
     private func handleWakeWordDetected(wakeWord: String) {
+        // A stop may land between the transcript callback and this handler;
+        // never mutate listening state or start capture after .off.
+        guard listeningState != .off else { return }
         guard !AuthorizationManager.shared.isShowingDialog else { return }
         lastDetectedTrigger = wakeWord
         lastDetectedWakeWord = wakeWord
@@ -447,7 +509,8 @@ final class MenuBarViewModel {
         // Check ConsoleCommands with higher threshold (90%)
         if UserDefaults.standard.bool(forKey: "recognizeBuiltInCommands") {
             let tfMatcher = ConsoleCommandMatcher(confidenceThreshold: 0.90)
-            if tfMatcher.bestMatch(for: text, availableIn: .primary) != nil {
+            if let match = tfMatcher.bestMatch(for: text, availableIn: .primary),
+               !isConsoleCommandDisabled(match.command) {
                 return true
             }
         }
@@ -463,6 +526,7 @@ final class MenuBarViewModel {
 
     private func handleBuiltInCommand(_ text: String) -> Bool {
         guard UserDefaults.standard.bool(forKey: "recognizeBuiltInCommands") else { return false }
+        guard listeningState != .off else { return false }
 
         let triggerWord = lastDetectedWakeWord ?? ""
         let rawTranscript = lastRawTranscript ?? text
@@ -470,11 +534,35 @@ final class MenuBarViewModel {
         // Check ConsoleCommands first (they take priority)
         let tfMatcher = ConsoleCommandMatcher(confidenceThreshold: 0.90)
         if let match = tfMatcher.bestMatch(for: text, availableIn: .primary) {
+            // A disabled console command in the Commands list must also disable
+            // its registry twin.
+            if isConsoleCommandDisabled(match.command) { return false }
+            // Single execution owner: while the shared executor is busy, only
+            // the stop command may run off-executor; everything else falls
+            // through to the executor's occupancy rejection.
+            let executorBusy = localCommandExecutor?.isExecuting == true
+            if executorBusy && match.command.id != "stop-listening" { return false }
+
             lastMatchResult = "Built-in: \(match.command.name)"
             SoundFeedbackService.shared.play(.commandIdentified)
             RecentCommandsController.shared.dismiss()
 
             Task {
+                guard self.listeningState != .off else { return }
+
+                // Honor "require authorization for every command" for registry
+                // built-ins; the emergency stop stays dialog-free.
+                if match.command.id != "stop-listening",
+                   AppSettings().requireAuthorizationForAllCommands {
+                    let authManager = AuthorizationManager.shared
+                    if self.listeningState != .off { self.listeningState = .awaitingAuthorization }
+                    let authorized = await authManager.requestAuthorization(for: match.command.asCommand)
+                    guard authorized, self.listeningState != .off else {
+                        if self.listeningState != .off { self.listeningState = .passive }
+                        return
+                    }
+                }
+
                 _ = await match.command.handler()
                 if self.listeningState != .off { self.listeningState = .passive }
                 // Log the execution
@@ -496,6 +584,22 @@ final class MenuBarViewModel {
         return false
     }
 
+    // MARK: - Disabled Registry Commands
+
+    /// Payloads of console starter commands the user disabled in the Commands list.
+    func disabledConsoleActionPayloads() -> Set<String> {
+        guard let modelContext else { return [] }
+        let predicate = #Predicate<Command> { $0.isConsole && !$0.isEnabled }
+        let descriptor = FetchDescriptor<Command>(predicate: predicate)
+        let commands = (try? modelContext.fetch(descriptor)) ?? []
+        return Set(commands.compactMap { $0.actions.first?.payload })
+    }
+
+    func isConsoleCommandDisabled(_ command: ConsoleCommand) -> Bool {
+        guard let action = ConsoleCommandRegistry.consoleAction(for: command.id) else { return false }
+        return disabledConsoleActionPayloads().contains(action.rawValue)
+    }
+
     private func logBuiltIn(triggerWord: String, rawTranscript: String, strippedTranscript: String, command: String) {
         logCommandExecution(
             triggerWord: triggerWord, rawTranscript: rawTranscript,
@@ -509,6 +613,9 @@ final class MenuBarViewModel {
     }
 
     private func handleCommandTranscribed(_ text: String) {
+        // Ignore transcripts already in flight when listening was stopped.
+        guard listeningState != .off else { return }
+
         fuzzyMatchInputText = text
         if handleBuiltInCommand(text) { return }
 
@@ -526,6 +633,7 @@ final class MenuBarViewModel {
             let executionStart = Date()
             RecentCommandsController.shared.dismiss()
             Task {
+                guard self.listeningState != .off else { return }
                 let run = await self.executeLocalCommand(match.command)
                 self.recordVoiceExecutionLog(
                     run: run,
@@ -551,7 +659,7 @@ final class MenuBarViewModel {
             )
             SoundFeedbackService.shared.play(.commandNotRecognized)
             VisualFeedbackService.shared.show(.commandNotRecognized)
-            listeningState = .passive
+            if listeningState != .off { listeningState = .passive }
         }
     }
 

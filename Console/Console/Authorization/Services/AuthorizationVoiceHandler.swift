@@ -24,9 +24,10 @@ final class AuthorizationVoiceHandler: ListeningMode {
     private let maxRecognitionRetries = 3
 
     private var approveWords: [String] = []
-    private let denyWords = ["cancel", "deny", "stop", "abort", "nevermind"]
 
     private(set) var isListening = false
+    private var hasRequestedMode = false
+    private var modeGeneration = 0
 
     // MARK: - Public API
 
@@ -34,6 +35,8 @@ final class AuthorizationVoiceHandler: ListeningMode {
         guard !isListening else { return }
         approveWords = authorizationWords.map { $0.lowercased() }
         isListening = true
+        hasRequestedMode = true
+        modeGeneration += 1
 
         Task {
             await AudioSessionController.shared.requestMode(self)
@@ -41,7 +44,8 @@ final class AuthorizationVoiceHandler: ListeningMode {
     }
 
     func stopListening() {
-        guard isListening else { return }
+        guard hasRequestedMode else { return }
+        hasRequestedMode = false
         isListening = false
 
         Task {
@@ -54,14 +58,22 @@ final class AuthorizationVoiceHandler: ListeningMode {
     func activate(audioStream: AsyncStream<AVAudioPCMBuffer>?) async {
         isActive = true
         recognitionRetries = 0
+        let generation = modeGeneration
 
         try? await Task.sleep(for: .milliseconds(200))
-        guard isActive else { return }
+        guard isActive else {
+            // Cancelled during preroll: the pending releaseMode no-oped because the
+            // mode had not been registered yet; release once requestMode registers us.
+            scheduleDeferredRelease(generation: generation)
+            return
+        }
 
         speechRecognizer = SFSpeechRecognizer(locale: Locale.current)
         guard let speechRecognizer, speechRecognizer.isAvailable else {
             isActive = false
             isListening = false
+            hasRequestedMode = false
+            scheduleDeferredRelease(generation: generation)
             return
         }
 
@@ -125,20 +137,77 @@ final class AuthorizationVoiceHandler: ListeningMode {
         speechRecognizer = nil
     }
 
+    /// Releases the exclusive audio mode on activation failure. A later start
+    /// bumps modeGeneration, so stale releases from an aborted activation no-op.
+    private func scheduleDeferredRelease(generation: Int) {
+        Task { [weak self] in
+            guard let self, self.modeGeneration == generation else { return }
+            await AudioSessionController.shared.releaseMode(self)
+        }
+    }
+
     // MARK: - Keyword Matching
 
     private func evaluateTranscription(_ text: String) {
-        let normalized = text
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .components(separatedBy: .punctuationCharacters)
-            .joined()
-
-        if approveWords.contains(where: { normalized.contains($0) }) {
+        switch AuthorizationVoiceDecision.evaluate(forTranscript: text, approveWords: approveWords) {
+        case .approve:
             stopListening()
             AuthorizationManager.shared.approve()
-        } else if denyWords.contains(where: { normalized.contains($0) }) {
+        case .deny:
             stopListening()
             AuthorizationManager.shared.deny()
+        case .none:
+            break
+        }
+    }
+
+}
+
+/// Pure decision logic for spoken authorization matching, kept outside the
+/// MainActor-isolated handler so it is unit-testable.
+enum AuthorizationVoiceDecision {
+    case approve
+    case deny
+    case none
+
+    /// Whole-token matching so "okay wait" or "going" cannot approve via the
+    /// "ok"/"go" substring. Deny words win over approval, and a negated
+    /// sentence ("I'm not sure") never approves.
+    static func evaluate(forTranscript text: String, approveWords: [String]) -> AuthorizationVoiceDecision {
+        let tokens = tokenize(text)
+        guard !tokens.isEmpty else { return .none }
+
+        if tokens.contains(where: { denyWordList.contains($0) }) {
+            return .deny
+        }
+
+        let negated = tokens.contains(where: { negationWordList.contains($0) })
+        guard !negated else { return .none }
+
+        if containsTokenSequence(tokens, matchingAny: approveWords) {
+            return .approve
+        }
+        return .none
+    }
+
+    private static let denyWordList = ["cancel", "deny", "stop", "abort", "nevermind"]
+    private static let negationWordList = ["not", "no", "dont", "cant", "cannot", "never", "neither", "nor"]
+
+    private static func tokenize(_ text: String) -> [String] {
+        text.lowercased()
+            .split(separator: " ")
+            .map { $0.trimmingCharacters(in: .punctuationCharacters) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func containsTokenSequence(_ tokens: [String], matchingAny phrases: [String]) -> Bool {
+        phrases.contains { phrase in
+            let parts = phrase.split(separator: " ").map(String.init)
+            guard !parts.isEmpty, parts.count <= tokens.count else { return false }
+            for start in 0...(tokens.count - parts.count) {
+                if Array(tokens[start..<(start + parts.count)]) == parts { return true }
+            }
+            return false
         }
     }
 }

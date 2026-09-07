@@ -29,11 +29,12 @@ struct ToggleListeningIntent: AppIntent {
 
         switch mode {
         case .start:
-            vm.startListening()
+            // Wait for the async start so the reported state is truthful.
+            _ = await vm.startListeningAwaited()
         case .stop:
             vm.stopListening()
         case .toggle:
-            vm.toggleListening()
+            _ = await vm.toggleListeningAwaited()
         }
 
         let state = vm.listeningState.isActive ? "on" : "off"
@@ -43,6 +44,58 @@ struct ToggleListeningIntent: AppIntent {
     static var parameterSummary: some ParameterSummary {
         Summary("\(\.$mode) listening")
     }
+}
+
+struct StartListeningIntent: AppIntent {
+    static var title: LocalizedStringResource = "Start Listening"
+    static var description = IntentDescription("Start Console's voice listening.")
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+        guard let vm = AppDependencies.shared.menuBarViewModel else {
+            throw IntentError.notReady
+        }
+        _ = await vm.startListeningAwaited()
+        let state = vm.listeningState.isActive ? "on" : "off"
+        return .result(value: "Listening is now \(state).")
+    }
+
+    static var openAppWhenRun: Bool { false }
+}
+
+struct StopListeningIntent: AppIntent {
+    static var title: LocalizedStringResource = "Stop Listening"
+    static var description = IntentDescription("Stop Console's voice listening.")
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+        guard let vm = AppDependencies.shared.menuBarViewModel else {
+            throw IntentError.notReady
+        }
+        vm.stopListening()
+        let state = vm.listeningState.isActive ? "on" : "off"
+        return .result(value: "Listening is now \(state).")
+    }
+
+    static var openAppWhenRun: Bool { false }
+}
+
+/// Cancels the in-flight command execution regardless of which entry point
+/// started it (voice, Shortcuts, Test runner).
+struct StopExecutionIntent: AppIntent {
+    static var title: LocalizedStringResource = "Stop Command"
+    static var description = IntentDescription("Stop the Console command that is currently running.")
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+        guard let vm = AppDependencies.shared.menuBarViewModel else {
+            throw IntentError.notReady
+        }
+        vm.stopExecution()
+        return .result(value: "Stop requested.")
+    }
+
+    static var openAppWhenRun: Bool { false }
 }
 
 enum IntentError: Error, CustomLocalizedStringResourceConvertible {

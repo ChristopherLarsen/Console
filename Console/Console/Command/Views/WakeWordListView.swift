@@ -85,7 +85,7 @@ struct WakeWordListView: View {
     private func syncDetectorWakeWords() {
         if #available(macOS 26.0, *),
            let mode = AudioSessionController.shared.activeMode as? CommandListeningMode {
-            mode.updateWakeWords(wakeWordManager.enabledWords, allWakeWords: wakeWordManager.wakeWords.map(\.word))
+            mode.updateWakeWords(wakeWordManager.enabledWords, allWakeWords: wakeWordManager.enabledWords)
         }
     }
 

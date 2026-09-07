@@ -65,7 +65,7 @@ enum ConsoleCommandRegistry {
                 id: "make-noise",
                 name: "Make Some Noise",
                 description: "Enable sound feedback",
-                triggerPhrases: ["make some noise", "makes some noise", "make up"],
+                triggerPhrases: ["make some noise", "makes some noise", "wake up"],
                 availableIn: .primary,
                 requiresConfirmation: false,
                 contextualCheck: nil,
@@ -179,5 +179,21 @@ enum ConsoleCommandRegistry {
 
     static func find(by id: String) -> ConsoleCommand? {
         all.first { $0.id == id }
+    }
+
+    /// The SwiftData console-command payload each primary registry command
+    /// corresponds to, used to honor per-command enable/disable across the two
+    /// pipelines.
+    static func consoleAction(for id: String) -> ConsoleAction? {
+        switch id {
+        case "show-recent-commands": return .showRecentCommands
+        case "stop-listening": return .fishOff
+        case "show-settings": return .fishSettings
+        case "be-quiet": return .fishBeQuiet
+        case "make-noise": return .fishMakeNoise
+        case "new-command": return .newCommand
+        case "take-note": return .fishNote
+        default: return nil
+        }
     }
 }

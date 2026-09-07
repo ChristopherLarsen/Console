@@ -58,7 +58,15 @@ enum ExecuteCommandIntentRunner {
     ) async throws -> CommandRun {
         let context = ModelContext(container)
         let searchName = commandName
-        let predicate = #Predicate<Command> { $0.isEnabled && $0.name == searchName }
+        // Same eligibility as List/voice: hide built-in catalog commands when
+        // enableBuiltInCommands is off.
+        let includeBuiltIn = UserDefaults.standard.bool(forKey: "enableBuiltInCommands")
+        let predicate: Predicate<Command>
+        if includeBuiltIn {
+            predicate = #Predicate<Command> { $0.isEnabled && $0.name == searchName }
+        } else {
+            predicate = #Predicate<Command> { $0.isEnabled && $0.name == searchName && $0.catalogVersion == nil }
+        }
         var descriptor = FetchDescriptor<Command>(predicate: predicate)
         descriptor.fetchLimit = 1
 

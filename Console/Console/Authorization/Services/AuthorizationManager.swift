@@ -39,6 +39,13 @@ final class AuthorizationManager: CommandAuthorizing {
         // AppSettings uses @AppStorage, so a temporary instance reads the same UserDefaults
         let settings = AppSettings()
 
+        // The emergency stop must stay reachable without a dialog.
+        let isEmergencyStop = command.isConsole
+            && command.actions.first?.payload == ConsoleAction.fishOff.rawValue
+        if isEmergencyStop {
+            return false
+        }
+
         if settings.requireAuthorizationForAllCommands {
             return true
         }

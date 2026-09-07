@@ -213,9 +213,12 @@ final class CommandListeningMode: ListeningMode {
     private func checkForWakeWord(in transcript: String) {
         guard !hasDetectedInCurrentSession else { return }
 
-        let words = transcript.split(separator: " ").map { String($0) }
+        let tokens = transcript
+            .split(separator: " ")
+            .map { $0.lowercased().trimmingCharacters(in: .punctuationCharacters) }
+
         for wakeWord in activeWakeWords {
-            if words.contains(where: { $0 == wakeWord }) {
+            if Self.containsTokenSequence(tokens, wakeWordParts(wakeWord)) {
                 hasDetectedInCurrentSession = true
                 detectedWord = wakeWord
                 currentWakeWord = wakeWord
@@ -240,6 +243,21 @@ final class CommandListeningMode: ListeningMode {
                 return
             }
         }
+    }
+
+    private func wakeWordParts(_ wakeWord: String) -> [String] {
+        wakeWord.lowercased()
+            .split(separator: " ")
+            .map { $0.trimmingCharacters(in: .punctuationCharacters) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func containsTokenSequence(_ tokens: [String], _ parts: [String]) -> Bool {
+        guard !parts.isEmpty, parts.count <= tokens.count else { return false }
+        for start in 0...(tokens.count - parts.count) {
+            if Array(tokens[start..<(start + parts.count)]) == parts { return true }
+        }
+        return false
     }
 
     // MARK: - Command Finalization
@@ -275,20 +293,10 @@ final class CommandListeningMode: ListeningMode {
                 allWakeWords: allConfiguredWakeWords
             )
             // If the wake word was revised away by speech recognition,
-            // fall back to extracting new text added after the wake word snapshot.
-            if stripped == rawText, !wakeWordTranscriptPrefix.isEmpty {
-                let prefixWordCount = wakeWordTranscriptPrefix
-                    .split(separator: " ").count
-                let allWords = rawText.split(separator: " ").map { String($0) }
-                if prefixWordCount < allWords.count {
-                    let postWakeWords = Array(allWords[prefixWordCount...])
-                    let fallback = WakeWordStripper.stripLeadingFillers(postWakeWords)
-                        .joined(separator: " ")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    commandText = fallback
-                } else {
-                    commandText = stripped
-                }
+            // fall back to extracting new text added after the wake word snapshot —
+            // but only while the snapshot prefix still leads the transcript.
+            if stripped == rawText, let fallback = postWakeWordFallbackText(from: rawText) {
+                commandText = fallback
             } else {
                 commandText = stripped
             }
@@ -335,16 +343,32 @@ final class CommandListeningMode: ListeningMode {
             allWakeWords: allConfiguredWakeWords
         )
         // Fallback if wake word was revised away
-        if stripped == rawText, !wakeWordTranscriptPrefix.isEmpty {
-            let prefixWordCount = wakeWordTranscriptPrefix.split(separator: " ").count
-            let allWords = rawText.split(separator: " ").map { String($0) }
-            if prefixWordCount < allWords.count {
-                return WakeWordStripper.stripLeadingFillers(Array(allWords[prefixWordCount...]))
-                    .joined(separator: " ")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-            }
+        if stripped == rawText, let fallback = postWakeWordFallbackText(from: rawText) {
+            return fallback
         }
         return stripped
+    }
+
+    /// When speech recognition revised the wake word away, the snapshot prefix
+    /// may no longer lead the transcript; only skip the prefix word count while
+    /// the prefix is still present (ignoring case and punctuation), otherwise
+    /// real command words would be truncated.
+    private func postWakeWordFallbackText(from rawText: String) -> String? {
+        guard !wakeWordTranscriptPrefix.isEmpty else { return nil }
+
+        func normalized(_ word: Substring) -> String {
+            word.lowercased().trimmingCharacters(in: .punctuationCharacters)
+        }
+
+        let prefixWords = wakeWordTranscriptPrefix.split(separator: " ").map(normalized)
+        let allWords = rawText.split(separator: " ").map { String($0) }
+        guard prefixWords.count < allWords.count else { return nil }
+        let leading = allWords.prefix(prefixWords.count).map { normalized(Substring($0)) }
+        guard leading == prefixWords else { return nil }
+
+        return WakeWordStripper.stripLeadingFillers(Array(allWords[prefixWords.count...]))
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Resets wake word state and restarts the speech recognition session.
