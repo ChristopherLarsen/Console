@@ -82,6 +82,14 @@ final class NoteDictationMode: ListeningMode {
             self?.resetTranscription()
         }
 
+        #if DEBUG
+        if AudioSessionController._unitTestMode {
+            // Unit tests must not require live Speech hardware: activate
+            // state only; transcript state is driven through the view model.
+            return
+        }
+        #endif
+
         let story = SpeechStory()
         let newTranscriber = SpokenWordTranscriber(story: story)
         self.transcriber = newTranscriber

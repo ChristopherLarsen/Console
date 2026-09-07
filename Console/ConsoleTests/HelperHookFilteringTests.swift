@@ -108,7 +108,8 @@ final class HelperHookFilteringTests: XCTestCase {
     """
 
     func testUserPromptSubmitForwardsWorkingWithoutPromptContent() throws {
-        _ = try runHelper(eventName: "UserPromptSubmit", stdinJSON: sensitiveUserPromptPayload)
+        let (exitCode, _, _) = try runHelper(eventName: "UserPromptSubmit", stdinJSON: sensitiveUserPromptPayload)
+        XCTAssertEqual(exitCode, EXIT_SUCCESS, "hook helper must always exit 0")
         let envelope = try XCTUnwrap(waitForEnvelope())
 
         XCTAssertEqual(envelope["kind"] as? String, "lifecycle")
@@ -144,7 +145,8 @@ final class HelperHookFilteringTests: XCTestCase {
           "last_assistant_message": "API Error: FAKE-SECRET-ASSISTANT-TEXT"
         }
         """
-        _ = try runHelper(eventName: "StopFailure", stdinJSON: payload)
+        let (exitCode, _, _) = try runHelper(eventName: "StopFailure", stdinJSON: payload)
+        XCTAssertEqual(exitCode, EXIT_SUCCESS, "hook helper must always exit 0")
         let envelope = try XCTUnwrap(waitForEnvelope())
         XCTAssertEqual(envelope["lifecycle_event"] as? String, "turn_failed")
 
@@ -167,7 +169,8 @@ final class HelperHookFilteringTests: XCTestCase {
           "hook_event_name": "CwdChanged"
         }
         """
-        _ = try runHelper(eventName: "CwdChanged", stdinJSON: payload)
+        let (exitCode, _, _) = try runHelper(eventName: "CwdChanged", stdinJSON: payload)
+        XCTAssertEqual(exitCode, EXIT_SUCCESS, "hook helper must always exit 0")
         let envelope = try XCTUnwrap(waitForEnvelope())
         XCTAssertEqual(envelope["kind"] as? String, "cwd")
         XCTAssertEqual(envelope["cwd_directory"] as? String, "/tmp/fake-new-dir")
@@ -191,7 +194,8 @@ final class HelperHookFilteringTests: XCTestCase {
           "permission_suggestions": [{"type": "addRules"}]
         }
         """
-        _ = try runHelper(eventName: "PermissionRequest", stdinJSON: payload)
+        let (exitCode, _, _) = try runHelper(eventName: "PermissionRequest", stdinJSON: payload)
+        XCTAssertEqual(exitCode, EXIT_SUCCESS, "hook helper must always exit 0")
         let envelope = try XCTUnwrap(waitForEnvelope())
         XCTAssertEqual(envelope["kind"] as? String, "attention")
         XCTAssertEqual(envelope["attention_category"] as? String, "permission")
@@ -216,7 +220,8 @@ final class HelperHookFilteringTests: XCTestCase {
           "tool_input": {"questions": [{"question": "FAKE-SECRET-QUESTION?"}]}
         }
         """
-        _ = try runHelper(eventName: "AskUserQuestion", stdinJSON: payload)
+        let (exitCode, _, _) = try runHelper(eventName: "AskUserQuestion", stdinJSON: payload)
+        XCTAssertEqual(exitCode, EXIT_SUCCESS, "hook helper must always exit 0")
         let envelope = try XCTUnwrap(waitForEnvelope())
         XCTAssertEqual(envelope["attention_category"] as? String, "question")
         XCTAssertNil(envelope["attention_message"])

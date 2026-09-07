@@ -39,6 +39,14 @@ final class FieldDictationMode: ListeningMode {
         lastFinalizedLength = 0
         accumulatedText = ""
 
+        #if DEBUG
+        if AudioSessionController._unitTestMode {
+            // Unit tests must not require live Speech hardware: activate
+            // state only; text arrives via appendAccumulatedTextForTesting.
+            return
+        }
+        #endif
+
         let story = SpeechStory()
         let newTranscriber = SpokenWordTranscriber(story: story)
         self.transcriber = newTranscriber

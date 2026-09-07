@@ -13,30 +13,6 @@ final class AuthorizationDialogUITests: XCTestCase {
         app = nil
     }
 
-    // MARK: - Helper: Create Command Requiring Confirmation
-
-    /// Prepares app with a command that requires authorization
-    private func setupCommandRequiringConfirmation() {
-        app.launch()
-
-        let mainWindow = app.windows.firstMatch
-        XCTAssertTrue(mainWindow.waitForExistence(timeout: 5))
-
-        // Navigate to My Commands tab
-        let myCommandsTab = app.radioButtons["My Commands"].firstMatch
-        if myCommandsTab.waitForExistence(timeout: 2) {
-            myCommandsTab.tap()
-        } else if app.buttons["My Commands"].firstMatch.waitForExistence(timeout: 2) {
-            app.buttons["My Commands"].firstMatch.tap()
-        }
-
-        sleep(1)
-
-        // Create a command with requiresConfirmation = true
-        // Note: This requires manual setup or using a pre-seeded test command
-        // For now, we'll document the requirement
-    }
-
     // MARK: - Authorization Dialog Appearance
 
     func testAuthorizationDialogAppears() throws {
@@ -207,24 +183,5 @@ final class AuthorizationDialogUITests: XCTestCase {
         // XCTAssertFalse(authPanel.waitForExistence(timeout: 2), "Auth panel should dismiss on Escape")
         //
         // // Command should NOT execute
-    }
-
-    // MARK: - Built-in Commands Do Not Require Authorization
-
-    func testBuiltInCommandsNoAuthorization() throws {
-        app.launchArguments = ["--auto-start-listening"]
-        app.launch()
-
-        let mainWindow = app.windows.firstMatch
-        XCTAssertTrue(mainWindow.waitForExistence(timeout: 5))
-
-        // Built-in commands like "Console Commands", "Stop Listening" should NOT require authorization
-        // They execute immediately without confirmation
-
-        // Note: Would need synthetic speech to test this properly
-        // For now, document expected behavior
-
-        // Expected: Built-in Console commands execute without authorization panel
-        XCTAssertTrue(true, "Built-in commands should not show authorization dialog")
     }
 }

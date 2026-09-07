@@ -11,8 +11,14 @@ struct TerminalViewWrapper: NSViewRepresentable {
     // MARK: - NSViewRepresentable
 
     func makeNSView(context: Context) -> LocalProcessTerminalView {
+        // Only a freshly created shell should claim keyboard focus. When the
+        // drawer is expanded, this view remounts and the Claude PTY (or the
+        // chevron button the user just clicked) must keep focus.
+        let isNewTerminal = sessionManager.terminalView == nil
         let terminalView = sessionManager.getOrCreateTerminalView()
-        sessionManager.focusTerminal()
+        if isNewTerminal {
+            sessionManager.focusTerminal()
+        }
         return terminalView
     }
 

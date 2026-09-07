@@ -167,7 +167,18 @@ struct ConsoleApp: App {
             }
         }
 
-        let modelConfiguration = ModelConfiguration(schema: schema, url: storeURL)
+        let modelConfiguration: ModelConfiguration
+        let isUITestMemoryStore: Bool
+        if ProcessInfo.processInfo.arguments.contains("-uiTestInMemoryStore") {
+            // UITest fixture: launch with a throwaway in-memory store so UI
+            // tests can never pollute the developer's persistent SwiftData
+            // store and every run starts from seeded defaults.
+            modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            isUITestMemoryStore = true
+        } else {
+            modelConfiguration = ModelConfiguration(schema: schema, url: storeURL)
+            isUITestMemoryStore = false
+        }
         #else
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         #endif
@@ -176,12 +187,23 @@ struct ConsoleApp: App {
         let currentPath = modelConfiguration.url.path(percentEncoded: false)
         let storeExists = FileManager.default.fileExists(atPath: currentPath)
         printDebug("[Console] Store URL: \(currentPath), exists: \(storeExists)")
+        #if DEBUG
+        if !isUITestMemoryStore {
+            if let savedPath = UserDefaults.standard.string(forKey: storeLocationKey) {
+                if savedPath != currentPath {
+                    printDebug("[Console] ⚠️ SwiftData store location changed!\n  Previous: \(savedPath)\n  Current:  \(currentPath)")
+                }
+            }
+            UserDefaults.standard.set(currentPath, forKey: storeLocationKey)
+        }
+        #else
         if let savedPath = UserDefaults.standard.string(forKey: storeLocationKey) {
             if savedPath != currentPath {
                 printDebug("[Console] ⚠️ SwiftData store location changed!\n  Previous: \(savedPath)\n  Current:  \(currentPath)")
             }
         }
         UserDefaults.standard.set(currentPath, forKey: storeLocationKey)
+        #endif
 
         var container: ModelContainer?
         var openMode = ""
@@ -288,6 +310,11 @@ struct ConsoleApp: App {
         }
         if ProcessInfo.processInfo.arguments.contains("-uiTestSelectNext") {
             UserDefaults.standard.set(SidebarSelection.next.rawValue, forKey: ConsoleNavigation.sidebarKey)
+        }
+        if ProcessInfo.processInfo.arguments.contains("-uiTestSelectTriggers") {
+            // Synthesized clicks on custom sidebar rows race window settling
+            // under automation; wake-word UI tests navigate via this flag.
+            UserDefaults.standard.set(SidebarSelection.triggers.rawValue, forKey: ConsoleNavigation.sidebarKey)
         }
         if ProcessInfo.processInfo.arguments.contains("-uiTestNextSyntheticSources") {
             nextButtonModel.installSyntheticUITestSources()

@@ -309,12 +309,25 @@ final class NavigationUITests: XCTestCase {
         XCTAssertTrue(app.menuItems["Focus Session"].exists, "⌘⇧F must remain Focus Session on Go")
         app.typeKey(.escape, modifierFlags: [])
 
+        // Navigate away from Home first, or the assert below would pass
+        // without ⌃1 doing anything (the app always launches on Home).
+        // Synthesized clicks into the main window do not actuate on this
+        // host, so relaunch with the launch-argument navigation fixture.
+        app.terminate()
+        app.launchArguments.append("-uiTestSelectTriggers")
+        app.launch()
+
+        let awayDashboard = app.descendants(matching: .any)["HomeDashboard"].firstMatch
+        XCTAssertFalse(
+            awayDashboard.waitForExistence(timeout: 2),
+            "Precondition: should not be on Home before pressing ⌃1"
+        )
+
         app.typeKey("1", modifierFlags: [.control])
         let homeDashboard = app.descendants(matching: .any)["HomeDashboard"].firstMatch
         XCTAssertTrue(
-            homeDashboard.waitForExistence(timeout: 8)
-                || app.menuBars.menuBarItems["Go"].exists,
-            "⌃1 must keep its Go meaning; Home remains reachable"
+            homeDashboard.waitForExistence(timeout: 8),
+            "⌃1 must return to Home"
         )
     }
 }
