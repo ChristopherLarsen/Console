@@ -67,6 +67,7 @@ struct ConsoleApp: App {
     @State private var iosBuildCoordinator: IOSBuildCoordinator
     @State private var launchCoordinator: SessionLaunchCoordinator
     @State private var sessionWorkspaceLayout = SessionWorkspaceLayoutController()
+    @State private var developerActions: DeveloperActionRunner
     private var syntheticTranscriptSource: SyntheticTranscriptSource?
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("tabSelection") private var tabSelection: TabSelection = .triggers
@@ -205,6 +206,7 @@ struct ConsoleApp: App {
         }
         #endif
         _launchCoordinator = State(initialValue: coordinator)
+        _developerActions = State(initialValue: DeveloperActionRunner())
 
         if !Self.isRunningUnitTests {
             MenuBarManager.shared.installStatusItem()
@@ -323,6 +325,18 @@ struct ConsoleApp: App {
                     .transition(.scale(scale: 0.95).combined(with: .opacity))
                 }
 
+                if developerActions.isPickerPresented {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .onTapGesture { developerActions.dismissPicker() }
+                    DeveloperActionPicker()
+                        .environment(developerActions)
+                        .frame(minWidth: 540, maxWidth: 640, minHeight: 360, maxHeight: 520)
+                        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .shadow(color: .black.opacity(0.15), radius: 24, y: 8)
+                }
+
                 }
             }
             }
@@ -343,6 +357,7 @@ struct ConsoleApp: App {
             .environment(iosBuildCoordinator)
             .environment(launchCoordinator)
             .environment(sessionWorkspaceLayout)
+            .environment(developerActions)
             #if DEBUG
             .environment(developerModeManager)
             #endif
@@ -425,6 +440,51 @@ struct ConsoleApp: App {
                 #endif
             }
         }
+        .commands {
+            CommandMenu("Develop") {
+                Button(DeveloperActionID.focusCurrentSession.title) {
+                    performDeveloperAction(.focusCurrentSession)
+                }
+                .disabled(sessionStore.selectedSession == nil && !sessionWorkspaceLayout.isFocusMode)
+                .help("Select a session before focusing.")
+                Button(DeveloperActionID.newGeneralSession.title) {
+                    performDeveloperAction(.newGeneralSession)
+                }
+                .disabled(workspaceStore.availableWorkspaces.isEmpty)
+                .help("Add a workspace folder in Settings → Sessions.")
+                Divider()
+                Button(DeveloperActionID.openWorkspaceInXcode.title) {
+                    performDeveloperAction(.openWorkspaceInXcode)
+                }
+                .disabled(!isDeveloperActionEnabled(.openWorkspaceInXcode))
+                .help(developerActionHelp(.openWorkspaceInXcode))
+                Button(DeveloperActionID.buildSelectedProfile.title) {
+                    performDeveloperAction(.buildSelectedProfile)
+                }
+                .disabled(!isDeveloperActionEnabled(.buildSelectedProfile))
+                .help(developerActionHelp(.buildSelectedProfile))
+                Button(DeveloperActionID.runSelectedTests.title) {
+                    performDeveloperAction(.runSelectedTests)
+                }
+                .disabled(!isDeveloperActionEnabled(.runSelectedTests))
+                .help(developerActionHelp(.runSelectedTests))
+                Button(DeveloperActionID.openLatestResult.title) {
+                    performDeveloperAction(.openLatestResult)
+                }
+                .disabled(!isDeveloperActionEnabled(.openLatestResult))
+                .help(developerActionHelp(.openLatestResult))
+                Button(DeveloperActionID.runInSelectedSimulator.title) {
+                    performDeveloperAction(.runInSelectedSimulator)
+                }
+                .disabled(!isDeveloperActionEnabled(.runInSelectedSimulator))
+                .help(developerActionHelp(.runInSelectedSimulator))
+                Divider()
+                Button("Developer Actions…") {
+                    developerActions.presentPicker()
+                }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
+            }
+        }
 
         Window("About Console", id: "about") {
             AboutWindowContent()
@@ -461,6 +521,40 @@ struct ConsoleApp: App {
             sessionStore.clearSelection()
         }
         ConsoleNavigation.showSessions()
+    }
+
+    private var developerActionHosts: DeveloperActionHosts {
+        DeveloperActionHosts(
+            sessionStore: sessionStore,
+            layout: sessionWorkspaceLayout,
+            workspaceStore: workspaceStore,
+            profileStore: iosProfileStore,
+            buildCoordinator: iosBuildCoordinator,
+            launchCoordinator: launchCoordinator
+        )
+    }
+
+    private func performDeveloperAction(_ id: DeveloperActionID) {
+        Task { @MainActor in
+            let hosts = developerActionHosts
+            let snapshot = developerActions.snapshot(hosts: hosts)
+            await developerActions.perform(id, snapshot: snapshot, hosts: hosts)
+        }
+    }
+
+    private func isDeveloperActionEnabled(_ id: DeveloperActionID) -> Bool {
+        DeveloperActionCatalog.item(
+            for: id,
+            in: developerActions.snapshot(hosts: developerActionHosts)
+        ).isEnabled
+    }
+
+    private func developerActionHelp(_ id: DeveloperActionID) -> String {
+        let item = DeveloperActionCatalog.item(
+            for: id,
+            in: developerActions.snapshot(hosts: developerActionHosts)
+        )
+        return item.disabledReason ?? item.preview.summary
     }
 
     private func initializeServices() {

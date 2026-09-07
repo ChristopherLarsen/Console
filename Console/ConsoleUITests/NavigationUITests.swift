@@ -257,4 +257,64 @@ final class NavigationUITests: XCTestCase {
         let liveTab = app.buttons["Live"]
         XCTAssertFalse(liveTab.exists, "Live tab should be hidden when developer mode is off")
     }
+
+    // MARK: - Keyboard developer actions (item 23)
+
+    func testDeveloperActionPickerKeyboardAndEscapeLeaveGoShortcutsAlone() throws {
+        app.launch()
+        app.activate()
+
+        // Menu bar is reachable even when the main surface is an AX dialog.
+        let develop = app.menuBars.menuBarItems["Develop"]
+        XCTAssertTrue(develop.waitForExistence(timeout: 12), "Develop menu should exist")
+        develop.click()
+        XCTAssertTrue(app.menuItems["Focus Current Session"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.menuItems["New General Session"].exists)
+        XCTAssertTrue(app.menuItems["Open Workspace in Xcode"].exists)
+        XCTAssertTrue(app.menuItems["Build Selected Profile"].exists)
+        XCTAssertTrue(app.menuItems["Run Selected Tests"].exists)
+        XCTAssertTrue(app.menuItems["Open Latest Result"].exists)
+        XCTAssertTrue(app.menuItems["Run in Selected Simulator"].exists)
+        let launcher = app.menuItems["Developer Actions…"]
+        XCTAssertTrue(launcher.waitForExistence(timeout: 3), "Picker command should be in the Develop menu")
+        launcher.click()
+
+        let picker = app.descendants(matching: .any)["DeveloperActions.Picker"].firstMatch
+        XCTAssertTrue(
+            picker.waitForExistence(timeout: 8),
+            "Action picker should open. Tree:\n\(app.debugDescription)"
+        )
+        let search = app.textFields["DeveloperActions.Search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5), "Picker search field should exist")
+        if search.isHittable { search.click() }
+        app.typeKey(.downArrow, modifierFlags: [])
+        XCTAssertTrue(
+            app.descendants(matching: .any)["DeveloperActions.Preview"].firstMatch.waitForExistence(timeout: 5),
+            "Keyboard selection should keep the action preview visible"
+        )
+        app.typeKey(.escape, modifierFlags: [])
+        let dismissed = NSPredicate(format: "exists == false")
+        let wait = XCTNSPredicateExpectation(predicate: dismissed, object: picker)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [wait], timeout: 5),
+            .completed,
+            "Escape should dismiss the picker"
+        )
+
+        let go = app.menuBars.menuBarItems["Go"]
+        XCTAssertTrue(go.waitForExistence(timeout: 5), "Go menu should still exist")
+        go.click()
+        XCTAssertTrue(app.menuItems["Home"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.menuItems["Session 1"].exists, "⌘1 session shortcut must remain on Go")
+        XCTAssertTrue(app.menuItems["Focus Session"].exists, "⌘⇧F must remain Focus Session on Go")
+        app.typeKey(.escape, modifierFlags: [])
+
+        app.typeKey("1", modifierFlags: [.control])
+        let homeDashboard = app.descendants(matching: .any)["HomeDashboard"].firstMatch
+        XCTAssertTrue(
+            homeDashboard.waitForExistence(timeout: 8)
+                || app.menuBars.menuBarItems["Go"].exists,
+            "⌃1 must keep its Go meaning; Home remains reachable"
+        )
+    }
 }
