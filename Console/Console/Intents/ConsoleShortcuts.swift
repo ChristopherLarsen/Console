@@ -6,11 +6,36 @@ struct ConsoleShortcuts: AppShortcutsProvider {
             intent: ToggleListeningIntent(),
             phrases: [
                 "Toggle listening in \(.applicationName)",
-                "Start listening in \(.applicationName)",
-                "Stop listening in \(.applicationName)",
             ],
             shortTitle: "Toggle Listening",
             systemImageName: "waveform"
+        )
+
+        AppShortcut(
+            intent: StartListeningIntent(),
+            phrases: [
+                "Start listening in \(.applicationName)",
+            ],
+            shortTitle: "Start Listening",
+            systemImageName: "waveform.badge.mic"
+        )
+
+        AppShortcut(
+            intent: StopListeningIntent(),
+            phrases: [
+                "Stop listening in \(.applicationName)",
+            ],
+            shortTitle: "Stop Listening",
+            systemImageName: "waveform.slash"
+        )
+
+        AppShortcut(
+            intent: StopExecutionIntent(),
+            phrases: [
+                "Stop command in \(.applicationName)",
+            ],
+            shortTitle: "Stop Command",
+            systemImageName: "stop.fill"
         )
 
         AppShortcut(

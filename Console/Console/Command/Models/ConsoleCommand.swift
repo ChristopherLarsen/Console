@@ -32,4 +32,17 @@ extension ConsoleCommand: Hashable {
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
+
+    /// SwiftData-shaped representation used by the authorization flow.
+    @MainActor
+    var asCommand: Command {
+        Command(
+            name: name,
+            commandDescription: description,
+            triggerPhrases: triggerPhrases,
+            executionMode: .appIntents,
+            requiresConfirmation: requiresConfirmation,
+            isConsole: true
+        )
+    }
 }

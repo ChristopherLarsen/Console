@@ -88,6 +88,26 @@ final class LocalCommandExecutor: CommandRunning {
         if command.isConsole,
            let payload = command.actions.first?.payload,
            let action = ConsoleAction(rawValue: payload) {
+            // Console actions go through the same authorization gate as every
+            // other command; "require authorization for every command" applies here too.
+            if !skipAuthorization, needsAuthorization(command) {
+                let authorized = await authorizer.requestAuthorization(for: command)
+                if !authorized {
+                    let deniedResult = ExecutionResult(
+                        command: command,
+                        logs: [],
+                        overallSuccess: false,
+                        totalDurationMs: 0,
+                        authorizationDenied: true
+                    )
+                    let run = CommandRun(id: runID, result: deniedResult)
+                    endRun(run, feedback: .denied)
+                    return run
+                }
+                if shouldHalt {
+                    return finishCancelled(command, runID: runID, logs: [], startTime: Date())
+                }
+            }
             let result = await executeConsoleAction(action, command: command)
             let run = CommandRun(id: runID, result: result)
             endRun(run, feedback: .silent)
@@ -311,9 +331,15 @@ final class LocalCommandExecutor: CommandRunning {
     // MARK: - Authorization
 
     private func needsAuthorization(_ command: Command) -> Bool {
+        let isEmergencyStop = command.isConsole
+            && command.actions.first?.payload == ConsoleAction.fishOff.rawValue
+
         if UserDefaults.standard.bool(forKey: "requireAuthorizationForAllCommands") {
-            return true
+            // The emergency stop must stay reachable without a dialog.
+            return !isEmergencyStop
         }
+
+        if isEmergencyStop { return false }
 
         let confirmationEnabled = UserDefaults.standard.object(forKey: "requireConfirmationForDangerous") == nil
             ? true

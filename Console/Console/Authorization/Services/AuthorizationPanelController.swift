@@ -3,12 +3,12 @@ import SwiftUI
 
 /// Manages a standalone floating NSPanel for the authorization dialog.
 @MainActor
-final class AuthorizationPanelController {
+final class AuthorizationPanelController: NSObject, NSWindowDelegate {
     static let shared = AuthorizationPanelController()
     private var panel: NSPanel?
     private let voiceHandler = AuthorizationVoiceHandler()
 
-    private init() {}
+    override init() {}
 
     func show(command: Command) {
         dismiss()
@@ -46,6 +46,7 @@ final class AuthorizationPanelController {
         panel.titleVisibility = .hidden
         panel.isMovableByWindowBackground = true
         panel.isReleasedWhenClosed = false
+        panel.delegate = self
         panel.contentViewController = hosting
         panel.level = .screenSaver
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -66,5 +67,15 @@ final class AuthorizationPanelController {
         voiceHandler.stopListening()
         panel?.orderOut(nil)
         panel = nil
+    }
+
+    // MARK: - NSWindowDelegate
+
+    /// Closing the panel chrome (traffic light / Cmd-W) is a cancellation:
+    /// deny the pending request instead of leaving a hidden live prompt that
+    /// voice can still approve.
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === panel else { return }
+        AuthorizationManager.shared.deny()
     }
 }

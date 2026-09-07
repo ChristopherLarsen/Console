@@ -37,6 +37,9 @@ struct SettingsView: View {
     @State private var showHotkeyRecorder = false
     @State private var showPermissions = false
     @State private var showAvailableCommands = false
+    /// Sensitive-confirmation preference before "every command" cleared it, so
+    /// turning every-command off restores the prior value.
+    @State private var priorRequireConfirmationForDangerous = true
     @State private var detectedClaudePath: String?
     private let locator = ClaudeExecutableLocator()
     @FocusState private var isAuthWordsFocused: Bool
@@ -505,7 +508,10 @@ struct SettingsView: View {
                     .themedToggleStyle()
                     .onChange(of: requireAuthorizationForAllCommands) { _, newValue in
                         if newValue {
+                            priorRequireConfirmationForDangerous = requireConfirmationForDangerous
                             requireConfirmationForDangerous = false
+                        } else {
+                            requireConfirmationForDangerous = priorRequireConfirmationForDangerous
                         }
                     }
                 Text("Every voice command will require explicit approval before execution")

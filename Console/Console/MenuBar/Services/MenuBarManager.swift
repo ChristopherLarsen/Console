@@ -69,6 +69,7 @@ final class MenuBarManager: NSObject {
 
     private func showMenu() {
         let menu = NSMenu()
+        menu.autoenablesItems = false
 
         let aboutItem = NSMenuItem(title: "About Console", action: #selector(showAbout), keyEquivalent: "")
         aboutItem.target = self
@@ -106,6 +107,16 @@ final class MenuBarManager: NSObject {
         menu.addItem(customItem)
 
         menu.addItem(.separator())
+
+        let stopExecutionItem = NSMenuItem(
+            title: "Stop Command",
+            action: #selector(stopExecution),
+            keyEquivalent: ""
+        )
+        stopExecutionItem.target = self
+        stopExecutionItem.image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "Stop Command")
+        stopExecutionItem.isEnabled = viewModel?.isExecutingCommand == true
+        menu.addItem(stopExecutionItem)
 
         let recentCommandsItem = NSMenuItem(title: "List", action: #selector(showRecentCommands), keyEquivalent: "")
         recentCommandsItem.target = self
@@ -204,6 +215,10 @@ final class MenuBarManager: NSObject {
 
     @objc private func openNote() {
         viewModel?.openNote()
+    }
+
+    @objc private func stopExecution() {
+        viewModel?.stopExecution()
     }
 
     @objc private func openTriggers() {

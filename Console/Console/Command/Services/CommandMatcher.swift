@@ -40,11 +40,23 @@ final class CommandMatcher {
         let matches = findMatches(for: input, in: commands)
         guard !matches.isEmpty else { return nil }
 
-        // Deduplicate by command name so duplicate entries don't trigger the ambiguity guard
-        let uniqueCommandNames = Set(matches.map { $0.command.name })
-        guard uniqueCommandNames.count == 1 else { return nil }
+        // Keep the highest-confidence match per command name so duplicate
+        // entries don't trigger the ambiguity guard.
+        var bestPerName: [String: CommandMatch] = [:]
+        for match in matches {
+            if let existing = bestPerName[match.command.name], existing.confidence >= match.confidence {
+                continue
+            }
+            bestPerName[match.command.name] = match
+        }
+        let candidates = bestPerName.values.sorted { $0.confidence > $1.confidence }
 
-        return matches.first
+        // A strictly lower-scoring runner-up is not ambiguity — the clear
+        // winner wins. Equal top scores across distinct commands stay ambiguous.
+        if candidates.count > 1, candidates[0].confidence == candidates[1].confidence {
+            return nil
+        }
+        return candidates.first
     }
 
     // MARK: - Confidence Scoring

@@ -22,11 +22,23 @@ struct ConsoleCommandMatcher {
         let matches = findMatches(for: input, availableIn: mode)
         guard !matches.isEmpty else { return nil }
 
-        // Ensure only one unique command matches (no ambiguity)
-        let uniqueCommandIds = Set(matches.map { $0.command.id })
-        guard uniqueCommandIds.count == 1 else { return nil }
+        // Keep the highest-confidence match per command id so duplicate
+        // phrases don't trigger the ambiguity guard.
+        var bestPerID: [String: ConsoleCommandMatch] = [:]
+        for match in matches {
+            if let existing = bestPerID[match.command.id], existing.confidence >= match.confidence {
+                continue
+            }
+            bestPerID[match.command.id] = match
+        }
+        let candidates = bestPerID.values.sorted { $0.confidence > $1.confidence }
 
-        return matches.first
+        // A strictly lower-scoring runner-up is not ambiguity — the clear
+        // winner wins. Equal top scores across distinct commands stay ambiguous.
+        if candidates.count > 1, candidates[0].confidence == candidates[1].confidence {
+            return nil
+        }
+        return candidates.first
     }
 
     /// Find all matching Console commands, filtered by availability and context
