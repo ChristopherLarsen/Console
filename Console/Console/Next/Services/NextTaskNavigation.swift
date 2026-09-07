@@ -10,6 +10,8 @@ enum NextTaskNavigation {
         var mergeRequestURL: URL? = nil
         var mergeRequestKind: CodeHostListKind? = nil
         var sessionID: UUID? = nil
+        var workflowID: UUID? = nil
+        var stepID: UUID? = nil
         var clearSessionSelection: Bool = false
     }
 
@@ -63,6 +65,24 @@ enum NextTaskNavigation {
                 ))
             }
             return .stay(updatedTask: missingSessionTask())
+
+        case .ticketWorkflow(let workflowID, let stepID):
+            let stillPresent = snapshot.workflowSteps.contains {
+                $0.workflowID == workflowID && $0.stepID == stepID && !$0.isBlocked
+            }
+            if stillPresent {
+                return .navigate(Plan(
+                    destination: .ticketWork,
+                    workflowID: workflowID,
+                    stepID: stepID
+                ))
+            }
+            return .stay(updatedTask: NextTask(
+                kind: .ticketWorkflowStep,
+                headline: "That workflow step is no longer actionable",
+                lines: ["Open Ticket Work to pick the next step."],
+                openTarget: .source(.jira)
+            ))
 
         case .source(let kind):
             return .navigate(sourcePlan(kind))

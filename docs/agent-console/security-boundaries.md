@@ -33,7 +33,9 @@ Console itself must NEVER acquire:
 - Injected `fetch` / `XMLHttpRequest` / hidden API navigations / undocumented endpoints
 - `customUserAgent` or Safari user-agent spoofing
 - An AI data path for ticket/MR retrieval (AI is for Brief/Next/commands, not panel data)
-- Persistence of ticket/MR content (no SwiftData, UserDefaults, files, snapshots, logs)
+- Persistence of ticket/MR **content** (titles, descriptions, raw status strings, URLs,
+  comment/MR bodies, DOM, or any field that could reconstruct company work) —
+  no SwiftData, UserDefaults, files, snapshots, or logs of that content
 - Automatic scrolling/paging/reloading to force virtualized rows to load
 
 If reliable cards cannot be produced within these constraints, leave the real
@@ -42,6 +44,58 @@ page usable and report the limitation. Do not silently broaden the approach.
 **Company-data constraints do NOT apply to synthetic fixtures** on the personal
 sites — that content is invented and is the intended source of committed test
 data (scrub the site hostname from committed HTML).
+
+### 2a. Narrow durable TicketWorkflow progress (approved exception)
+
+Ticket Work may retain **minimal local progress** so a restart does not erase
+stage/checklist state. This is an explicit, narrow exception to the blanket
+"no persistence" wording above. It does **not** authorize persisting ticket or
+MR content.
+
+**Allowed to persist (dedicated versioned store only):**
+
+- Workflow UUID and an opaque ticket-association token
+- Template identifier and template version
+- Stage and step UUIDs, step outcomes (enum codes), and timestamps
+- Work-cycle number and generic blocker codes (not free-text reasons from Jira)
+- Selected local workspace UUID
+- A bounded history of generic workflow transition codes
+- Separately: generic reusable checklist templates (no ticket fields)
+
+**Opaque ticket association:** a Keychain-held installation secret plus a
+versioned, domain-separated HMAC over the normalized Jira origin host and
+issue key. The existing project-prefix routing hash is insufficient. The HMAC
+digest is what may be stored — never the issue key, title, summary, status
+string, or URL.
+
+**Forbidden in durable TicketWorkflow records (and in job arguments,
+artifact filenames, result metadata, terminal submissions, LLM prompts,
+accessibility identifiers, and logs):**
+
+- Issue keys, titles, descriptions, acceptance text, raw Jira statuses
+- Issue or project URLs, host pathnames that identify company projects
+- MR titles, descriptions, discussion text, pipeline logs
+- Session prompts, summaries, or transcript paths
+- Diagnostic compiler/test message bodies (keep those memory-only / local
+  result bundles, separate from workflow metadata)
+
+**Failure handling required by this allowance:**
+
+- Keychain temporarily unavailable → retryable locked UI; do not wipe records
+- Missing identity key with existing records → preserve records; require an
+  explicit reset/recovery choice
+- Corrupt or newer-format storage → preserve bytes; never silently replace
+  with an empty store
+- Failed save → surface that progress could not be retained
+
+In-memory attachment of ticket labels and navigation URLs is allowed when the
+matching Jira context is currently rendered in the WebView. After restart,
+until reattached, UI shows a generic label such as
+**Tracked ticket · Verification · Reconnect in Jira**.
+
+Jira/GitLab mutations still happen only through visible WebViews. This
+allowance never authorizes REST clients, automatic transitions, comments,
+merges, or releases.
 
 ## 3. Sessions bridge privacy
 

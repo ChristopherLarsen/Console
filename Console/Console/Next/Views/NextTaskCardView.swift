@@ -213,6 +213,8 @@ struct NextTaskCardView: View {
             return "Tap to open this issue"
         case .session:
             return "Tap to open session"
+        case .ticketWorkflow:
+            return "Tap to open Ticket Work"
         case .source(.reviews), .source(.authored):
             return "Tap to open GitLab"
         case .source(.jira):

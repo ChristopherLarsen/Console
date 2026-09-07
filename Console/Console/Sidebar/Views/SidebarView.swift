@@ -55,6 +55,15 @@ struct SidebarView: View {
                         }
 
                         SidebarRow(
+                            label: SidebarSelection.ticketWork.label,
+                            icon: SidebarSelection.ticketWork.icon,
+                            isSelected: selection == .ticketWork
+                        ) {
+                            selection = .ticketWork
+                        }
+                        .accessibilityIdentifier(TicketWorkflowAccessibility.sidebarItem)
+
+                        SidebarRow(
                             label: SidebarSelection.sessions.label,
                             icon: SidebarSelection.sessions.icon,
                             isSelected: selection == .sessions

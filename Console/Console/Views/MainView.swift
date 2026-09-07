@@ -16,6 +16,7 @@ struct MainView: View {
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
     @Environment(SessionStore.self) private var sessionStore
     @Environment(SessionWorkspaceLayoutController.self) private var sessionWorkspaceLayout
+    @Environment(TicketWorkflowCoordinator.self) private var ticketWorkflowCoordinator
 
     private static let terminalMinExpandedHeight: CGFloat = 150
     private static let terminalDefaultExpandedHeight: CGFloat = 250
@@ -266,6 +267,8 @@ struct MainView: View {
             })
         case .jira:
             JiraView()
+        case .ticketWork:
+            TicketWorkRootView(handlers: ticketWorkflowCoordinator.actionHandlers)
         case .mergeRequests:
             MergeRequestsView()
         case .triggers:

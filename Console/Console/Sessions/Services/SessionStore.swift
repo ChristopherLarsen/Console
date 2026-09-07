@@ -145,6 +145,31 @@ final class SessionStore {
     /// Observer fired after each reduced lifecycle event is applied.
     @ObservationIgnored var lifecycleObserver: (@MainActor (UUID, SessionLifecycleEvent) -> Void)?
 
+    /// Additional subscribers (Ticket Work, etc.). The primary
+    /// `lifecycleObserver` is preserved; subscribers are fan-out only.
+    @ObservationIgnored private var lifecycleSubscribers:
+        [UUID: @MainActor (UUID, SessionLifecycleEvent) -> Void] = [:]
+
+    @discardableResult
+    func addLifecycleSubscriber(
+        _ handler: @escaping @MainActor (UUID, SessionLifecycleEvent) -> Void
+    ) -> UUID {
+        let id = UUID()
+        lifecycleSubscribers[id] = handler
+        return id
+    }
+
+    func removeLifecycleSubscriber(_ id: UUID) {
+        lifecycleSubscribers.removeValue(forKey: id)
+    }
+
+    private func notifyLifecycle(sessionID: UUID, event: SessionLifecycleEvent) {
+        lifecycleObserver?(sessionID, event)
+        for subscriber in lifecycleSubscribers.values {
+            subscriber(sessionID, event)
+        }
+    }
+
     #if DEBUG
     /// Test seam: bytes handed to SwiftTerm `send`, in order. Never used at runtime.
     @ObservationIgnored private(set) var debugTerminalSendBytes: [(sessionID: UUID, utf8: String)] = []
@@ -525,7 +550,7 @@ final class SessionStore {
 
     func handleProcessTerminated(sessionID: UUID) {
         if closeOnExitIDs.remove(sessionID) != nil {
-            lifecycleObserver?(sessionID, .processTerminated)
+            notifyLifecycle(sessionID: sessionID, event: .processTerminated)
             closeSession(id: sessionID)
             return
         }
@@ -640,7 +665,7 @@ final class SessionStore {
 
         if case .artifactLinked(let artifact) = event {
             appendArtifact(artifact, toSessionAt: index)
-            lifecycleObserver?(sessionID, event)
+            notifyLifecycle(sessionID: sessionID, event: event)
             return
         }
 
@@ -658,7 +683,7 @@ final class SessionStore {
             sessions[index].workingDirectory = URL(fileURLWithPath: path)
         }
 
-        lifecycleObserver?(sessionID, event)
+        notifyLifecycle(sessionID: sessionID, event: event)
     }
 
     private func appendArtifact(_ artifact: SessionArtifact, toSessionAt index: Int) {
