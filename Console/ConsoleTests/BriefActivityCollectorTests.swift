@@ -258,6 +258,53 @@ final class BriefActivityCollectorTests: XCTestCase {
         XCTAssertEqual(Set(result.activities.map(\.subject)), ["Friday start", "Friday late"])
     }
 
+    func testCollectorIncludesCommitAuthoredInRangeAfterRebase() async throws {
+        // Amended/rebased commit: author date Friday (in range), committer
+        // date Monday (outside). git log --until would drop it; author-date
+        // filtering must keep it.
+        let repo = try makeRepo(named: "Rebased")
+        try commit(
+            in: repo,
+            message: "Friday work, amended Monday",
+            authorName: "Dev",
+            authorEmail: "dev@example.test",
+            date: "2026-09-05T12:00:00-04:00",
+            committerDate: "2026-09-07T09:00:00-04:00"
+        )
+
+        let result = await collect(
+            path: repo,
+            displayName: "Rebased",
+            identity: BriefAuthorIdentity(name: "Dev", emails: ["dev@example.test"]),
+            start: dateInNewYork("2026-09-05T00:00:00"),
+            end: dateInNewYork("2026-09-06T00:00:00")
+        )
+
+        XCTAssertEqual(result.activities.map(\.subject), ["Friday work, amended Monday"])
+    }
+
+    func testCollectorExcludesCommitAuthoredOutsideRange() async throws {
+        let repo = try makeRepo(named: "Outside")
+        try commit(
+            in: repo,
+            message: "Thursday work",
+            authorName: "Dev",
+            authorEmail: "dev@example.test",
+            date: "2026-09-04T12:00:00-04:00",
+            committerDate: "2026-09-05T12:00:00-04:00"
+        )
+
+        let result = await collect(
+            path: repo,
+            displayName: "Outside",
+            identity: BriefAuthorIdentity(name: "Dev", emails: ["dev@example.test"]),
+            start: dateInNewYork("2026-09-05T00:00:00"),
+            end: dateInNewYork("2026-09-06T00:00:00")
+        )
+
+        XCTAssertTrue(result.activities.isEmpty)
+    }
+
     func testConfiguredIdentityReadsLocalGitConfig() async throws {
         let repo = try makeRepo(named: "Configured")
         try runGit(["config", "user.name", "Configured Dev"], in: repo)
@@ -308,7 +355,8 @@ final class BriefActivityCollectorTests: XCTestCase {
         message: String,
         authorName: String,
         authorEmail: String,
-        date: String
+        date: String,
+        committerDate: String? = nil
     ) throws -> String {
         try runGit(
             ["commit", "--allow-empty", "-q", "-m", message],
@@ -319,7 +367,7 @@ final class BriefActivityCollectorTests: XCTestCase {
                 "GIT_AUTHOR_DATE": date,
                 "GIT_COMMITTER_NAME": authorName,
                 "GIT_COMMITTER_EMAIL": authorEmail,
-                "GIT_COMMITTER_DATE": date
+                "GIT_COMMITTER_DATE": committerDate ?? date
             ],
             extraGitConfig: [
                 "user.name=\(authorName)",

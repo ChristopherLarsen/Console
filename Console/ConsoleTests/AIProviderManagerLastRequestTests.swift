@@ -26,20 +26,32 @@ final class AIProviderManagerLastRequestTests: XCTestCase {
 
     func testRecordLastRequestSucceeded() {
         let manager = AIProviderManager()
-        manager.recordLastRequest(success: true)
+        manager.selectedProvider = .openAI
+        manager.recordLastRequest(success: true, for: .openAI)
         XCTAssertEqual(manager.lastRequest, .succeeded)
     }
 
     func testRecordLastRequestFailed() {
         let manager = AIProviderManager()
-        manager.recordLastRequest(success: false)
+        manager.selectedProvider = .openAI
+        manager.recordLastRequest(success: false, for: .openAI)
         XCTAssertEqual(manager.lastRequest, .failed)
+    }
+
+    func testOutcomeForOtherProviderDoesNotPaintSelection() {
+        let manager = AIProviderManager()
+        manager.selectedProvider = .openAI
+        manager.recordLastRequest(success: true, for: .claude)
+        XCTAssertEqual(manager.lastRequest, .none)
+
+        manager.recordLastRequest(success: false, for: .gemini)
+        XCTAssertEqual(manager.lastRequest, .none)
     }
 
     func testChangingSelectedProviderResetsLastRequest() {
         let manager = AIProviderManager()
         manager.selectedProvider = .openAI
-        manager.recordLastRequest(success: true)
+        manager.recordLastRequest(success: true, for: .openAI)
         XCTAssertEqual(manager.lastRequest, .succeeded)
 
         manager.selectedProvider = .lmStudio
@@ -60,5 +72,14 @@ final class AIProviderManagerLastRequestTests: XCTestCase {
 
         await manager.pingSelectedLocalProviderIfNeeded()
         XCTAssertNotEqual(manager.lastRequest, .none)
+    }
+
+    func testDefaultOpenAIKeychainRefMatchesSavePath() {
+        let manager = AIProviderManager()
+        UserDefaults.standard.removeObject(forKey: "aiConfig-openAI")
+        // Settings saves under "ai-provider-\(rawValue)"; the default config
+        // must use the same account or a prefs wipe orphans the stored key.
+        XCTAssertEqual(AIProviderConfig.defaultConfigs[.openAI]?.apiKeyKeychainRef, "ai-provider-openAI")
+        XCTAssertEqual(manager.config(for: .openAI).apiKeyKeychainRef, "ai-provider-openAI")
     }
 }

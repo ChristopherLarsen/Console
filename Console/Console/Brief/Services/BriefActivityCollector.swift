@@ -39,13 +39,16 @@ struct BriefActivityCollector: BriefActivityCollecting, BriefIdentityReading {
             guard source.identity.isUsable else { continue }
 
             let isoStart = iso8601String(from: request.rangeStart, calendar: request.calendar)
-            let isoEnd = iso8601String(from: request.rangeEnd, calendar: request.calendar)
+            // `git log --since/--until` bounds by committer date, so an
+            // amended/rebased commit authored in range but committed after it
+            // would be dropped. `--since` alone is a safe superset for an
+            // author-date range (committer date is never earlier than author
+            // date); the author-date window is enforced below via `occurring`.
             let result = try? await processRunner.run(
                 executablePath: gitExecutablePath,
                 arguments: [
                     "-C", source.path, "log", "--no-merges",
                     "--since=\(isoStart)",
-                    "--until=\(isoEnd)",
                     "--pretty=format:\(BriefComposer.gitLogFormat)"
                 ],
                 workingDirectory: nil

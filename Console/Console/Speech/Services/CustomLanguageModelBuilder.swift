@@ -120,8 +120,6 @@ final class CustomLanguageModelBuilder {
     private func compile(from snapshot: VocabularySnapshot) async throws -> URL {
         let start = CFAbsoluteTimeGetCurrent()
 
-        cleanupExistingModel()
-
         let modelData = SFCustomLanguageModelData(
             locale: Locale(identifier: "en-US"),
             identifier: "com.console.customlm",
@@ -142,19 +140,23 @@ final class CustomLanguageModelBuilder {
         }
 
         try FileManager.default.createDirectory(at: modelDirectoryURL, withIntermediateDirectories: true)
-        try await modelData.export(to: compiledModelFileURL)
+
+        // Export to a staging file and only replace the live model on success,
+        // so a failed export leaves the previous model in place.
+        let stagingURL = modelDirectoryURL
+            .appendingPathComponent("console-staging-\(UUID().uuidString)")
+            .appendingPathExtension("clm")
+        defer { try? FileManager.default.removeItem(at: stagingURL) }
+        try await modelData.export(to: stagingURL)
+        if FileManager.default.fileExists(atPath: compiledModelFileURL.path) {
+            try FileManager.default.removeItem(at: compiledModelFileURL)
+        }
+        try FileManager.default.moveItem(at: stagingURL, to: compiledModelFileURL)
 
         let elapsed = Int((CFAbsoluteTimeGetCurrent() - start) * 1000)
         printDebug("[CustomLM] Compilation succeeded in \(elapsed)ms — model at \(compiledModelFileURL.path)")
 
         return compiledModelFileURL
-    }
-
-    private func cleanupExistingModel() {
-        let url = compiledModelFileURL
-        if FileManager.default.fileExists(atPath: url.path) {
-            try? FileManager.default.removeItem(at: url)
-        }
     }
 
     // MARK: - Vocabulary Collection

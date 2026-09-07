@@ -16,6 +16,7 @@ final class SourceCheckoutServiceTests: XCTestCase {
 
         private(set) var invocations: [Invocation] = []
         var exitCode: Int32 = 0
+        var standardOutput = ""
         var standardError = ""
         /// Called before returning; lets a test simulate the effect of the command.
         var sideEffect: ((Invocation) -> Void)?
@@ -34,7 +35,7 @@ final class SourceCheckoutServiceTests: XCTestCase {
             _ = deadline
             return ProcessResult(
                 exitCode: exitCode,
-                standardOutput: "",
+                standardOutput: standardOutput,
                 standardError: standardError
             )
         }
@@ -155,6 +156,7 @@ final class SourceCheckoutServiceTests: XCTestCase {
 
     func testPrepareReusesExistingCheckoutHoldingTheTag() async throws {
         let runner = FakeProcessRunner()
+        runner.standardOutput = "aaa111\naaa111\n"
         let service = makeService(runner: runner)
         let destination = try XCTUnwrap(service.destinationPath(for: "v1.2.3"))
 
@@ -171,6 +173,47 @@ final class SourceCheckoutServiceTests: XCTestCase {
             "-C",
             "existing checkouts are verified in-place"
         )
+    }
+
+    func testPrepareRejectsExistingCheckoutWhoseHeadDiffersFromTag() async {
+        let runner = FakeProcessRunner()
+        runner.standardOutput = "aaa111\nbbb222\n"
+        let service = makeService(runner: runner)
+        let destination = workDirectory.path + "/ConsoleUpdates/Console-v1.2.6"
+
+        try? FileManager.default.createDirectory(atPath: destination + "/.git", withIntermediateDirectories: true)
+        plantXcodeProject(in: destination)
+
+        do {
+            _ = try await service.prepare(tag: "v1.2.6")
+            XCTFail("Expected destinationExists failure")
+        } catch let error as SourceCheckoutError {
+            XCTAssertEqual(error, .destinationExists(destination))
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
+
+        XCTAssertNil(runner.cloneArguments, "a HEAD/tag mismatch must not trigger a clone")
+    }
+
+    func testPrepareRejectsExistingCheckoutWithUnresolvableHEAD() async {
+        let runner = FakeProcessRunner()
+        runner.exitCode = 128
+        runner.standardOutput = ""
+        let service = makeService(runner: runner)
+        let destination = workDirectory.path + "/ConsoleUpdates/Console-v1.2.7"
+
+        try? FileManager.default.createDirectory(atPath: destination + "/.git", withIntermediateDirectories: true)
+        plantXcodeProject(in: destination)
+
+        do {
+            _ = try await service.prepare(tag: "v1.2.7")
+            XCTFail("Expected destinationExists failure")
+        } catch let error as SourceCheckoutError {
+            XCTAssertEqual(error, .destinationExists(destination))
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
     }
 
     func testPrepareRejectsExistingFolderWithoutValidCheckout() async {

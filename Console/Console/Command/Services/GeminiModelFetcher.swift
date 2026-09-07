@@ -2,6 +2,7 @@ import Foundation
 
 struct GeminiModelFetcher: ModelFetcher {
     let apiKey: String
+    let provider: AIProvider
 
     private static let displayNames: [String: String] = [
         "gemini-2.0-flash": "Gemini 2.0 Flash",
@@ -13,6 +14,7 @@ struct GeminiModelFetcher: ModelFetcher {
 
     init(apiKey: String, config: AIProviderConfig) {
         self.apiKey = apiKey
+        self.provider = config.provider
     }
 
     func fetchAvailableModels() async throws -> [AvailableModel] {
@@ -22,7 +24,7 @@ struct GeminiModelFetcher: ModelFetcher {
         var request = URLRequest(url: url, timeoutInterval: 15)
         request.httpMethod = "GET"
 
-        let (data, response) = try await performProviderGETRequest(request)
+        let (data, response) = try await performProviderGETRequest(request, provider: provider)
         let httpResponse = response as? HTTPURLResponse
 
         switch httpResponse?.statusCode {

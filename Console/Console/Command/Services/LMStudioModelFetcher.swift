@@ -2,9 +2,11 @@ import Foundation
 
 /// Fetches downloaded LLMs from LM Studio's native `GET /api/v1/models` endpoint.
 struct LMStudioModelFetcher: ModelFetcher {
+    let provider: AIProvider
     let endpointURL: String
 
     init(config: AIProviderConfig) {
+        self.provider = config.provider
         self.endpointURL = config.endpointURL
     }
 
@@ -17,7 +19,7 @@ struct LMStudioModelFetcher: ModelFetcher {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await performProviderGETRequest(request)
+            (data, response) = try await performProviderGETRequest(request, provider: provider)
         } catch let error as ModelFetchError {
             if case .networkError(let underlying) = error, LMStudioAPI.isUnreachable(underlying) {
                 throw ModelFetchError.serverUnreachable

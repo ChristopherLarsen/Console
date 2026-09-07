@@ -47,6 +47,7 @@ struct AIProviderConfigSection: View {
     @State private var focusModelPicker = false
     @State private var lastSavedAPIKey: String = ""
     @State private var hasEnteredAPIKey: Bool = false
+    @State private var apiKeySaveTask: Task<Void, Never>?
     @AppStorage("hasGrantedKeychainAccess") private var hasGrantedKeychainAccess = false
 
     var body: some View {
@@ -326,6 +327,9 @@ struct AIProviderConfigSection: View {
         testResult = .testing
         Task {
             saveConfigValues()
+            // An un-awaited Keychain save from saveConfigValues must land
+            // before the test reads the key back from the Keychain.
+            await apiKeySaveTask?.value
             let result = await aiProviderManager.testConnection(for: provider)
             testResult = result
             if result.isSuccess {
@@ -363,7 +367,7 @@ struct AIProviderConfigSection: View {
 
         let keyToSave = apiKey
         lastSavedAPIKey = keyToSave
-        Task {
+        apiKeySaveTask = Task {
             let result = await aiProviderManager.saveAPIKeyToKeychain(keyToSave, for: provider)
             if case .failure(let error) = result {
                 lastSavedAPIKey = ""
@@ -373,8 +377,15 @@ struct AIProviderConfigSection: View {
     }
 
     private func fetchAvailableModels() async {
+        let config = aiProviderManager.config(for: provider)
+        let effectiveKey = aiProviderManager.effectiveAPIKey(stored: apiKey.isEmpty ? nil : apiKey, for: provider)
+
         // Return cached models if available
-        if let cached = ModelCacheManager.shared.getCachedModels(for: provider) {
+        if let cached = ModelCacheManager.shared.getCachedModels(
+            for: provider,
+            endpointURL: config.endpointURL,
+            apiKey: effectiveKey
+        ) {
             availableModels = cached
             modelFetchStatus = .success
             return
@@ -382,8 +393,6 @@ struct AIProviderConfigSection: View {
 
         modelFetchStatus = .fetching
 
-        let config = aiProviderManager.config(for: provider)
-        let effectiveKey = aiProviderManager.effectiveAPIKey(stored: apiKey.isEmpty ? nil : apiKey, for: provider)
         guard let fetcher = ModelFetcherFactory.makeFetcher(
             provider: provider,
             apiKey: effectiveKey,
@@ -398,7 +407,12 @@ struct AIProviderConfigSection: View {
         for attempt in 0...maxRetries {
             do {
                 let models = try await fetcher.fetchAvailableModels()
-                ModelCacheManager.shared.cacheModels(models, for: provider)
+                ModelCacheManager.shared.cacheModels(
+                    models,
+                    for: provider,
+                    endpointURL: config.endpointURL,
+                    apiKey: effectiveKey
+                )
                 availableModels = models
                 modelFetchStatus = .success
                 return

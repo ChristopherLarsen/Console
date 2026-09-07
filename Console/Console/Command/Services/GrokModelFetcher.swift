@@ -3,6 +3,7 @@ import Foundation
 // Last updated: 2026-02-10. Check https://docs.x.ai/docs for new models.
 struct GrokModelFetcher: ModelFetcher {
     let apiKey: String
+    let provider: AIProvider
     let baseURL: String
 
     // Fallback list when /v1/models is unavailable
@@ -14,6 +15,7 @@ struct GrokModelFetcher: ModelFetcher {
 
     init(apiKey: String, config: AIProviderConfig) {
         self.apiKey = apiKey
+        self.provider = config.provider
         self.baseURL = config.endpointURL
             .replacingOccurrences(of: "/chat/completions", with: "")
     }
@@ -31,7 +33,7 @@ struct GrokModelFetcher: ModelFetcher {
         var request = URLRequest(url: url, timeoutInterval: 15)
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
-        let (data, response) = try await performProviderGETRequest(request)
+        let (data, response) = try await performProviderGETRequest(request, provider: provider)
         let httpResponse = response as? HTTPURLResponse
 
         switch httpResponse?.statusCode {

@@ -57,6 +57,7 @@ KEYCHAIN_ACCOUNTS=(
     "lemon-squeezy-license-key"
     "lemon-squeezy-instance-id"
     "ai-provider-openai"
+    "ai-provider-openAI"
     "ai-provider-claude"
     "ai-provider-gemini"
     "ai-provider-grok"

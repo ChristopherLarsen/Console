@@ -42,27 +42,29 @@ final class RateLimiter: @unchecked Sendable {
 // MARK: - Shared Networking
 
 /// Records last provider HTTP outcome on the shared AIProviderManager (no-op if unset).
-func recordProviderRequestOutcome(success: Bool) {
+/// Outcomes are bound to the provider that issued the request so a late result
+/// can never paint a newly selected provider.
+func recordProviderRequestOutcome(success: Bool, provider: AIProvider) {
     Task { @MainActor in
-        AppDependencies.shared.aiProviderManager?.recordLastRequest(success: success)
+        AppDependencies.shared.aiProviderManager?.recordLastRequest(success: success, for: provider)
     }
 }
 
 /// Shared GET helper for model-list fetchers. Records 2xx vs failure before returning.
-func performProviderGETRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
+func performProviderGETRequest(_ request: URLRequest, provider: AIProvider) async throws -> (Data, URLResponse) {
     let data: Data
     let response: URLResponse
     do {
         (data, response) = try await URLSession.shared.data(for: request)
     } catch {
-        recordProviderRequestOutcome(success: false)
+        recordProviderRequestOutcome(success: false, provider: provider)
         throw ModelFetchError.networkError(error)
     }
 
     if let http = response as? HTTPURLResponse {
-        recordProviderRequestOutcome(success: (200..<300).contains(http.statusCode))
+        recordProviderRequestOutcome(success: (200..<300).contains(http.statusCode), provider: provider)
     } else {
-        recordProviderRequestOutcome(success: false)
+        recordProviderRequestOutcome(success: false, provider: provider)
     }
 
     return (data, response)
@@ -72,6 +74,7 @@ private func performHTTPRequest(
     url: URL,
     headers: [String: String],
     body: [String: Any],
+    provider: AIProvider,
     timeout: TimeInterval = 30
 ) async throws -> Data {
     var request = URLRequest(url: url)
@@ -89,17 +92,17 @@ private func performHTTPRequest(
     do {
         (data, response) = try await URLSession.shared.data(for: request)
     } catch {
-        recordProviderRequestOutcome(success: false)
+        recordProviderRequestOutcome(success: false, provider: provider)
         throw LLMGeneratorError.networkError(error)
     }
 
     guard let http = response as? HTTPURLResponse else {
-        recordProviderRequestOutcome(success: false)
+        recordProviderRequestOutcome(success: false, provider: provider)
         throw LLMGeneratorError.apiError("Invalid response")
     }
 
     guard (200..<300).contains(http.statusCode) else {
-        recordProviderRequestOutcome(success: false)
+        recordProviderRequestOutcome(success: false, provider: provider)
         let message = String(data: data, encoding: .utf8) ?? "Unknown error"
 
         if http.statusCode == 429 {
@@ -108,7 +111,7 @@ private func performHTTPRequest(
         throw LLMGeneratorError.apiError("[\(http.statusCode)] \(message)")
     }
 
-    recordProviderRequestOutcome(success: true)
+    recordProviderRequestOutcome(success: true, provider: provider)
     return data
 }
 
@@ -141,7 +144,7 @@ struct OpenAIClient: LLMClient {
             "Content-Type": "application/json"
         ]
 
-        let data = try await performHTTPRequest(url: url, headers: headers, body: body)
+        let data = try await performHTTPRequest(url: url, headers: headers, body: body, provider: config.provider)
         return try extractOpenAIText(data)
     }
 
@@ -185,7 +188,7 @@ struct ClaudeClient: LLMClient {
             "Content-Type": "application/json"
         ]
 
-        let data = try await performHTTPRequest(url: url, headers: headers, body: body)
+        let data = try await performHTTPRequest(url: url, headers: headers, body: body, provider: config.provider)
         return try extractClaudeText(data)
     }
 
@@ -231,7 +234,7 @@ struct GeminiClient: LLMClient {
 
         let headers = ["Content-Type": "application/json"]
 
-        let data = try await performHTTPRequest(url: url, headers: headers, body: body)
+        let data = try await performHTTPRequest(url: url, headers: headers, body: body, provider: config.provider)
         return try extractGeminiText(data)
     }
 
@@ -276,7 +279,7 @@ struct GrokClient: LLMClient {
             "Content-Type": "application/json"
         ]
 
-        let data = try await performHTTPRequest(url: url, headers: headers, body: body)
+        let data = try await performHTTPRequest(url: url, headers: headers, body: body, provider: config.provider)
         return try extractGrokText(data)
     }
 
@@ -348,7 +351,7 @@ struct LMStudioClient: LLMClient {
             headers["Authorization"] = "Bearer \(apiKey)"
         }
 
-        return try await performHTTPRequest(url: url, headers: headers, body: body, timeout: 120)
+        return try await performHTTPRequest(url: url, headers: headers, body: body, provider: config.provider, timeout: 120)
     }
 }
 

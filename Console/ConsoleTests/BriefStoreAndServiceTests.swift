@@ -231,6 +231,44 @@ final class BriefStoreAndServiceTests: XCTestCase {
         XCTAssertTrue(regenerated.yesterdayLines.contains(where: { $0.contains("Second collect") }))
     }
 
+    func testCrossServiceOperationSupersedesSharedStoreWrite() async throws {
+        // Bootstrap (ConsoleApp) and the Brief panel each construct their own
+        // service over the same on-disk store. The panel's later operation
+        // must supersede the bootstrap's in-flight generate.
+        let collector = SuspendableActivityCollector(
+            activities: [CommitActivity(repositoryName: "Repo", subject: "Bootstrap collect", committedAt: startOfDay(-1))]
+        )
+        let bootstrapService = BriefGenerationService(store: store, collector: collector)
+        let panelService = BriefGenerationService(store: store, collector: collector)
+        let today = startOfDay(0)
+
+        let bootstrapToken = bootstrapService.beginOperation(.generate, for: today)
+        let bootstrapTask = Task {
+            await bootstrapService.regenerate(for: today, workspacePaths: ["/tmp/Repo"], token: bootstrapToken)
+        }
+        await waitUntil { collector.pendingCount == 1 }
+
+        collector.activities = [
+            CommitActivity(repositoryName: "Repo", subject: "Panel collect", committedAt: startOfDay(-1))
+        ]
+        let panelTask = Task {
+            await panelService.ensureBrief(for: today, workspacePaths: ["/tmp/Repo"])
+        }
+        await waitUntil { collector.pendingCount == 2 }
+
+        collector.releaseOldest()
+        let bootstrapOutcome = await bootstrapTask.value
+        XCTAssertEqual(bootstrapOutcome, .superseded)
+
+        collector.releaseOldest()
+        let panelBrief = await panelTask.value
+        XCTAssertTrue(panelBrief.yesterdayLines.contains(where: { $0.contains("Panel collect") }))
+
+        let onDisk = try XCTUnwrap(store.load(forDay: today))
+        XCTAssertTrue(onDisk.yesterdayLines.contains(where: { $0.contains("Panel collect") }))
+        XCTAssertFalse(onDisk.yesterdayLines.contains(where: { $0.contains("Bootstrap collect") }))
+    }
+
     func testPreviousDayGenerationDoesNotReplaceTodaysStoredBrief() async throws {
         let collector = SuspendableActivityCollector(
             activities: [CommitActivity(repositoryName: "Repo", subject: "Yesterday collect", committedAt: startOfDay(-2))]
