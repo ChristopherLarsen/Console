@@ -112,13 +112,20 @@ nonisolated enum IOSProjectFileSearch {
     }
 
     /// Auto-select only when the choice is unambiguous: a single usable
-    /// candidate, or a unique `.xcworkspace` next to its project (CocoaPods).
+    /// candidate, or a unique `.xcworkspace` paired with its one project
+    /// beside it (CocoaPods). Any extra usable project keeps the choice with
+    /// the user instead of guessing.
     static func preferredCandidate(from candidates: [IOSProjectCandidate]) -> IOSProjectCandidate? {
         let usable = usableCandidates(from: candidates)
         if usable.count == 1 { return usable[0] }
         let workspaces = usable.filter { $0.kind == .workspace }
-        if workspaces.count == 1 { return workspaces[0] }
-        return nil
+        let projects = usable.filter { $0.kind == .project }
+        guard workspaces.count == 1, projects.count == 1 else { return nil }
+        let workspace = workspaces[0]
+        let project = projects[0]
+        guard workspace.parentDirectoryPath == project.parentDirectoryPath,
+              workspace.displayName == project.displayName else { return nil }
+        return workspace
     }
 
     static func isDependencyProject(_ candidate: IOSProjectCandidate) -> Bool {
@@ -446,7 +453,9 @@ nonisolated struct IOSProjectDiscovery {
                     listing: .failed,
                     destinations: .failed
                 ),
-                errorMessage: IOSProjectDiscoveryError.folderUnavailable(folder.path).localizedDescription
+                errorMessage: IOSProjectDiscoveryError.folderUnavailable(folder.path).localizedDescription,
+                listingLookup: .failed,
+                destinationLookup: .failed
             )
         }
 
@@ -520,7 +529,9 @@ nonisolated struct IOSProjectDiscovery {
             listing: listing,
             destinations: destinations,
             repair: repair,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            listingLookup: listingLookup,
+            destinationLookup: destinationLookup
         )
     }
 
@@ -538,7 +549,9 @@ nonisolated struct IOSProjectDiscovery {
                 listing: .failed,
                 destinations: .failed
             ),
-            errorMessage: IOSProjectDiscoveryError.cancelled.localizedDescription
+            errorMessage: IOSProjectDiscoveryError.cancelled.localizedDescription,
+            listingLookup: .failed,
+            destinationLookup: .failed
         )
     }
 

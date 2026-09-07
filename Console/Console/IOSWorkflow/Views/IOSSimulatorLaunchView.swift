@@ -20,7 +20,7 @@ struct IOSSimulatorLaunchView: View {
                 Button("Open Simulator") {
                     model.openSimulator(udid: selectedUDID)
                 }
-                .disabled(selectedUDID == nil)
+                .disabled(selectedUDID == nil || model.isInstalling)
                 .accessibilityIdentifier("Settings.IOS.Simulator.Open")
 
                 Button("Install & Launch") {
@@ -76,6 +76,9 @@ struct IOSSimulatorLaunchView: View {
     }
 
     private var selectedUDID: String? {
+        if model.isInstalling, let udid = model.activeInstallUDID {
+            return udid
+        }
         guard let workspaceID else { return nil }
         return profileStore.profile(for: workspaceID)?.simulatorUDID
     }
@@ -90,6 +93,7 @@ struct IOSSimulatorLaunchView: View {
                 Text("\(udid) (unavailable)").tag(Optional(udid))
             }
         }
+        .disabled(model.isInstalling)
         .accessibilityIdentifier("Settings.IOS.Simulator.Picker")
     }
 

@@ -223,8 +223,21 @@ final class IOSBuildCoordinator {
     }
 
     private func finish(_ id: UUID, result: ProcessResult) async {
+        // A Stop that lands after the process exits — before or during result
+        // parsing — must take the cancelled path, not succeed/fail from the
+        // exit code.
+        let wasCancelled = cancelledIDs.contains(id)
+        let summary: IOSResultSummary?
+        if wasCancelled {
+            summary = nil
+        } else {
+            summary = await parseResults(for: id)
+        }
+        guard !cancelledIDs.contains(id) else {
+            complete(id, state: .cancelled, errorMessage: "The job was cancelled.")
+            return
+        }
         let processState: IOSBuildJobState = result.exitCode == 0 ? .succeeded : .failed
-        let summary = await parseResults(for: id)
         let state = IOSBuildJob.resolvedState(processState: processState, resultSummary: summary)
         var errorMessage: String?
         if processState == .succeeded, state == .failed {
@@ -234,7 +247,17 @@ final class IOSBuildCoordinator {
     }
 
     private func finish(_ id: UUID, error: Error) async {
-        let summary = await parseResults(for: id)
+        let wasCancelled = cancelledIDs.contains(id)
+        let summary: IOSResultSummary?
+        if wasCancelled {
+            summary = nil
+        } else {
+            summary = await parseResults(for: id)
+        }
+        guard !cancelledIDs.contains(id) else {
+            complete(id, state: .cancelled, errorMessage: "The job was cancelled.")
+            return
+        }
         if let processError = error as? ProcessRunError {
             switch processError {
             case .cancelled:

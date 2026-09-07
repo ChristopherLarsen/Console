@@ -210,8 +210,12 @@ nonisolated final class ProcessInvocation: @unchecked Sendable {
     private var launched = false
     private var stopReason: ProcessStopReason?
     private var rememberedPIDs = Set<pid_t>()
+    private var pidIdentities: [pid_t: UInt64] = [:]
+    private var exitPredatedStop = false
+    private var eofDrainExpired = false
     private var deadlineWork: DispatchWorkItem?
     private var forceStopWork: DispatchWorkItem?
+    private var eofDrainWork: DispatchWorkItem?
     private var continuation: CheckedContinuation<ProcessResult, Error>?
 
     init(
@@ -318,16 +322,30 @@ nonisolated final class ProcessInvocation: @unchecked Sendable {
         signalOwnedTree(root: pid, signal: SIGKILL)
     }
 
+    /// Signals only PIDs whose recorded start-time identity still matches, so
+    /// a recycled PID is never signaled on a later stop pass.
     private func signalOwnedTree(root: pid_t, signal: Int32) {
-        let extra: Set<pid_t> = {
-            lock.lock()
-            let remembered = rememberedPIDs
-            lock.unlock()
-            return remembered
-        }()
-        let signaled = OwnedProcessTree.signalOwned(root: root, signal: signal, extra: extra)
+        lock.lock()
+        let remembered = rememberedPIDs
+        let identities = pidIdentities
+        lock.unlock()
+
+        let liveExtras = remembered.filter { pid in
+            guard let expected = identities[pid] else { return false }
+            return OwnedProcessTree.identity(of: pid) == expected
+        }
+
+        var validRoot: pid_t? = root
+        if let expected = identities[root] {
+            validRoot = OwnedProcessTree.identity(of: root) == expected ? root : nil
+        }
+
+        let signaled = OwnedProcessTree.signalOwned(root: validRoot ?? 0, signal: signal, extra: liveExtras)
         lock.lock()
         rememberedPIDs.formUnion(signaled)
+        for pid in signaled where pidIdentities[pid] == nil {
+            pidIdentities[pid] = OwnedProcessTree.identity(of: pid)
+        }
         lock.unlock()
     }
 
@@ -402,6 +420,9 @@ nonisolated final class ProcessInvocation: @unchecked Sendable {
 
         lock.lock()
         launched = true
+        pidIdentities[process.processIdentifier] = OwnedProcessTree.identity(
+            of: process.processIdentifier
+        )
         let pendingStop = stopReason
         lock.unlock()
 
@@ -448,16 +469,44 @@ nonisolated final class ProcessInvocation: @unchecked Sendable {
         lock.lock()
         terminated = true
         self.process = process
+        exitPredatedStop = (stopReason == nil)
+        scheduleEOFDrainGraceLocked()
         finishIfCompleteLocked()
+    }
+
+    /// The direct child has exited, but descendants may still hold the pipe
+    /// write-ends. Bound the remaining wait so callers cannot hang forever.
+    /// Caller must hold `lock`.
+    private func scheduleEOFDrainGraceLocked() {
+        guard eofDrainWork == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            guard !self.didFinish else {
+                self.lock.unlock()
+                return
+            }
+            self.eofDrainExpired = true
+            self.finishIfCompleteLocked()
+        }
+        eofDrainWork = work
+        let grace = forceStopGrace
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+            deadline: .now() + grace,
+            execute: work
+        )
     }
 
     /// Caller must hold `lock`. Unlocks before resuming the continuation.
     private func finishIfCompleteLocked() {
-        guard terminated, stdoutEOF, stderrEOF else {
+        guard terminated, (stdoutEOF && stderrEOF) || eofDrainExpired else {
             lock.unlock()
             return
         }
-        if let reason = stopReason {
+        // A stop requested while the process was running intentionally killed
+        // it; a stop that raced with (or followed) an already-clean exit must
+        // not rewrite success as cancelled/timedOut.
+        if let reason = stopReason, !exitPredatedStop {
             finishLocked(.failure(reason.error))
             return
         }
@@ -491,8 +540,10 @@ nonisolated final class ProcessInvocation: @unchecked Sendable {
         process?.terminationHandler = nil
         deadlineWork?.cancel()
         forceStopWork?.cancel()
+        eofDrainWork?.cancel()
         deadlineWork = nil
         forceStopWork = nil
+        eofDrainWork = nil
         let continuation = self.continuation
         self.continuation = nil
         lock.unlock()
@@ -529,6 +580,18 @@ enum OwnedProcessTree {
     static func isRunning(_ pid: pid_t) -> Bool {
         guard pid > 1 else { return false }
         return kill(pid, 0) == 0
+    }
+
+    /// Stable start-time identity for a PID. A PID whose current identity
+    /// differs from the recorded one was recycled and must not be signaled.
+    static func identity(of pid: pid_t) -> UInt64? {
+        guard pid > 1 else { return nil }
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
+        let result = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size)
+        guard result == size else { return nil }
+        return UInt64(info.pbi_start_tvsec) &* 1_000_000_000
+            &+ UInt64(info.pbi_start_tvusec)
     }
 
     static func descendantIDs(of root: pid_t) -> Set<pid_t> {

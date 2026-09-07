@@ -411,6 +411,26 @@ final class SimulatorServiceTests: XCTestCase {
         XCTAssertFalse(invocation.arguments.contains(bootedOtherUDID))
     }
 
+    func testResolveProductUsesInstallDestinationUDIDOverJobSnapshot() async throws {
+        let appURL = try plantApp(named: "App.app", bundleIdentifier: "com.console.synthetic.app")
+        runner.buildSettingsJSON = Self.buildSettingsJSON(
+            target: "App",
+            appPath: appURL.path,
+            bundleID: "com.console.synthetic.app"
+        )
+        let job = succeededJob()
+
+        _ = try await service.resolveProduct(from: job, destinationUDID: bootedOtherUDID)
+
+        let invocation = try XCTUnwrap(runner.invocations.first { $0.kind == .showBuildSettings })
+        XCTAssertTrue(invocation.arguments.contains("platform=iOS Simulator,id=\(bootedOtherUDID)"))
+        XCTAssertFalse(invocation.arguments.contains("platform=iOS Simulator,id=\(selectedUDID)"))
+
+        _ = try await service.resolveProduct(from: job)
+        let fallback = runner.invocations.filter { $0.kind == .showBuildSettings }.last
+        XCTAssertTrue(try XCTUnwrap(fallback).arguments.contains("platform=iOS Simulator,id=\(selectedUDID)"))
+    }
+
     func testProductFallsBackToBuildSettingsBundleIDWhenPlistMissing() async throws {
         let bare = tmpRoot.appendingPathComponent("Bare.app")
         try FileManager.default.createDirectory(at: bare, withIntermediateDirectories: true)

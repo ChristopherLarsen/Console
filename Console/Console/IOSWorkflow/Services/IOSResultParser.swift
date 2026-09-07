@@ -366,7 +366,7 @@ struct IOSResultParser: IOSResultParsing, Sendable {
         let failedCount = intValue(json["failedTests"]) ?? failures.count
         let issues: [IOSResultIssue] = failures.prefix(IOSResultSummary.maxIssues).map { item in
             let identifier = stringValue(item["testIdentifierString"])
-                ?? stringValue(item["testIdentifierURL"])
+                ?? Self.normalizedTestIdentifier(stringValue(item["testIdentifierURL"]))
             return IOSResultIssue(
                 kind: .testFailure,
                 message: stringValue(item["failureText"])
@@ -379,6 +379,16 @@ struct IOSResultParser: IOSResultParsing, Sendable {
         }
         let outcome = outcome(fromStatus: stringValue(json["result"]), failingCount: failedCount)
         return (issues, outcome, failedCount)
+    }
+
+    /// `test://` identifier URLs and slash-style identifiers must map to the
+    /// same key so source-location merging (and rerun) treat them alike.
+    static func normalizedTestIdentifier(_ raw: String?) -> String? {
+        guard let raw,
+              let components = URLComponents(string: raw),
+              components.scheme == "test" else { return raw }
+        let path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return path.isEmpty ? nil : path
     }
 
     static func sourceLocationsByTestIdentifier(from json: [String: Any]) -> [String: (fileURL: URL?, line: Int?)] {
@@ -415,8 +425,8 @@ struct IOSResultParser: IOSResultParsing, Sendable {
             visited += 1
             guard let object = node as? [String: Any] else { continue }
             let nodeType = stringValue(object["nodeType"]) ?? ""
-            let currentIdentifier = stringValue(object["nodeIdentifier"])
-                ?? stringValue(object["nodeIdentifierURL"])
+            let currentIdentifier = Self.normalizedTestIdentifier(stringValue(object["nodeIdentifier"]))
+                ?? Self.normalizedTestIdentifier(stringValue(object["nodeIdentifierURL"]))
                 ?? identifier
 
             if nodeType == "Source Code Reference", let currentIdentifier {

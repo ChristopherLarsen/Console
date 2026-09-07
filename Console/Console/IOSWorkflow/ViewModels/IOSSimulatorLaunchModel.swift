@@ -16,6 +16,9 @@ final class IOSSimulatorLaunchModel {
     private(set) var devices: [SimulatorDevice] = []
     private(set) var phase: Phase = .idle
     private(set) var listError: String?
+    /// UDID captured when the current install started. UI state must show
+    /// this device while the install is in flight, not a live re-read.
+    private(set) var activeInstallUDID: String?
 
     private let service: SimulatorService
     private var generation = 0
@@ -132,6 +135,7 @@ final class IOSSimulatorLaunchModel {
         installTask?.cancel()
         listError = nil
         phase = .running(.resolvingProduct)
+        activeInstallUDID = udid
         let service = self.service
         installTask = Task { [weak self] in
             await self?.performInstall(job: job, udid: udid, service: service)
@@ -155,15 +159,19 @@ final class IOSSimulatorLaunchModel {
         installTask?.cancel()
         listError = nil
         phase = .running(.resolvingProduct)
+        activeInstallUDID = udid
         await performInstall(job: job, udid: udid, service: service)
     }
 
     func cancelWaiting() {
         guard isInstalling else { return }
+        activeInstallUDID = nil
         installTask?.cancel()
     }
 
     func openSimulator(udid: String?) {
+        // An Open failure must not rewrite the phase of an in-flight install.
+        guard !isInstalling else { return }
         guard let udid = IOSProjectProfile.nilIfEmpty(udid) else {
             phase = .failed(SimulatorServiceError.missingSimulator.localizedDescription)
             return
@@ -184,12 +192,14 @@ final class IOSSimulatorLaunchModel {
         installTask?.cancel()
         listTask = nil
         installTask = nil
+        activeInstallUDID = nil
         if isListing || isInstalling {
             phase = .idle
         }
     }
 
     private func performInstall(job: IOSBuildJob, udid: String, service: SimulatorService) async {
+        defer { activeInstallUDID = nil }
         do {
             let result = try await service.installAndLaunch(job: job, udid: udid) { [weak self] step in
                 Task { @MainActor in

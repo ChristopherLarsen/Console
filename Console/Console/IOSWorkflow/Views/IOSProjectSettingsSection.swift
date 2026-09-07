@@ -116,7 +116,8 @@ struct IOSProjectSettingsSection: View {
             ForEach(simulatorOptions(for: workspace), id: \.id) { destination in
                 Text(destination.displayName).tag(Optional(destination.udid))
             }
-            if let udid = profileStore.profile(for: workspace.id)?.simulatorUDID,
+            if model.destinationsLookupSucceeded,
+               let udid = profileStore.profile(for: workspace.id)?.simulatorUDID,
                !model.destinations.contains(where: { $0.udid == udid }) {
                 Text("\(udid) (unavailable)").tag(Optional(udid))
             }

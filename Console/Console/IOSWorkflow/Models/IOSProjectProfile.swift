@@ -64,6 +64,10 @@ nonisolated struct IOSProjectCandidate: Equatable, Sendable, Identifiable {
         URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
     }
 
+    var parentDirectoryPath: String {
+        URL(fileURLWithPath: path).deletingLastPathComponent().path
+    }
+
     var filename: String {
         URL(fileURLWithPath: path).lastPathComponent
     }
@@ -124,6 +128,10 @@ nonisolated struct IOSDiscoveryRefreshResult: Equatable, Sendable {
     var destinations: [IOSSimulatorDestination]
     var repair: IOSProfileRepair.Outcome
     var errorMessage: String?
+    /// Raw lookup statuses so consumers can tell "confirmed unavailable"
+    /// apart from "the lookup itself failed or was skipped".
+    var listingLookup: IOSLookup<IOSProjectListing> = .skipped
+    var destinationLookup: IOSLookup<[IOSSimulatorDestination]> = .skipped
 }
 
 nonisolated enum IOSProfileRepair {

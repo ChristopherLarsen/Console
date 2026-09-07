@@ -76,6 +76,20 @@ final class IOSBuildJobViewTests: XCTestCase {
         XCTAssertEqual(presentation.resultURL, bundle)
     }
 
+    func testParsedSummarySurfacesPartialParseDiagnostic() {
+        let diagnostic = "xcresulttool test-results summary JSON did not match the expected schema."
+        let job = makeJob(
+            state: .succeeded,
+            kind: .build,
+            exitCode: 0,
+            summary: .parsed(outcome: .succeeded, issues: [], diagnosticMessage: diagnostic)
+        )
+        let presentation = present(job)
+
+        XCTAssertEqual(presentation.state, .succeeded)
+        XCTAssertEqual(presentation.diagnosticText, diagnostic)
+    }
+
     func testCompileFailurePresentationAndOpenSource() {
         let source = URL(fileURLWithPath: "/tmp/App/ContentView.swift")
         let bundle = plantBundle("compile")

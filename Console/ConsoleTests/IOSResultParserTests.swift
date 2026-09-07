@@ -135,6 +135,33 @@ final class IOSResultParserTests: XCTestCase {
         XCTAssertEqual(summary.issues.first?.message, "failed")
     }
 
+    func testURLOnlyFailureIdentifierMergesSourceLocation() async throws {
+        let bundle = try plantBundle()
+        runner.availabilityJSON = Self.testsAvailabilityJSON
+        runner.buildJSON = Self.successfulBuildJSON
+        runner.testSummaryJSON = Self.urlOnlyFailureSummaryJSON
+        runner.testsJSON = Self.failingTestsTreeJSON
+        let summary = await parser.parseBundle(at: bundle, jobKind: .runSelectedTests)
+
+        let issue = try XCTUnwrap(summary.issues.first { $0.kind == .testFailure })
+        XCTAssertEqual(issue.testIdentifier, "AppTests/LoginTests/testLogin")
+        XCTAssertEqual(issue.fileURL?.path, "/tmp/App/LoginTests.swift")
+        XCTAssertEqual(issue.line, 42)
+    }
+
+    func testNormalizedTestIdentifierMatchesURLAndSlashForms() {
+        XCTAssertEqual(
+            IOSResultParser.normalizedTestIdentifier("test://com.apple.xcode/AppTests/LoginTests/testLogin"),
+            "AppTests/LoginTests/testLogin"
+        )
+        XCTAssertEqual(
+            IOSResultParser.normalizedTestIdentifier("AppTests/LoginTests/testLogin"),
+            "AppTests/LoginTests/testLogin"
+        )
+        XCTAssertNil(IOSResultParser.normalizedTestIdentifier("test://"))
+        XCTAssertNil(IOSResultParser.normalizedTestIdentifier(nil))
+    }
+
     func testPassedResultWithFailureWordingIsNotAFailure() async throws {
         let bundle = try plantBundle()
         runner.availabilityJSON = Self.testsAvailabilityJSON
@@ -357,6 +384,27 @@ final class IOSResultParserTests: XCTestCase {
       ],
       "warnings": [],
       "analyzerWarnings": []
+    }
+    """
+
+    private static let urlOnlyFailureSummaryJSON = """
+    {
+      "title": "Test - App",
+      "topInsights": [],
+      "result": "Failed",
+      "totalTestCount": 1,
+      "passedTests": 0,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "expectedFailures": 0,
+      "testFailures": [
+        {
+          "testName": "testLogin()",
+          "targetName": "AppTests",
+          "failureText": "failed",
+          "testIdentifierURL": "test://com.apple.xcode/AppTests/LoginTests/testLogin"
+        }
+      ]
     }
     """
 

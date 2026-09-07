@@ -229,6 +229,23 @@ final class IOSBuildCoordinatorTests: XCTestCase {
         XCTAssertEqual(runner.invocations.count, 1)
     }
 
+    func testStopAfterProcessExitDuringParseMarksJobCancelled() async throws {
+        runner.hold = true
+        parser.parseDelaySeconds = 0.4
+        let id = try coordinator.submitBuild(profile: sampleProfile())
+        try await waitUntil { self.coordinator.job(id: id)?.state == .running }
+        try await waitUntil { self.runner.invocations.count == 1 }
+        runner.releaseOne()
+        try await waitUntil { self.runner.returnedRuns == 1 }
+        // The fake process has exited; parsing is still in flight. Stop here.
+        coordinator.cancel(id)
+        let job = try await waitForJob(id)
+
+        XCTAssertEqual(job.state, .cancelled)
+        XCTAssertNil(job.exitCode)
+        XCTAssertFalse(job.output.contains("BUILD SUCCEEDED"))
+    }
+
     func testTimeoutMapsToTimedOutAndDoesNotUseOutputWording() async throws {
         runner.error = ProcessRunError.timedOut
         runner.result = ProcessResult(exitCode: 0, standardOutput: "BUILD SUCCEEDED", standardError: "")
@@ -514,6 +531,7 @@ private final class FakeBuildProcessRunner: ProcessRunning, @unchecked Sendable 
     private let lock = NSLock()
     private var invocationsStorage: [Invocation] = []
     private var releasedCount = 0
+    private var returnedRunsStorage = 0
     private var stopHolds = false
 
     var hold = false
@@ -525,6 +543,12 @@ private final class FakeBuildProcessRunner: ProcessRunning, @unchecked Sendable 
         lock.lock()
         defer { lock.unlock() }
         return invocationsStorage
+    }
+
+    var returnedRuns: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return returnedRunsStorage
     }
 
     func releaseOne() {
@@ -601,8 +625,14 @@ private final class FakeBuildProcessRunner: ProcessRunning, @unchecked Sendable 
         }
 
         if let error {
+            lock.lock()
+            returnedRunsStorage += 1
+            lock.unlock()
             throw error
         }
+        lock.lock()
+        returnedRunsStorage += 1
+        lock.unlock()
         return result
     }
 }
@@ -616,6 +646,7 @@ private final class FakeResultParser: IOSResultParsing, @unchecked Sendable {
     private let lock = NSLock()
     private var callsStorage: [Call] = []
     var summary = IOSResultSummary.parsed(outcome: .succeeded, issues: [])
+    var parseDelaySeconds: TimeInterval = 0
 
     var calls: [Call] {
         lock.lock()
@@ -627,7 +658,11 @@ private final class FakeResultParser: IOSResultParsing, @unchecked Sendable {
         lock.lock()
         callsStorage.append(Call(bundleURL: url, jobKind: jobKind))
         let summary = self.summary
+        let delay = parseDelaySeconds
         lock.unlock()
+        if delay > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        }
         return summary
     }
 }
