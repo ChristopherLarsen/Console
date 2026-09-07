@@ -66,6 +66,20 @@ final class CommandGeneratorTests: XCTestCase {
         XCTAssertEqual(result, "")
     }
 
+    func testValidateActionDescriptionKeepsSameLineBodyAfterHeader() {
+        let input = "This command will: Launch Terminal.app"
+        let result = CommandGeneratorPrompt.validateActionDescription(input)
+        XCTAssertTrue(result.hasPrefix("This command will:"))
+        XCTAssertTrue(result.contains("• Launch Terminal.app"), "same-line body must survive as a bullet, got: \(result)")
+    }
+
+    func testValidateActionDescriptionKeepsHeaderlessMultilineBody() {
+        let input = "Open Safari\nNavigate to Google"
+        let result = CommandGeneratorPrompt.validateActionDescription(input)
+        XCTAssertTrue(result.contains("• Open Safari"))
+        XCTAssertTrue(result.contains("• Navigate to Google"))
+    }
+
     func testValidateActionDescriptionTrimsWhitespace() {
         let input = "  This command will:\n• Do something  "
         let result = CommandGeneratorPrompt.validateActionDescription(input)

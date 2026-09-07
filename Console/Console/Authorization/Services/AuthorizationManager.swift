@@ -18,8 +18,7 @@ final class AuthorizationManager: CommandAuthorizing {
     private var timeoutTask: Task<Void, Never>?
 
     private var timeoutSeconds: TimeInterval {
-        let stored = UserDefaults.standard.integer(forKey: "authorizationTimeoutSeconds")
-        return stored > 0 ? TimeInterval(stored) : 15
+        AppSettings().authorizationTimeout
     }
 
     var isVoiceOnly: Bool {

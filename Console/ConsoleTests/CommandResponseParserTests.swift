@@ -72,6 +72,90 @@ final class CommandResponseParserTests: XCTestCase {
         XCTAssertTrue(command.actionDescription.isEmpty)
     }
 
+    // MARK: - Execution Mode Inference (H08-F01)
+
+    func testPureAppleScriptWithoutExecutionModeInfersAppleScript() throws {
+        let json = """
+        {
+          "name": "empty_trash",
+          "actions": [
+            { "type": "appleScript", "payload": "tell application \\"Finder\\" to empty the trash", "order": 0 }
+          ]
+        }
+        """
+        let command = try CommandResponseParser.parse(json)
+        XCTAssertEqual(command.executionMode, .appleScript)
+        XCTAssertEqual(command.actions.count, 1)
+    }
+
+    func testAppleScriptPlusShellStillInfersMixed() throws {
+        let json = """
+        {
+          "name": "combo",
+          "actions": [
+            { "type": "shell", "payload": "open -a Safari", "order": 0 },
+            { "type": "appleScript", "payload": "tell application \\"Safari\\" to reload", "order": 1 }
+          ]
+        }
+        """
+        let command = try CommandResponseParser.parse(json)
+        XCTAssertEqual(command.executionMode, .mixed)
+    }
+
+    // MARK: - Malformed Actions (H08-F02)
+
+    func testMalformedActionThrowsInsteadOfDropping() throws {
+        let json = """
+        {
+          "name": "two_steps",
+          "actions": [
+            { "type": "shell", "payload": "open -a Safari", "order": 0 },
+            { "type": "notARealType", "payload": "whatever", "order": 1 }
+          ]
+        }
+        """
+        XCTAssertThrowsError(try CommandResponseParser.parse(json)) { error in
+            guard case LLMGeneratorError.decodingFailed = error else {
+                return XCTFail("Expected decodingFailed, got \(error)")
+            }
+        }
+    }
+
+    // MARK: - Whitespace-Only Fields (H08-F04)
+
+    func testWhitespaceOnlyShortSummaryFallsBackToName() throws {
+        let json = makeJSON(shortSummary: "   ")
+        let command = try CommandResponseParser.parse(json)
+        XCTAssertEqual(command.shortSummary, "test_command")
+    }
+
+    func testWhitespaceOnlyActionDescriptionFallsBackToActions() throws {
+        let json = makeJSON(actionDescription: "   ")
+        let command = try CommandResponseParser.parse(json)
+        XCTAssertTrue(command.actionDescription.contains("This command will:"))
+        XCTAssertTrue(command.actionDescription.contains("Shell"))
+    }
+
+    // MARK: - Completion Check Values (H08-F06)
+
+    func testNumericCompletionCheckValueIsCoercedToString() throws {
+        let json = """
+        {
+          "name": "delayed",
+          "actions": [
+            {
+              "type": "shell",
+              "payload": "open -a Terminal",
+              "order": 0,
+              "completion_check": { "type": "delay", "value": 2000 }
+            }
+          ]
+        }
+        """
+        let command = try CommandResponseParser.parse(json)
+        XCTAssertEqual(command.actions.first?.completionCheck?.value, "2000")
+    }
+
     // MARK: - Helpers
 
     private func makeJSON(

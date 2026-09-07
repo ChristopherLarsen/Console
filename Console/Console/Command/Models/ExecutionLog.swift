@@ -56,6 +56,7 @@ struct ExecutionResult {
     let totalDurationMs: Int
     var authorizationDenied: Bool = false
     var alreadyRunning: Bool = false
+    var wasCancelled: Bool = false
 
     var failedSteps: [ExecutionLogEntry] {
         logs.filter { !$0.isSuccess }

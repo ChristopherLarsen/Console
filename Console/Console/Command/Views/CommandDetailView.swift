@@ -266,8 +266,32 @@ struct CommandDetailView: View {
         let phrase = newPhrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !phrase.isEmpty else { return }
         guard !command.triggerPhrases.contains(where: { $0.lowercased() == phrase.lowercased() }) else { return }
+
+        // Same guards as command creation: a phrase owned by another command
+        // makes both unvoiceable, and reserved phrases belong to system commands.
+        let normalized = phrase.lowercased()
+        let descriptor = FetchDescriptor<Command>()
+        let existing = (try? modelContext.fetch(descriptor)) ?? []
+        let isOwnedByOther = existing.contains { other in
+            other.id != command.id
+                && other.triggerPhrases.contains { $0.lowercased() == normalized }
+        }
+        if isOwnedByOther {
+            errorMessage = "'\(phrase)' is already used by another command."
+            return
+        }
+
+        let reservedPhrases = ConsoleCommandRegistry.all
+            .flatMap { $0.triggerPhrases }
+            .map { $0.lowercased() }
+        if reservedPhrases.contains(normalized) {
+            errorMessage = "'\(phrase)' is reserved for a system command and cannot be used."
+            return
+        }
+
         command.triggerPhrases.append(phrase)
         newPhrase = ""
+        errorMessage = nil
     }
 
     private func removePhrase(at index: Int) {

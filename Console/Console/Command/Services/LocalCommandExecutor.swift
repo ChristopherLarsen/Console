@@ -138,6 +138,12 @@ final class LocalCommandExecutor: CommandRunning {
         }
 
         let startTime = Date()
+        // Record usage so the Recent sort reflects reality; saved here so both
+        // the voice path and manual Test runs persist it.
+        command.lastExecutedAt = startTime
+        if let modelContext {
+            try? modelContext.save()
+        }
         let sortedActions = command.actions.sorted { $0.order < $1.order }
         var logs: [ExecutionLogEntry] = []
         var overallSuccess = true
@@ -215,7 +221,8 @@ final class LocalCommandExecutor: CommandRunning {
             command: command,
             logs: logs,
             overallSuccess: overallSuccess && !wasCancelled,
-            totalDurationMs: totalDuration
+            totalDurationMs: totalDuration,
+            wasCancelled: wasCancelled
         )
         let run = CommandRun(id: runID, result: executionResult)
         endRun(run, feedback: wasCancelled ? .cancelled : .finished(success: overallSuccess, command: command, logs: logs))
@@ -232,7 +239,8 @@ final class LocalCommandExecutor: CommandRunning {
             command: command,
             logs: logs,
             overallSuccess: false,
-            totalDurationMs: Int(Date().timeIntervalSince(startTime) * 1000)
+            totalDurationMs: Int(Date().timeIntervalSince(startTime) * 1000),
+            wasCancelled: true
         )
         let run = CommandRun(id: runID, result: executionResult)
         endRun(run, feedback: .cancelled)
@@ -243,6 +251,21 @@ final class LocalCommandExecutor: CommandRunning {
         guard isExecuting || activeRunID != nil else { return nil }
         VisualFeedbackService.shared.show(.warning(CommandRun.alreadyRunningMessage))
         return CommandRun.alreadyRunning(command: command)
+    }
+
+    /// Fetches every enabled command (newest-name-ordered). A silent 50-row
+    /// cap used to drop commands from the Recent panel alphabetically.
+    static func fetchEnabledCommands(in modelContext: ModelContext?) -> [Command] {
+        guard let modelContext else { return [] }
+        let includeBuiltIn = UserDefaults.standard.bool(forKey: "enableBuiltInCommands")
+        let predicate: Predicate<Command>
+        if includeBuiltIn {
+            predicate = #Predicate<Command> { $0.isEnabled }
+        } else {
+            predicate = #Predicate<Command> { $0.isEnabled && $0.catalogVersion == nil }
+        }
+        let descriptor = FetchDescriptor<Command>(predicate: predicate, sortBy: [SortDescriptor(\.name)])
+        return (try? modelContext.fetch(descriptor)) ?? []
     }
 
     private func beginRun() -> UUID {
@@ -290,8 +313,12 @@ final class LocalCommandExecutor: CommandRunning {
 
         switch action {
         case .showRecentCommands:
-            ConsoleNavigation.showTerminal(tab: .myCommands)
-            ConsoleWindowManager.bringToFront("main")
+            // Same floating Recent Commands panel as the voice path; the
+            // Commands tab is not the Recent list.
+            RecentCommandsController.shared.show(
+                commands: Self.fetchEnabledCommands(in: modelContext),
+                executor: self
+            )
 
         case .fishOff:
             NotificationCenter.default.post(name: .stopListeningRequested, object: nil)

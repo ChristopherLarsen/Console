@@ -46,11 +46,14 @@ enum CommandResponseParser {
         var actions: [CommandAction] = []
         if let rawActions = json["actions"] as? [[String: Any]] {
             for (index, raw) in rawActions.enumerated() {
+                // A malformed action is a contract violation, not something to
+                // drop silently: a partially-executed sequence can change what
+                // the command does.
                 guard let typeRaw = raw["type"] as? String,
                       let type = CommandActionType(rawValue: typeRaw),
                       let payloadValue = raw["payload"],
                       let payload = Self.payloadString(type: type, from: payloadValue) else {
-                    continue
+                    throw LLMGeneratorError.decodingFailed("Action at index \(index) has an invalid type or payload")
                 }
                 let order = raw["order"] as? Int ?? index
 
@@ -109,11 +112,13 @@ enum CommandResponseParser {
         triggerPhrases: [String],
         name: String
     ) -> String {
-        if let raw = json["shortSummary"] as? String, !raw.isEmpty {
-            return CommandGeneratorPrompt.validateShortSummary(raw)
+        if let raw = json["shortSummary"] as? String {
+            let validated = CommandGeneratorPrompt.validateShortSummary(raw)
+            if !validated.isEmpty { return validated }
         }
         let fallback = triggerPhrases.first ?? name
-        return CommandGeneratorPrompt.validateShortSummary(fallback)
+        let validatedFallback = CommandGeneratorPrompt.validateShortSummary(fallback)
+        return validatedFallback.isEmpty ? name : validatedFallback
     }
 
     // Extracts actionDescription from JSON, falling back to actions array
@@ -121,8 +126,9 @@ enum CommandResponseParser {
         from json: [String: Any],
         actions: [CommandAction]
     ) -> String {
-        if let raw = json["actionDescription"] as? String, !raw.isEmpty {
-            return CommandGeneratorPrompt.validateActionDescription(raw)
+        if let raw = json["actionDescription"] as? String {
+            let validated = CommandGeneratorPrompt.validateActionDescription(raw)
+            if !validated.isEmpty { return validated }
         }
         guard !actions.isEmpty else { return "" }
         let bullets = actions
@@ -168,10 +174,14 @@ enum CommandResponseParser {
         guard let check = raw["completion_check"] as? [String: Any]
                 ?? raw["completionCheck"] as? [String: Any],
               let typeRaw = check["type"] as? String,
-              let type = CompletionCheckType(rawValue: typeRaw),
-              let value = check["value"] as? String else {
+              let type = CompletionCheckType(rawValue: typeRaw) else {
             return nil
         }
+        // Numeric values (e.g. delay 2000) arrive as NSNumber; coerce to string
+        // instead of dropping the check.
+        let value = (check["value"] as? String)
+            ?? (check["value"] as? NSNumber).map { $0.stringValue }
+        guard let value else { return nil }
         return CompletionCheck(type: type, value: value)
     }
 
@@ -205,9 +215,11 @@ enum CommandResponseParser {
 
         let hasShell = actions.contains { $0.type == .shell }
         let hasAppleScript = actions.contains { $0.type == .appleScript }
-        if hasShell || hasAppleScript {
-            return .mixed
+        // A pure-AppleScript command is appleScript, not mixed; mixed is for
+        // shell actions or combinations of action types.
+        if hasAppleScript && !hasShell {
+            return .appleScript
         }
-        return .appIntents
+        return .mixed
     }
 }

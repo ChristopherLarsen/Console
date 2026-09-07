@@ -209,6 +209,7 @@ struct CommandListView: View {
                             showDeleteAlert = true
                         },
                         onTest: { await testCommand(command) },
+                        onStop: { commandExecutor.cancelExecution() },
                         onEdit: { selectedCommand = command },
                         onSave: { persistChanges() }
                     )

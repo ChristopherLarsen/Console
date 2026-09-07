@@ -20,6 +20,9 @@ struct ActionCatalog: Codable {
                         let req = param.isRequired ? " [required]" : ""
                         output += "      • \(param.name) (\(param.type))\(req)\n"
                     }
+                    if !intent.exampleUsage.isEmpty {
+                        output += "      example: \(intent.exampleUsage)\n"
+                    }
                 }
             }
 
@@ -27,6 +30,10 @@ struct ActionCatalog: Codable {
                 output += "  AppleScript:\n"
                 for action in app.applescriptActions {
                     output += "    - \(action.functionName): \(action.actionDescription)\n"
+                    if !action.scriptTemplate.isEmpty {
+                        let oneLine = action.scriptTemplate.replacingOccurrences(of: "\n", with: " ")
+                        output += "      template: \(oneLine)\n"
+                    }
                 }
             }
 
@@ -34,6 +41,8 @@ struct ActionCatalog: Codable {
                 output += "  Shell:\n"
                 for cmd in app.shellCommands {
                     output += "    - \(cmd.name): \(cmd.commandDescription)\n"
+                    let args = cmd.argsTemplate.isEmpty ? "" : " " + cmd.argsTemplate.joined(separator: " ")
+                    output += "      pattern: \(cmd.command)\(args)\n"
                 }
             }
 

@@ -19,6 +19,7 @@ final class CommandCreationViewModel {
     private(set) var hasGenerated = false
     private(set) var validationWarning: String?
     private(set) var isCurrentDraftAuthorized = false
+    private(set) var generationAttemptsUsed = 0
 
     private let aiProviderManager: AIProviderManager
     private let modelContext: ModelContext
@@ -65,6 +66,7 @@ final class CommandCreationViewModel {
 
         isGenerating = true
         errorMessage = nil
+        generationAttemptsUsed = 0
 
         let fullPrompt = buildPrompt()
         let provider = aiProviderManager.selectedProvider
@@ -78,11 +80,17 @@ final class CommandCreationViewModel {
                 return
             }
 
-            let command = try await RetryHelper.withRetry(maxAttempts: 3) {
+            let (command, attemptsUsed) = try await RetryHelper.withRetryReportingAttempts(
+                maxAttempts: 3,
+                recordAttempt: { [weak self] generationAttemptsUsed in
+                    self?.generationAttemptsUsed = generationAttemptsUsed
+                }
+            ) {
                 try await generator.generateCommand(from: fullPrompt)
             }
 
             presentGeneratedCommand(command)
+            generationAttemptsUsed = attemptsUsed
         } catch {
             let rawResponse = Self.lastRawResponse(for: provider)
             GenerationFailureLogger.log(
@@ -95,7 +103,7 @@ final class CommandCreationViewModel {
                 error: error,
                 rawResponse: rawResponse,
                 catalogAssisted: catalogAssisted,
-                retryAttempts: 3
+                retryAttempts: generationAttemptsUsed
             )
             printDebug("[CommandCreation] Generation failed: \(error)")
             errorMessage = LLMErrorFormatter.userFriendlyMessage(for: error)

@@ -94,7 +94,7 @@ struct ConsoleApp: App {
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("tabSelection") private var tabSelection: TabSelection = .triggers
     #if DEBUG
-    @State private var developerModeManager = DeveloperModeManager()
+    private var developerModeManager = DeveloperModeManager.shared
     @AppStorage("alwaysOnTop") private var alwaysOnTop: Bool = false
     #endif
 
@@ -112,7 +112,8 @@ struct ConsoleApp: App {
             "showCommandPopups": false,
             "showErrorPopups": false,
             "popupDurationSeconds": 3,
-            "listenOnStartup": true
+            "listenOnStartup": true,
+            "visualFeedbackEnabled": true
         ])
 
         let workspaceStore = SessionWorkspaceStore()
@@ -122,10 +123,12 @@ struct ConsoleApp: App {
         _iosProfileStore = State(initialValue: iosProfileStore)
         _iosBuildCoordinator = State(initialValue: iosBuildCoordinator)
 
+        // Conservative migration from the removed bottom-terminal era must run
+        // before the stored selection is overwritten with Home, or its drawer
+        // expansion can never trigger.
+        ConsoleNavigation.migrateLegacyTerminalNavigation()
         // Always open on Home for each process launch (do not restore last sidebar page).
         UserDefaults.standard.set(SidebarSelection.home.rawValue, forKey: ConsoleNavigation.sidebarKey)
-        // Conservative migration from the removed bottom-terminal era.
-        ConsoleNavigation.migrateLegacyTerminalNavigation()
 
         NSWindow.allowsAutomaticWindowTabbing = false
 
@@ -442,7 +445,7 @@ struct ConsoleApp: App {
             #endif
             CommandGroup(replacing: .windowArrangement) { }
             CommandMenu("Go") {
-                // Sidebar destinations on ⌃1…⌃9, in sidebar order.
+                // Sidebar destinations on ⌃1…⌃9 and ⌃0, in sidebar order.
                 ForEach(
                     Array(ConsoleNavigation.sidebarHotkeyDestinations.enumerated()),
                     id: \.offset
@@ -450,7 +453,10 @@ struct ConsoleApp: App {
                     Button(destination.label) {
                         ConsoleNavigation.show(destination)
                     }
-                    .keyboardShortcut(KeyEquivalent(Character("\(offset + 1)")), modifiers: .control)
+                    .keyboardShortcut(
+                        KeyEquivalent(Character(ConsoleNavigation.hotkeyKeyCharacter(forOffset: offset))),
+                        modifiers: .control
+                    )
                 }
                 Divider()
                 Button("Sessions") {
@@ -556,6 +562,27 @@ struct ConsoleApp: App {
             }
         } catch {
             printDebug("Launch at login failed: \(error.localizedDescription)")
+            // Registration failed: the toggle must not claim a state the OS
+            // does not have.
+            launchAtLogin = launchAtLoginIsRegistered
+        }
+    }
+
+    /// True when the OS agrees the app should launch at login. `requiresApproval`
+    /// counts as on: registration is pending user approval in System Settings.
+    private var launchAtLoginIsRegistered: Bool {
+        switch SMAppService.mainApp.status {
+        case .enabled, .requiresApproval: return true
+        default: return false
+        }
+    }
+
+    /// Re-syncs the preference with the OS so an externally removed login item
+    /// does not leave the Settings toggle lying.
+    private func reconcileLaunchAtLoginWithSystem() {
+        let registered = launchAtLoginIsRegistered
+        if launchAtLogin != registered {
+            launchAtLogin = registered
         }
     }
 
@@ -648,6 +675,7 @@ struct ConsoleApp: App {
         didRunAppBootstrap = true
 
         GlobalHotkeyManager.shared.install()
+        reconcileLaunchAtLoginWithSystem()
         #if DEBUG
         if developerModeManager.isDeveloperModeEnabled {
             applyAlwaysOnTop(alwaysOnTop)

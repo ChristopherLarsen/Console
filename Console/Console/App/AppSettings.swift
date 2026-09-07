@@ -51,6 +51,15 @@ class AppSettings {
     @AppStorage("authorizationTimeoutSeconds")
     var authorizationTimeoutSeconds: Int = 15
 
+    /// Effective authorization timeout shared by the dialog and the manager so
+    /// both clamp identically. Values outside the Stepper range (or invalid 0)
+    /// fall back to the 15s default instead of desyncing the two readers.
+    var authorizationTimeout: TimeInterval {
+        let stored = authorizationTimeoutSeconds
+        guard stored > 0 else { return 15 }
+        return TimeInterval(min(30, max(5, stored)))
+    }
+
     /// Parsed authorization words; always includes "authorized" as a fallback
     var authorizationWords: [String] {
         var words = customAuthorizationWords
