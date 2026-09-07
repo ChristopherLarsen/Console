@@ -8,6 +8,13 @@ final class SpeechPipelineUITests: XCTestCase {
 
     // MARK: - Helper
 
+    /// app.windows queries are unreliable for Console on this host (the main
+    /// window presents as an AX dialog); match the floating panel by
+    /// identifier anywhere in the application element tree instead.
+    private func commandsPanel(in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "CommandsPanel").firstMatch
+    }
+
     /// Builds launch arguments that inject a synthetic transcript source.
     private func syntheticSpeechArgs(_ entries: [(TimeInterval, String)]) -> [String] {
         struct Entry: Codable {
@@ -30,7 +37,7 @@ final class SpeechPipelineUITests: XCTestCase {
         ])
         app.launch()
 
-        let panel = app.windows["CommandsPanel"]
+        let panel = commandsPanel(in: app)
         XCTAssertTrue(
             panel.waitForExistence(timeout: 8),
             "CommandsPanel should appear after 'console commands'"
@@ -47,12 +54,10 @@ final class SpeechPipelineUITests: XCTestCase {
         ])
         app.launch()
 
-        // Wait long enough for the synthetic source to finish
-        sleep(6)
-
-        let panel = app.windows["CommandsPanel"]
+        // Negative: wait the full processing window for the panel; it must
+        // never appear. (No fixed sleep — the wait bounds the wrongful trigger.)
         XCTAssertFalse(
-            panel.exists,
+            commandsPanel(in: app).waitForExistence(timeout: 8),
             "CommandsPanel should NOT appear for non-wake-word speech"
         )
     }
@@ -67,12 +72,10 @@ final class SpeechPipelineUITests: XCTestCase {
         ])
         app.launch()
 
-        // Wait for pipeline to process, finalize, and return to passive
-        sleep(6)
-
-        let panel = app.windows["CommandsPanel"]
+        // Negative: wait the full processing window for the panel; it must
+        // never appear. (No fixed sleep — the wait bounds the wrongful trigger.)
         XCTAssertFalse(
-            panel.exists,
+            commandsPanel(in: app).waitForExistence(timeout: 8),
             "CommandsPanel should NOT appear for unrecognized command 'leviathan'"
         )
     }

@@ -180,12 +180,16 @@ final class EndToEndIntegrationTests: XCTestCase {
         XCTAssertTrue(fieldMode.isActive)
         XCTAssertTrue(controller.isEngineRunning)
 
+        // Unit tests never drive live Speech: deliver text synthetically so
+        // the deactivate-commits-pending-text path is actually exercised.
+        fieldMode.appendAccumulatedTextForTesting("synthetic dictation text")
+
         // Simulate pause by releasing mode
         await controller.releaseMode(fieldMode)
 
         XCTAssertFalse(fieldMode.isActive)
         XCTAssertNil(controller.activeMode)
-        XCTAssertNil(textResult, "No text should be finalized without speech input")
+        XCTAssertEqual(textResult, "synthetic dictation text", "Deactivate must commit pending text")
         XCTAssertFalse(pauseDetected, "No pause should be detected without speech input")
     }
 

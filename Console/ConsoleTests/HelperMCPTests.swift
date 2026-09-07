@@ -7,13 +7,35 @@ final class HelperMCPTests: XCTestCase {
     private var process: Process!
     private var stdinHandle: FileHandle!
     private var stdoutReader: LinePoller!
+    private var server: SessionBridgeSocketServer!
+    private var received: [String] = []
+    private let receivedLock = NSLock()
 
     override func setUpWithError() throws {
         try super.setUpWithError()
+        received = []
+
+        // Production socket path: the helper must deliver valid tool calls to
+        // a real SessionBridgeSocketServer, not silently drop them.
+        let deliver: @Sendable (Data) -> Void = { [weak self] data in
+            guard let self else { return }
+            self.receivedLock.lock()
+            self.received.append(String(data: data, encoding: .utf8) ?? "")
+            self.receivedLock.unlock()
+        }
+
+        guard let socketURL = SessionBridgeSocketServer.makeProtectedSocketURL() else {
+            throw XCTSkip("no usable socket location")
+        }
+        let bridgeServer = SessionBridgeSocketServer(socketPath: socketURL.path, deliver: deliver)
+        XCTAssertTrue(bridgeServer.start(), "test listener must start")
+        server = bridgeServer
 
         let helperPath = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Helpers/ConsoleTermBridge").path
         guard FileManager.default.fileExists(atPath: helperPath) else {
+            server.stop()
+            server = nil
             throw XCTSkip("helper not built into host app bundle")
         }
 
@@ -31,9 +53,9 @@ final class HelperMCPTests: XCTestCase {
         p.standardError = stderrPipe
 
         p.environment = [
-            "CONSOLE_TERM_BRIDGE_SOCKET": "",
+            "CONSOLE_TERM_BRIDGE_SOCKET": socketURL.path,
             "CONSOLE_TERM_BRIDGE_SESSION_ID": UUID().uuidString,
-            "CONSOLE_TERM_BRIDGE_TOKEN": "unused-token",
+            "CONSOLE_TERM_BRIDGE_TOKEN": "test-token-0123456789",
             // Coverage-instrumented builds print profraw errors to stderr when
             // the cwd is read-only; redirect coverage output to a temp file.
             "LLVM_PROFILE_FILE": NSTemporaryDirectory() + "mcp-\(UUID().uuidString).profraw",
@@ -51,7 +73,35 @@ final class HelperMCPTests: XCTestCase {
             process.waitUntilExit()
         }
         process = nil
+        server?.stop()
+        server = nil
         try super.tearDownWithError()
+    }
+
+    /// Bounded wait for the first envelope the helper delivered over the
+    /// production socket, decoded as JSON.
+    private func waitForDeliveredEnvelope(timeout: TimeInterval = 5) throws -> [String: Any]? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            receivedLock.lock()
+            let current = received
+            receivedLock.unlock()
+            if let line = current.first, let data = line.data(using: .utf8),
+               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                return object
+            }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        return nil
+    }
+
+    /// Bounded assertion that nothing was delivered over the socket.
+    private func assertNothingDelivered(timeout: TimeInterval = 0.5) {
+        Thread.sleep(forTimeInterval: timeout)
+        receivedLock.lock()
+        let count = received.count
+        receivedLock.unlock()
+        XCTAssertEqual(count, 0, "no envelope may be delivered over the socket")
     }
 
     @discardableResult
@@ -123,8 +173,8 @@ final class HelperMCPTests: XCTestCase {
         }
     }
 
-    // MARK: - Tool calls (socket env is unset, so forwarding is a no-op —
-    // validation and result framing are still exercised)
+    // MARK: - Tool calls (socket-backed: valid calls must reach the test
+    // listener as reduced envelopes; rejected calls must deliver nothing)
 
     func testValidReportCompletionCallSucceeds() throws {
         let response = try send([
@@ -140,6 +190,11 @@ final class HelperMCPTests: XCTestCase {
         XCTAssertEqual(result["isError"] as? Bool, false)
         let content = try XCTUnwrap(result["content"] as? [[String: Any]])
         XCTAssertEqual(content.first?["text"] as? String, "ok")
+
+        let envelope = try XCTUnwrap(waitForDeliveredEnvelope(), "valid completion must be delivered over the socket")
+        XCTAssertEqual(envelope["kind"] as? String, "completion")
+        XCTAssertEqual(envelope["completion_outcome"] as? String, "completed")
+        XCTAssertEqual(envelope["completion_summary"] as? String, "Refactor finished, tests green.")
     }
 
     func testValidReportAttentionCallSucceeds() throws {
@@ -153,6 +208,29 @@ final class HelperMCPTests: XCTestCase {
             ],
         ])
         XCTAssertEqual((response["result"] as? [String: Any])?["isError"] as? Bool, false)
+
+        let envelope = try XCTUnwrap(waitForDeliveredEnvelope(), "valid attention must be delivered over the socket")
+        XCTAssertEqual(envelope["kind"] as? String, "attention")
+        XCTAssertEqual(envelope["attention_category"] as? String, "question")
+    }
+
+    func testValidLinkArtifactDeliversArtifactEnvelope() throws {
+        let response = try send([
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": [
+                "name": "link_artifact",
+                "arguments": ["kind": "jira_issue", "label": "FAKE-1", "url": "https://example.test/browse/FAKE-1"],
+            ],
+        ])
+        XCTAssertEqual((response["result"] as? [String: Any])?["isError"] as? Bool, false)
+
+        let envelope = try XCTUnwrap(waitForDeliveredEnvelope(), "valid artifact link must be delivered over the socket")
+        XCTAssertEqual(envelope["kind"] as? String, "artifact")
+        XCTAssertEqual(envelope["artifact_kind"] as? String, "jira_issue")
+        XCTAssertEqual(envelope["artifact_label"] as? String, "FAKE-1")
+        XCTAssertEqual(envelope["artifact_url"] as? String, "https://example.test/browse/FAKE-1")
     }
 
     func testInvalidCategoryIsToolError() throws {
@@ -167,6 +245,7 @@ final class HelperMCPTests: XCTestCase {
         ])
         let result = try XCTUnwrap(response["result"] as? [String: Any])
         XCTAssertEqual(result["isError"] as? Bool, true)
+        assertNothingDelivered()
     }
 
     func testOversizedMessageRejected() throws {
@@ -183,6 +262,7 @@ final class HelperMCPTests: XCTestCase {
         XCTAssertEqual(result["isError"] as? Bool, true)
         let content = try XCTUnwrap(result["content"] as? [[String: Any]])
         XCTAssertTrue((content.first?["text"] as? String)?.contains("400") == true)
+        assertNothingDelivered()
     }
 
     func testNonHTTPSURLRejected() throws {
@@ -192,10 +272,11 @@ final class HelperMCPTests: XCTestCase {
             "method": "tools/call",
             "params": [
                 "name": "link_artifact",
-                "arguments": ["kind": "jira_issue", "label": "ENG-1", "url": "http://example.com/x"],
+                "arguments": ["kind": "jira_issue", "label": "FAKE-1", "url": "http://example.com/x"],
             ],
         ])
         XCTAssertEqual((response["result"] as? [String: Any])?["isError"] as? Bool, true)
+        assertNothingDelivered()
     }
 
     func testUnknownToolReturnsToolError() throws {
