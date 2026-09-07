@@ -332,6 +332,15 @@ final class LocalCommandExecutor: CommandRunning {
     }
 
     private func executeActionWithPolicy(_ action: CommandAction) async -> ActionSequenceOutcome {
+        // Stored and imported commands never passed UI-side validation, so the
+        // payload rules (shell allowlist, AppleScript syntax) are re-checked here.
+        if let validationError = validator.validatePayload(action) {
+            return ActionSequenceOutcome(
+                result: .failure(ActionAttemptError.invalidAction(validationError)),
+                attempts: 0,
+                usedFallback: false
+            )
+        }
         let policy = ActionAttemptPolicy(action: action)
         var lastResult: Result<String, Error> = .failure(ActionExecutionError.cancelled)
         var attempts = 0

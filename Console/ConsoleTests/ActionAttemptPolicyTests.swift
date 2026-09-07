@@ -150,6 +150,27 @@ final class ActionAttemptPolicyTests: XCTestCase {
         XCTAssertTrue(result.isSuccess, "Zero maxRetries should be saved and normalized at runtime, got \(result)")
     }
 
+    func testValidatorRequiresConfirmationForDoShellScript() {
+        let command = Command(
+            name: "Synthetic Do Shell Script",
+            triggerPhrases: ["synthetic policy do shell"],
+            actions: [
+                CommandAction(
+                    type: .appleScript,
+                    payload: "do shell script \"echo synthetic\""
+                )
+            ],
+            executionMode: .appleScript
+        )
+        let result = CommandValidator().validateCommand(command)
+        guard case .requiresConfirmation(let message, let severity) = result else {
+            XCTFail("Expected confirmation for do shell script, got \(result)")
+            return
+        }
+        XCTAssertEqual(severity, .high)
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("shell"), message)
+    }
+
     func testValidatorFlagsDangerousFallbackPayload() {
         let command = Command(
             name: "Synthetic Dangerous Fallback",

@@ -16,12 +16,17 @@ struct SystemControlTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        // Match CommandAction's default action timeout; tools have no per-call timeoutMS.
+        let runner = DeadlineBoundProcessRunner(
+            base: SystemProcessRunner(),
+            deadline: Date().addingTimeInterval(5)
+        )
         switch arguments.controlType.lowercased() {
         case "setvolume":
             let level = arguments.value ?? 50
-            return try await AppleScriptRunner.setVolume(level: level)
+            return try await AppleScriptRunner.setVolume(level: level, processRunner: runner)
         case "toggledarkmode":
-            return try await AppleScriptRunner.toggleDarkMode()
+            return try await AppleScriptRunner.toggleDarkMode(processRunner: runner)
         default:
             return "Unknown system control action: \(arguments.controlType)"
         }

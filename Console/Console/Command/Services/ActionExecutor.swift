@@ -204,7 +204,7 @@ final class ActionExecutor: CommandActionExecuting {
 }
 
 /// Applies an action deadline to every process launch for one execution.
-private struct DeadlineBoundProcessRunner: ProcessRunning {
+struct DeadlineBoundProcessRunner: ProcessRunning {
     let base: any ProcessRunning
     let deadline: Date?
 

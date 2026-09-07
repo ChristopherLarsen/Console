@@ -137,6 +137,7 @@ struct CommandValidator {
 
     private func detectDangerousOperation(_ command: Command) -> DangerDetection? {
         let dangerousPatterns: [(String, ConfirmationSeverity, String)] = [
+            ("do shell script", .high, "This will run a shell command from AppleScript"),
             ("rm -rf", .high, "This will permanently delete files/folders"),
             ("sudo", .high, "This will run with administrator privileges"),
             ("dd if=", .high, "This can overwrite disk data"),

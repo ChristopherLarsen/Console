@@ -5,8 +5,13 @@
 set -euo pipefail
 
 BUNDLE_ID="com.deadratgames.console"
-KEYCHAIN_SERVICE="com.openclaw.console"
-LEGACY_KEYCHAIN_SERVICE="$BUNDLE_ID"
+# Must match KeychainManager.serviceName, TicketIdentityKeyProvider.serviceName,
+# and the pre-service-name legacy items (service = bundle identifier).
+KEYCHAIN_SERVICES=(
+    "com.console.console"
+    "com.console.ticket-workflow"
+    "$BUNDLE_ID"
+)
 
 # Ensure the app is not running
 if pgrep -xq "Console"; then
@@ -23,8 +28,9 @@ for service in Microphone Accessibility AppleEvents SpeechRecognition; do
     if tccutil reset "$service" "$BUNDLE_ID" 2>&1; then
         echo "  ✓ $service reset"
     else
-        echo "  ✗ $service per-app reset failed, trying full reset..."
-        tccutil reset "$service" 2>&1 || echo "  ✗ $service full reset also failed — remove manually in System Settings > Privacy & Security"
+        # Never fall back to a service-wide `tccutil reset "$service"` —
+        # without a bundle ID that revokes the permission for every app.
+        echo "  ✗ $service per-app reset failed — remove it manually in System Settings > Privacy & Security"
     fi
 done
 
@@ -54,11 +60,13 @@ KEYCHAIN_ACCOUNTS=(
     "ai-provider-claude"
     "ai-provider-gemini"
     "ai-provider-grok"
+    "ai-provider-lmStudio"
     "keychain-access-probe"
 )
-for account in "${KEYCHAIN_ACCOUNTS[@]}"; do
-    security delete-generic-password -s "$KEYCHAIN_SERVICE" -a "$account" 2>/dev/null || true
-    security delete-generic-password -s "$LEGACY_KEYCHAIN_SERVICE" -a "$account" 2>/dev/null || true
+for service in "${KEYCHAIN_SERVICES[@]}"; do
+    for account in "${KEYCHAIN_ACCOUNTS[@]}"; do
+        security delete-generic-password -s "$service" -a "$account" 2>/dev/null || true
+    done
 done
 
 echo ""

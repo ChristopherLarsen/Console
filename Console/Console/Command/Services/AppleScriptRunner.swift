@@ -161,7 +161,9 @@ enum AppleScriptRunner {
         guard !trimmed.isEmpty else {
             throw ScriptError.invalidParameter("URL cannot be empty")
         }
-        let escaped = trimmed.replacingOccurrences(of: "\"", with: "\\\"")
+        let escaped = trimmed
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
         try await execute("open location \"\(escaped)\"", processRunner: processRunner)
         return "Opened URL: \(trimmed)"
     }

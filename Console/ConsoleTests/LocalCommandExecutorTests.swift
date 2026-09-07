@@ -333,7 +333,7 @@ final class LocalCommandExecutorTests: XCTestCase {
             actions: [
                 CommandAction(
                     type: .shell,
-                    payload: "\(fixture.script.path) \(fixture.pidFile.path)",
+                    payload: fixture.payload,
                     order: 0,
                     delayAfterMS: 0,
                     timeoutMS: 60_000
@@ -376,7 +376,7 @@ final class LocalCommandExecutorTests: XCTestCase {
             actions: [
                 CommandAction(
                     type: .shell,
-                    payload: "\(fixture.script.path) \(fixture.pidFile.path)",
+                    payload: fixture.payload,
                     order: 0,
                     delayAfterMS: 0,
                     timeoutMS: 250
@@ -414,7 +414,7 @@ final class LocalCommandExecutorTests: XCTestCase {
             actions: [
                 CommandAction(
                     type: .shell,
-                    payload: "\(firstFixture.script.path) \(firstFixture.pidFile.path)",
+                    payload: firstFixture.payload,
                     order: 0,
                     delayAfterMS: 0,
                     timeoutMS: 60_000
@@ -435,7 +435,7 @@ final class LocalCommandExecutorTests: XCTestCase {
             actions: [
                 CommandAction(
                     type: .shell,
-                    payload: "true",
+                    payload: "pwd",
                     order: 0,
                     delayAfterMS: 0,
                     timeoutMS: 5_000
@@ -453,7 +453,7 @@ final class LocalCommandExecutorTests: XCTestCase {
             actions: [
                 CommandAction(
                     type: .shell,
-                    payload: "\(secondFixture.script.path) \(secondFixture.pidFile.path)",
+                    payload: secondFixture.payload,
                     order: 0,
                     delayAfterMS: 0,
                     timeoutMS: 60_000
@@ -481,7 +481,7 @@ final class LocalCommandExecutorTests: XCTestCase {
             actions: [
                 CommandAction(
                     type: .shell,
-                    payload: "true",
+                    payload: "pwd",
                     order: 0,
                     delayAfterMS: 8_000,
                     timeoutMS: 5_000
@@ -630,6 +630,33 @@ final class LocalCommandExecutorTests: XCTestCase {
         XCTAssertFalse(run.result.overallSuccess)
         XCTAssertEqual(actions.executionCount, 2)
         XCTAssertFalse(actions.payloads.contains(fallbackPayload))
+        XCTAssertFalse(executor.isExecuting)
+    }
+
+    func testDisallowedShellCommandIsRejectedWithoutExecuting() async {
+        let actions = ActionExecutorSpy()
+        let executor = makeExecutor(actions: actions)
+        let command = makeShellCommand(
+            name: "Synthetic Executor Disallowed Shell",
+            actions: [
+                CommandAction(
+                    type: .shell,
+                    payload: ShellPayload(command: "/bin/echo", args: ["synthetic"]).encodedJSONString(),
+                    order: 0
+                )
+            ]
+        )
+
+        let run = await executor.execute(command, skipAuthorization: true)
+
+        XCTAssertEqual(actions.executionCount, 0)
+        XCTAssertFalse(run.result.overallSuccess)
+        XCTAssertEqual(run.result.logs.count, 1)
+        XCTAssertFalse(run.result.logs[0].isSuccess)
+        XCTAssertTrue(
+            run.result.logs[0].message.localizedCaseInsensitiveContains("not allowed"),
+            run.result.logs[0].message
+        )
         XCTAssertFalse(executor.isExecuting)
     }
 
@@ -830,17 +857,16 @@ final class LocalCommandExecutorTests: XCTestCase {
         return directory
     }
 
-    private func makeSleepFixture() throws -> (directory: URL, script: URL, pidFile: URL) {
+    private func makeSleepFixture() throws -> (directory: URL, payload: String, pidFile: URL) {
         let directory = try makeTempDirectory()
-        let script = directory.appendingPathComponent("run.sh")
         let pidFile = directory.appendingPathComponent("pid")
-        try """
-        #!/bin/sh
-        echo $$ > "$1"
-        exec sleep 60
-        """.write(to: script, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
-        return (directory, script, pidFile)
+        // python3 is on the shell allowlist; the interpreter itself sleeps so the
+        // executor owns a live child to interrupt. Absolute-path scripts are not
+        // allowlisted and are rejected before launch.
+        let payload = """
+        python3 -c 'import os,sys,time; open(sys.argv[1], "w").write(str(os.getpid())); time.sleep(60)' \(pidFile.path)
+        """
+        return (directory, payload, pidFile)
     }
 
     private func waitForOwnedPID(_ url: URL, timeout: TimeInterval = 2) async throws -> pid_t {

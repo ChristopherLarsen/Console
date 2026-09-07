@@ -85,6 +85,7 @@ enum ActionAttemptError: LocalizedError {
     case exhausted(attempts: Int, underlying: Error)
     case fallbackFailed(attempts: Int, underlying: Error)
     case invalidFallback(String)
+    case invalidAction(String)
 
     var errorDescription: String? {
         switch self {
@@ -94,6 +95,8 @@ enum ActionAttemptError: LocalizedError {
             return "Fallback failed after \(attempts) primary attempt(s): \(underlying.localizedDescription)"
         case .invalidFallback(let message):
             return "Fallback is invalid: \(message)"
+        case .invalidAction(let message):
+            return "Action is invalid: \(message)"
         }
     }
 }

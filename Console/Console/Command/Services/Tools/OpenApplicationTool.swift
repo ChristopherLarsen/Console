@@ -13,6 +13,13 @@ struct OpenApplicationTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        try await AppleScriptRunner.openApplication(name: arguments.applicationName)
+        // Match CommandAction's default action timeout; tools have no per-call timeoutMS.
+        try await AppleScriptRunner.openApplication(
+            name: arguments.applicationName,
+            processRunner: DeadlineBoundProcessRunner(
+                base: SystemProcessRunner(),
+                deadline: Date().addingTimeInterval(5)
+            )
+        )
     }
 }
