@@ -32,6 +32,7 @@ final class CompletionChecker {
         switch check.type {
         case .delay:
             guard let ms = Int(check.value), ms >= 0 else { return finish(.failed) }
+            if Double(ms) / 1000.0 > timeout { return finish(.timedOut) }
             do {
                 try await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
                 return finish(Task.isCancelled ? .cancelled : .passed)
@@ -40,23 +41,26 @@ final class CompletionChecker {
             }
 
         case .appRunning:
-            while Date() < deadline {
+            while true {
                 if Task.isCancelled { return finish(.cancelled) }
                 if isAppRunning(check.value) { return finish(.passed) }
+                guard Date() < deadline else { break }
                 if await sleepOrCancel(nanoseconds: pollInterval) { return finish(.cancelled) }
             }
 
         case .fileExists:
-            while Date() < deadline {
+            while true {
                 if Task.isCancelled { return finish(.cancelled) }
                 if doesFileExist(check.value) { return finish(.passed) }
+                guard Date() < deadline else { break }
                 if await sleepOrCancel(nanoseconds: pollInterval) { return finish(.cancelled) }
             }
 
         case .windowTitle:
-            while Date() < deadline {
+            while true {
                 if Task.isCancelled { return finish(.cancelled) }
                 if doesWindowExist(withTitle: check.value) { return finish(.passed) }
+                guard Date() < deadline else { break }
                 if await sleepOrCancel(nanoseconds: pollInterval) { return finish(.cancelled) }
             }
         }
@@ -107,6 +111,8 @@ final class CompletionChecker {
     // MARK: - Window Helpers
 
     func findWindow(withTitle title: String) -> [String: Any]? {
+        // An empty title must not substring-match every named window.
+        guard !title.isEmpty else { return nil }
         guard let windows = CGWindowListCopyWindowInfo(
             .optionOnScreenOnly, kCGNullWindowID
         ) as? [[String: Any]] else {

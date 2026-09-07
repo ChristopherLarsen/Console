@@ -40,11 +40,19 @@ final class CommandCreationViewModel {
     }
 
     func applyVoiceTranscriptToPhrase(_ text: String) {
-        if triggerPhrasesText.isEmpty {
-            triggerPhrasesText = text
-        } else {
-            triggerPhrasesText += " " + text
-        }
+        let combined = triggerPhrasesText.isEmpty ? text : triggerPhrasesText + " " + text
+        updateTriggerPhrasesText(combined)
+    }
+
+    /// Single write path for the Command Phrase field. After a generation,
+    /// field edits re-merge into the editable draft so Save/Test always match
+    /// what the field shows.
+    func updateTriggerPhrasesText(_ text: String) {
+        triggerPhrasesText = text
+        guard hasGenerated, let generated = generatedCommand else { return }
+        editableTriggerPhrases = generated.triggerPhrases
+        mergeUserPhrasesIntoDraft()
+        revalidateDraft()
     }
 
     // MARK: - Generate
@@ -127,20 +135,23 @@ final class CommandCreationViewModel {
         editableExecutionMode = command.executionMode
         editableRequiresConfirmation = command.requiresConfirmation
 
-        if !triggerPhrasesText.isEmpty {
-            let userPhrases = triggerPhrasesText
-                .components(separatedBy: ",")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            for phrase in userPhrases {
-                if !editableTriggerPhrases.contains(where: { $0.lowercased() == phrase.lowercased() }) {
-                    editableTriggerPhrases.append(phrase)
-                }
-            }
-        }
+        mergeUserPhrasesIntoDraft()
 
         revalidateDraft()
         hasGenerated = true
+    }
+
+    private func mergeUserPhrasesIntoDraft() {
+        guard !triggerPhrasesText.isEmpty else { return }
+        let userPhrases = triggerPhrasesText
+            .components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        for phrase in userPhrases {
+            if !editableTriggerPhrases.contains(where: { $0.lowercased() == phrase.lowercased() }) {
+                editableTriggerPhrases.append(phrase)
+            }
+        }
     }
 
     // MARK: - Edit Actions

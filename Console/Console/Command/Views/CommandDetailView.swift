@@ -11,6 +11,8 @@ struct CommandDetailView: View {
     @State private var showLastPhraseAlert = false
     @State private var cachedDescriptionKey: LocalizedStringKey?
     @State private var cachedDescriptionSource = ""
+    @State private var savedName = ""
+    @State private var savedTriggerPhrases: [String] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,6 +36,10 @@ struct CommandDetailView: View {
             footer
         }
         .frame(minWidth: 520, maxWidth: 520, minHeight: 450, maxHeight: 750)
+        .onAppear {
+            savedName = command.name
+            savedTriggerPhrases = command.triggerPhrases
+        }
         .alert("Command Phrase Required", isPresented: $showLastPhraseAlert) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -56,7 +62,7 @@ struct CommandDetailView: View {
 
             Spacer()
 
-            CloseButton { dismiss() }
+            CloseButton { cancel() }
         }
         .padding(.horizontal, 20)
         .padding(.top, 20)
@@ -231,7 +237,7 @@ struct CommandDetailView: View {
     private var footer: some View {
         HStack {
             CapsuleButton("Cancel", style: .neutral) {
-                dismiss()
+                cancel()
             }
             .accessibilityIdentifier("Cancel")
             .keyboardShortcut(.cancelAction)
@@ -249,6 +255,12 @@ struct CommandDetailView: View {
     }
 
     // MARK: - Actions
+
+    private func cancel() {
+        command.name = savedName
+        command.triggerPhrases = savedTriggerPhrases
+        dismiss()
+    }
 
     private func addPhrase() {
         let phrase = newPhrase.trimmingCharacters(in: .whitespacesAndNewlines)

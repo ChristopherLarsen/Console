@@ -178,6 +178,50 @@ final class CommandCreationViewModelTests: XCTestCase {
         XCTAssertTrue(saved[0].requiresConfirmation)
     }
 
+    // MARK: - Post-generate phrase field (H09-F02)
+
+    func testPhraseFieldEditsAfterGenerationFeedDraft() {
+        let viewModel = makeViewModel()
+        viewModel.presentGeneratedCommand(
+            makeAppleScriptCommand(
+                name: "Synthetic Phrase Field",
+                phrases: ["generated phrase"],
+                payload: Self.safeAppleScriptFixture,
+                requiresConfirmation: false
+            )
+        )
+
+        viewModel.updateTriggerPhrasesText("field phrase")
+
+        let draft = viewModel.makeDraftCommand()
+        XCTAssertTrue(draft.triggerPhrases.contains("field phrase"))
+        XCTAssertTrue(draft.triggerPhrases.contains("generated phrase"))
+
+        guard case .ready = viewModel.prepareDraftForExecution() else {
+            return XCTFail("Expected a ready draft after field edit")
+        }
+    }
+
+    func testPhraseFieldReplacementDropsStaleFieldPhrases() {
+        let viewModel = makeViewModel()
+        viewModel.presentGeneratedCommand(
+            makeAppleScriptCommand(
+                name: "Synthetic Phrase Replace",
+                phrases: ["generated phrase"],
+                payload: Self.safeAppleScriptFixture,
+                requiresConfirmation: false
+            )
+        )
+
+        viewModel.updateTriggerPhrasesText("first field phrase")
+        viewModel.updateTriggerPhrasesText("second field phrase")
+
+        let draft = viewModel.makeDraftCommand()
+        XCTAssertTrue(draft.triggerPhrases.contains("second field phrase"))
+        XCTAssertFalse(draft.triggerPhrases.contains("first field phrase"))
+        XCTAssertTrue(draft.triggerPhrases.contains("generated phrase"))
+    }
+
     // MARK: - Action setting preservation (review item 09)
 
     func testUpdatingPayloadChangesOnlyPayload() {

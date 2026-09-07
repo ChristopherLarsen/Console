@@ -13,14 +13,35 @@ enum CommandExporter {
         if !command.commandDescription.isEmpty {
             json["description"] = command.commandDescription
         }
-        json["actions"] = command.actions.sorted(by: { $0.order < $1.order }).map { action in
-            [
+        json["actions"] = command.actions.sorted(by: { $0.order < $1.order }).map { action -> [String: Any] in
+            var map: [String: Any] = [
                 "type": action.type.rawValue,
                 "payload": action.payload,
-                "order": action.order
-            ] as [String: Any]
+                "order": action.order,
+                "delayAfterMS": action.delayAfterMS,
+                "timeoutMS": action.timeoutMS,
+                "retryOnFailure": action.retryOnFailure
+            ]
+            if let maxRetries = action.maxRetries {
+                map["maxRetries"] = maxRetries
+            }
+            if let check = action.completionCheck, let object = jsonObject(check) {
+                map["completionCheck"] = object
+            }
+            if let fallback = action.fallbackAction, let object = jsonObject(fallback) {
+                map["fallbackAction"] = object
+            }
+            return map
         }
         return json
+    }
+
+    private static func jsonObject<T: Encodable>(_ value: T) -> [String: Any]? {
+        guard let data = try? JSONEncoder().encode(value),
+              let object = try? JSONSerialization.jsonObject(with: data) else {
+            return nil
+        }
+        return object as? [String: Any]
     }
 
     // Full-fidelity serialization for developer round-tripping

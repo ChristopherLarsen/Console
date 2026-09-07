@@ -99,6 +99,49 @@ final class CompletionCheckerTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(start), 2)
     }
 
+    // MARK: - Timeout honoring
+
+    func testDelayExceedingTimeoutTimesOutWithoutFalsePass() async throws {
+        let start = Date()
+        let run = try await runThrowingWithTimeout {
+            await CompletionChecker().evaluate(.delay(milliseconds: 2000), timeout: 0.2)
+        }
+        XCTAssertEqual(run.outcome, .timedOut)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 1.5)
+    }
+
+    func testZeroTimeoutStillEvaluatesPredicateOnce() async throws {
+        let file = try makeTempFile()
+        let run = try await runThrowingWithTimeout {
+            await CompletionChecker().evaluate(.fileExists(file.path), timeout: 0)
+        }
+        XCTAssertEqual(run.outcome, .passed)
+    }
+
+    func testZeroTimeoutWithMissingPredicateTimesOut() async throws {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("console-zero-timeout-missing-\(UUID().uuidString)")
+        let run = try await runThrowingWithTimeout {
+            await CompletionChecker().evaluate(.fileExists(missing.path), timeout: 0)
+        }
+        XCTAssertEqual(run.outcome, .timedOut)
+    }
+
+    // MARK: - Empty window title
+
+    func testEmptyWindowTitleNeverMatchesAnyWindow() {
+        let checker = CompletionChecker()
+        XCTAssertFalse(checker.doesWindowExist(withTitle: ""))
+        XCTAssertNil(checker.findWindow(withTitle: ""))
+    }
+
+    func testEmptyWindowTitleCheckNeverPasses() async throws {
+        let run = try await runThrowingWithTimeout {
+            await CompletionChecker().evaluate(.windowTitle(""), timeout: 0)
+        }
+        XCTAssertNotEqual(run.outcome, .passed)
+    }
+
     // MARK: - Helpers
 
     private func makeTempFile() throws -> URL {

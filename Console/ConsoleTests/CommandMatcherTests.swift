@@ -125,6 +125,24 @@ final class CommandMatcherTests: XCTestCase {
         )
     }
 
+    // MARK: - Phraseless duplicate does not shadow the original (H06-F02)
+
+    func testPhraselessDuplicateKeepsOriginalVoiceMatchable() {
+        let matcher = CommandMatcher()
+        let original = Command(
+            name: "Synthetic Original",
+            triggerPhrases: ["synthetic voice phrase"],
+            actions: [CommandAction(type: .appleScript, payload: "return \"ok\"", order: 0)]
+        )
+        let copy = original.duplicating()
+        copy.triggerPhrases = []
+
+        let match = matcher.bestMatch(for: "synthetic voice phrase", in: [original, copy])
+
+        XCTAssertNotNil(match)
+        XCTAssertEqual(match?.command.id, original.id)
+    }
+
     // MARK: - Exact Match Returns 1.0
 
     func testExactMatchReturnsFullConfidence() async {
