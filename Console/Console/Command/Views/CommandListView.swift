@@ -310,6 +310,10 @@ struct CommandListView: View {
 
     private func duplicateCommand(_ command: Command) {
         let copy = command.duplicating()
+        // Duplicate phrases would make both commands unvoiceable (matcher
+        // ambiguity guard). The copy starts phraseless; unique phrases are
+        // added when editing it.
+        copy.triggerPhrases = []
         modelContext.insert(copy)
         persistChanges()
     }

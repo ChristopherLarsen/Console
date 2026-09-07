@@ -628,6 +628,7 @@ struct ConsoleApp: App {
         #endif
 
         initializeServices()
+        StarterCommandsProvider.loadStarterCommands(into: modelContainer.mainContext)
         StarterCommandsProvider.syncBuiltInPhrases(in: modelContainer.mainContext)
         handleListenOnStartup()
         pingLocalProviderIfNeeded()

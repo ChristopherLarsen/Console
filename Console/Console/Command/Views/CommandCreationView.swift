@@ -86,20 +86,20 @@ struct CommandCreationView: View {
             ZStack(alignment: .trailing) {
                 TextField("e.g. open music, play tunes", text: Binding(
                     get: { viewModel?.triggerPhrasesText ?? "" },
-                    set: { viewModel?.triggerPhrasesText = $0 }
+                    set: { viewModel?.updateTriggerPhrasesText($0) }
                 ))
                 .focused($focusedField, equals: .phrase)
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: viewModel?.triggerPhrasesText ?? "") { _, newValue in
                     let sanitized = InputSanitizer.commandPhrase(newValue)
-                    if sanitized != newValue { viewModel?.triggerPhrasesText = sanitized }
+                    if sanitized != newValue { viewModel?.updateTriggerPhrasesText(sanitized) }
                 }
                 .disabled(viewModel?.isGenerating == true)
 
                 HStack(spacing: 4) {
                     if viewModel?.triggerPhrasesText.isEmpty == false {
                         Button {
-                            viewModel?.triggerPhrasesText = ""
+                            viewModel?.updateTriggerPhrasesText("")
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.caption)
