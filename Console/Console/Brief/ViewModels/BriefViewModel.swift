@@ -18,6 +18,7 @@ final class BriefViewModel {
     @ObservationIgnored private let identityReader: (any BriefIdentityReading)?
     @ObservationIgnored private var copiedFeedbackTask: Task<Void, Never>?
     @ObservationIgnored private var operationTask: Task<Void, Never>?
+    @ObservationIgnored private var dayRolloverTask: Task<Void, Never>?
     @ObservationIgnored private var currentOperation: BriefOperationToken?
     @ObservationIgnored private var preparedDay: Date?
 
@@ -54,6 +55,7 @@ final class BriefViewModel {
     /// stored content instantly. `now` is injectable so a delayed previous-day
     /// operation can be tested against today's displayed brief.
     func prepareIfNeeded(now: Date = Date()) {
+        scheduleDayRolloverMonitor(from: now)
         let day = BriefStore.startOfDay(for: now)
         if let existing = brief, existing.day == day {
             preparedDay = day
@@ -176,6 +178,7 @@ final class BriefViewModel {
         var tasks = current.todayTasks
         tasks[index] = text
         brief = generationService.updateTasks(tasks, in: current)
+        errorMessage = generationService.lastPersistenceError
     }
 
     func addTask() {
@@ -184,6 +187,7 @@ final class BriefViewModel {
         var tasks = current.todayTasks
         tasks.append("")
         brief = generationService.updateTasks(tasks, in: current)
+        errorMessage = generationService.lastPersistenceError
     }
 
     func removeTask(at index: Int) {
@@ -191,6 +195,7 @@ final class BriefViewModel {
         var tasks = current.todayTasks
         tasks.remove(at: index)
         brief = generationService.updateTasks(tasks, in: current)
+        errorMessage = generationService.lastPersistenceError
     }
 
     func copyReport() {
@@ -210,6 +215,32 @@ final class BriefViewModel {
         if injectedRefiner != nil { return true }
         guard let manager = AppDependencies.shared.aiProviderManager else { return false }
         return manager.selectedProvider != AIProvider.none
+    }
+
+    // MARK: - Day rollover
+
+    /// Re-prepares when the calendar day changes while the Brief stays
+    /// selected (no remount, so `onAppear` never fires again). Idempotent:
+    /// `prepareIfNeeded` ignores same-day calls and in-flight generations.
+    func handleDayRollover(now: Date = Date()) {
+        prepareIfNeeded(now: now)
+    }
+
+    private func scheduleDayRolloverMonitor(from now: Date) {
+        dayRolloverTask?.cancel()
+        let calendar = Calendar.current
+        let nextMidnight = calendar.date(
+            byAdding: .day,
+            value: 1,
+            to: calendar.startOfDay(for: now)
+        ) ?? now
+        // +1s slack so the timer fires after the boundary, not on it.
+        let delay = max(1, nextMidnight.timeIntervalSince(now) + 1)
+        dayRolloverTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, !Task.isCancelled else { return }
+            self.handleDayRollover()
+        }
     }
 
     // MARK: - Operation lifetime
@@ -235,6 +266,7 @@ final class BriefViewModel {
         guard shouldDisplay(incoming) else { return }
         brief = incoming
         preparedDay = BriefStore.startOfDay(for: incoming.day)
+        errorMessage = generationService.lastPersistenceError
     }
 
     private func applyFailure(_ error: Error, token: BriefOperationToken) {

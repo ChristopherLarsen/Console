@@ -37,6 +37,11 @@ final class BriefGenerationService {
 
     private var taskEditRevisionByDay: [Date: UInt64] = [:]
 
+    /// Persisted-content error from the most recent write attempt. Save
+    /// failures must be visible: the UI otherwise shows content the disk
+    /// never received, and a later regenerate silently reloads stale data.
+    private(set) var lastPersistenceError: String?
+
     init(store: BriefStore? = nil,
          collector: (any BriefActivityCollecting)? = nil) {
         let resolvedStore = store ?? BriefStore()
@@ -269,7 +274,7 @@ final class BriefGenerationService {
                 if !brief.tasksManuallyEdited { brief.source = latest.source }
             }
         }
-        store.save(brief)
+        save(brief)
         return .applied(brief)
     }
 
@@ -336,7 +341,7 @@ final class BriefGenerationService {
         }
         updated.source = .ai
         updated.generatedAt = Date()
-        store.save(updated)
+        save(updated)
         return .applied(updated)
     }
 
@@ -349,7 +354,19 @@ final class BriefGenerationService {
         var updated = latest
         updated.todayTasks = Array(tasks.prefix(MorningBrief.maxTodayTasks))
         updated.tasksManuallyEdited = true
-        store.save(updated)
+        save(updated)
         return updated
+    }
+
+    /// Persists and records a failure in `lastPersistenceError` so the UI can
+    /// surface it — a failed write must never look like success.
+    private func save(_ brief: MorningBrief) {
+        do {
+            try store.save(brief)
+            lastPersistenceError = nil
+        } catch {
+            printDebug("[Brief] Failed to persist brief: \(error.localizedDescription)")
+            lastPersistenceError = "Could not save the brief: \(error.localizedDescription)"
+        }
     }
 }

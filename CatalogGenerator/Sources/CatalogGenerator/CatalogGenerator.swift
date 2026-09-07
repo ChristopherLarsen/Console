@@ -139,7 +139,16 @@ struct Generate: AsyncParsableCommand {
         let generator = LLMCatalogGenerator(config: llmConfig, verbose: verbose)
         let result = await generator.generateBatch(from: apps, continueOnError: continueOnError)
 
-        let catalog = generator.assembleCatalog(from: result.succeeded, version: version)
+        var catalog = generator.assembleCatalog(from: result.succeeded, version: version)
+
+        // Never clobber the committed catalog with a partial run: merge this
+        // run's entries into the existing output, replacing only the apps that
+        // were regenerated. Write to a fresh path to rebuild from scratch.
+        if let existing = generator.existingCatalog(at: output) {
+            catalog = generator.merging(catalog, into: existing)
+            let retained = (catalog["apps"] as? [[String: Any]])?.count ?? 0
+            print("  Merged into existing catalog: \(result.succeeded.count) regenerated, \(max(0, retained - result.succeeded.count)) retained")
+        }
         try generator.writeCatalog(catalog, to: output)
 
         print("\nGeneration complete:")

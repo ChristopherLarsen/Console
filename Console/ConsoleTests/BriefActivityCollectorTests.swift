@@ -315,6 +315,55 @@ final class BriefActivityCollectorTests: XCTestCase {
         XCTAssertEqual(identity.emails, ["configured@example.test"])
     }
 
+    // MARK: - H37-F02: mailmap-canonical identity must match collected commits
+
+    func testConfiguredIdentityIsCanonicalizedThroughMailmap() async throws {
+        let repo = try makeRepo(named: "Mailmapped")
+        try runGit(["config", "user.name", "Old Name"], in: repo)
+        try runGit(["config", "user.email", "old@example.test"], in: repo)
+        try "New Name <new@example.test> <old@example.test>\n"
+            .write(to: repo.appendingPathComponent(".mailmap"), atomically: true, encoding: .utf8)
+
+        try commit(
+            in: repo,
+            message: "Mailmapped work",
+            authorName: "Old Name",
+            authorEmail: "old@example.test",
+            date: "2026-09-05T12:00:00-04:00",
+            committerDate: "2026-09-05T12:00:00-04:00"
+        )
+
+        let identity = await collector.readConfiguredIdentity(at: repo.path)
+        XCTAssertEqual(
+            identity.emails,
+            ["new@example.test"],
+            "the default identity must match the mailmap-canonical form git reports via %aE"
+        )
+
+        let result = await collect(
+            path: repo,
+            displayName: "Mailmapped",
+            identity: identity,
+            start: dateInNewYork("2026-09-05T00:00:00"),
+            end: dateInNewYork("2026-09-06T00:00:00")
+        )
+        XCTAssertFalse(
+            result.activities.isEmpty,
+            "the mailmap-canonical default identity must attribute the commit"
+        )
+    }
+
+    func testMailmapCanonicalizationFallsBackToRawConfigWhenCommandUnavailable() async throws {
+        let repo = try makeRepo(named: "NoMailmapBinary")
+        try runGit(["config", "user.name", "Plain Dev"], in: repo)
+        try runGit(["config", "user.email", "plain@example.test"], in: repo)
+
+        // No .mailmap → check-mailmap returns the input unchanged.
+        let identity = await collector.readConfiguredIdentity(at: repo.path)
+        XCTAssertEqual(identity.name, "Plain Dev")
+        XCTAssertEqual(identity.emails, ["plain@example.test"])
+    }
+
     // MARK: - Fixtures
 
     private func collect(

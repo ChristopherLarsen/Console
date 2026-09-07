@@ -42,7 +42,7 @@ final class BriefStoreAndServiceTests: XCTestCase {
         brief.activityRangeEnd = calendar.date(byAdding: .day, value: 1, to: day)
         brief.sourceRepositoryNames = ["Alpha"]
 
-        store.save(brief)
+        try store.save(brief)
         let loaded = try XCTUnwrap(store.load(forDay: day))
 
         XCTAssertEqual(loaded.day, brief.day)
@@ -59,6 +59,41 @@ final class BriefStoreAndServiceTests: XCTestCase {
         XCTAssertNil(store.load(forDay: startOfDay(-5)))
     }
 
+    // MARK: - H38-F03: save failures must be surfaced, not silent
+
+    private func makeUnwritableStore() throws -> BriefStore {
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        let blocked = tempDirectory.appendingPathComponent("blocked", isDirectory: true)
+        try Data("occupant".utf8).write(to: blocked)
+        return BriefStore(directory: blocked)
+    }
+
+    func testSaveThrowsWhenDirectoryIsUnwritable() throws {
+        let store = try makeUnwritableStore()
+        let brief = BriefComposer.compose(day: startOfDay(0), activities: [], carriedTasks: [])
+        XCTAssertThrowsError(try store.save(brief))
+    }
+
+    func testFailedTaskEditSaveRecordsErrorInsteadOfFakeSuccess() throws {
+        let blockedStore = try makeUnwritableStore()
+        let service = BriefGenerationService(store: blockedStore)
+        let brief = BriefComposer.compose(day: startOfDay(0), activities: [], carriedTasks: ["Original"])
+
+        let updated = service.updateTasks(["Edited"], in: brief)
+
+        XCTAssertEqual(updated.todayTasks, ["Edited"], "UI state still advances")
+        XCTAssertNotNil(service.lastPersistenceError, "the failed write must be reported")
+        XCTAssertNil(blockedStore.load(forDay: brief.day), "nothing reached disk")
+    }
+
+    func testSuccessfulSaveClearsPersistenceError() throws {
+        let service = BriefGenerationService(store: store)
+        let brief = BriefComposer.compose(day: startOfDay(0), activities: [], carriedTasks: [])
+        XCTAssertNil(service.lastPersistenceError)
+        _ = service.updateTasks(["Edited"], in: brief)
+        XCTAssertNil(service.lastPersistenceError)
+    }
+
     // MARK: - Carry-forward queries
 
     func testLoadMostRecentReturnsLatestEarlierBriefOnly() throws {
@@ -66,8 +101,8 @@ final class BriefStoreAndServiceTests: XCTestCase {
         let yesterday = startOfDay(-1)
         let older = startOfDay(-3)
 
-        store.save(BriefComposer.compose(day: older, activities: [], carriedTasks: ["Old plan"]))
-        store.save(BriefComposer.compose(day: yesterday, activities: [], carriedTasks: ["Recent plan"]))
+        try store.save(BriefComposer.compose(day: older, activities: [], carriedTasks: ["Old plan"]))
+        try store.save(BriefComposer.compose(day: yesterday, activities: [], carriedTasks: ["Recent plan"]))
 
         let carried = try XCTUnwrap(store.loadMostRecent(before: today))
         XCTAssertEqual(carried.day, yesterday)
@@ -108,13 +143,13 @@ final class BriefStoreAndServiceTests: XCTestCase {
         XCTAssertEqual(regenerated.source, .local)
     }
 
-    func testApplyRefinementTakesAITasksOnlyWhenNotManuallyEdited() async {
+    func testApplyRefinementTakesAITasksOnlyWhenNotManuallyEdited() async throws {
         let service = BriefGenerationService(store: store, collector: StubCollector(activityCount: 1))
         let today = startOfDay(0)
 
         var brief = await service.ensureBrief(for: today, workspacePaths: ["/tmp/Repo"])
         brief.tasksManuallyEdited = false
-        store.save(brief)
+        try store.save(brief)
 
         let parsed = BriefAIResponseParser.Parsed(
             yesterdayLines: ["Polished line"],
@@ -166,7 +201,7 @@ final class BriefStoreAndServiceTests: XCTestCase {
             carriedTasks: ["Original task"]
         )
         seed.tasksManuallyEdited = false
-        store.save(seed)
+        try store.save(seed)
 
         let token = service.beginOperation(.generate, for: today)
         let generateTask = Task {
@@ -198,7 +233,7 @@ final class BriefStoreAndServiceTests: XCTestCase {
         )
         let service = BriefGenerationService(store: store, collector: collector)
         let today = startOfDay(0)
-        store.save(BriefComposer.compose(day: today, activities: [], carriedTasks: ["Keep me"]))
+        try store.save(BriefComposer.compose(day: today, activities: [], carriedTasks: ["Keep me"]))
 
         let firstToken = service.beginOperation(.generate, for: today)
         let first = Task {
@@ -276,8 +311,8 @@ final class BriefStoreAndServiceTests: XCTestCase {
         let service = BriefGenerationService(store: store, collector: collector)
         let yesterday = startOfDay(-1)
         let today = startOfDay(0)
-        store.save(BriefComposer.compose(day: yesterday, activities: [], carriedTasks: ["Yesterday plan"]))
-        store.save(BriefComposer.compose(
+        try store.save(BriefComposer.compose(day: yesterday, activities: [], carriedTasks: ["Yesterday plan"]))
+        try store.save(BriefComposer.compose(
             day: today,
             activities: [CommitActivity(repositoryName: "Repo", subject: "Today already stored", committedAt: yesterday)],
             carriedTasks: ["Today plan"]

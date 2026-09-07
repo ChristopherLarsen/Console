@@ -105,11 +105,23 @@ struct ModelSelectionView: View {
     private var validationRow: some View {
         if showCustomField && !selectedModel.isEmpty {
             let result = ModelValidator.validate(selectedModel, for: provider)
-            if case .invalid(let msg) = result {
-                Label(msg, systemImage: "xmark.circle")
+            if let presentation = Self.validationPresentation(for: result) {
+                Label(presentation.message, systemImage: presentation.isError ? "xmark.circle" : "exclamationmark.triangle")
                     .font(.subheadline)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(presentation.isError ? Color.red : Color.orange)
             }
+        }
+    }
+
+    /// Warnings must surface too — the validator only ever returns `.invalid`
+    /// for an empty name, so without this every feedback would be invisible.
+    static func validationPresentation(
+        for result: ModelValidationResult
+    ) -> (message: String, isError: Bool)? {
+        switch result {
+        case .valid: return nil
+        case .warning(let msg): return (msg, false)
+        case .invalid(let msg): return (msg, true)
         }
     }
 

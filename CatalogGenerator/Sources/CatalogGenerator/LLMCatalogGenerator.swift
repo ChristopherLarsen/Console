@@ -170,6 +170,40 @@ class LLMCatalogGenerator {
         try data.write(to: URL(fileURLWithPath: path))
     }
 
+    /// Merges this run's entries into an existing catalog: regenerated apps
+    /// replace their previous entry, all other apps are retained. This keeps a
+    /// partial run (`--app-id`, or one with failures) from clobbering the full
+    /// catalog with only this run's successes. Regenerating from scratch still
+    /// removes dropped apps — write to a fresh output for that.
+    func merging(_ catalog: [String: Any], into base: [String: Any]) -> [String: Any] {
+        guard let newEntries = catalog["apps"] as? [[String: Any]],
+              let baseEntries = base["apps"] as? [[String: Any]] else {
+            return catalog
+        }
+
+        let regeneratedIDs = Set(newEntries.compactMap { $0["bundleID"] as? String })
+        let retained = baseEntries.filter { entry in
+            !regeneratedIDs.contains(entry["bundleID"] as? String ?? "")
+        }
+
+        var merged = base
+        merged["version"] = catalog["version"] ?? base["version"]
+        merged["lastUpdated"] = catalog["lastUpdated"] ?? base["lastUpdated"]
+        merged["macOSVersions"] = catalog["macOSVersions"] ?? base["macOSVersions"]
+        merged["apps"] = retained + newEntries
+        return merged
+    }
+
+    /// Loads the existing output file for merging, if present and parseable.
+    func existingCatalog(at path: String) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["apps"] is [[String: Any]] else {
+            return nil
+        }
+        return json
+    }
+
     // MARK: - Prompt Construction
 
     private var systemPrompt: String {
@@ -331,7 +365,11 @@ class LLMCatalogGenerator {
 
     // MARK: - Validation
 
-    private func validateEntry(_ entry: [String: Any], appName: String) throws {
+    /// Mirrors the runtime `ActionCatalog` Codable schema
+    /// (Console/Console/Command/Models/ActionCatalog.swift). A single entry
+    /// that fails the runtime decode nils the whole catalog at app launch, so
+    /// generation must reject anything the decoder would reject.
+    func validateEntry(_ entry: [String: Any], appName: String) throws {
         let requiredKeys = [
             "name", "bundleID", "minMacOSVersion",
             "appIntents", "applescriptActions", "shellCommands",
@@ -346,6 +384,20 @@ class LLMCatalogGenerator {
             }
         }
 
+        guard entry["name"] is String, entry["bundleID"] is String,
+              entry["minMacOSVersion"] is String else {
+            throw CatalogGeneratorError.validationFailed(
+                "\(appName): name, bundleID, and minMacOSVersion must be strings"
+            )
+        }
+
+        guard let knownIssues = entry["knownIssues"] as? [String] else {
+            throw CatalogGeneratorError.validationFailed(
+                "\(appName): knownIssues must be an array of strings"
+            )
+        }
+        _ = knownIssues
+
         guard let actions = entry["applescriptActions"] as? [[String: Any]] else {
             throw CatalogGeneratorError.validationFailed(
                 "\(appName): applescriptActions must be an array of objects"
@@ -353,12 +405,101 @@ class LLMCatalogGenerator {
         }
 
         for action in actions {
-            guard action["functionName"] is String,
+            guard let functionName = action["functionName"] as? String, !functionName.isEmpty,
                   action["scriptTemplate"] is String else {
                 throw CatalogGeneratorError.validationFailed(
                     "\(appName): each applescriptAction must have functionName and scriptTemplate"
                 )
             }
+            guard action["actionDescription"] is String,
+                  action["parameters"] is [String],
+                  let reliability = action["reliabilityScore"] as? Double,
+                  let avgTime = action["avgExecutionTimeMS"] as? Int else {
+                throw CatalogGeneratorError.validationFailed(
+                    "\(appName): applescriptAction '\(functionName)' is missing required fields " +
+                    "(actionDescription: String, parameters: [String], " +
+                    "reliabilityScore: Double, avgExecutionTimeMS: Int)"
+                )
+            }
+            _ = reliability
+            _ = avgTime
+        }
+
+        guard let shellCommands = entry["shellCommands"] as? [[String: Any]] else {
+            throw CatalogGeneratorError.validationFailed(
+                "\(appName): shellCommands must be an array of objects"
+            )
+        }
+
+        for command in shellCommands {
+            guard let name = command["name"] as? String, !name.isEmpty,
+                  command["command"] is String,
+                  command["argsTemplate"] is [String],
+                  command["commandDescription"] is String else {
+                throw CatalogGeneratorError.validationFailed(
+                    "\(appName): shellCommand must have name, command, argsTemplate (array), " +
+                    "and commandDescription"
+                )
+            }
+            if let safety = command["safetyCheck"], !(safety is String || safety is NSNull) {
+                throw CatalogGeneratorError.validationFailed(
+                    "\(appName): shellCommand '\(name)' safetyCheck must be a string or null"
+                )
+            }
+        }
+
+        guard let intents = entry["appIntents"] as? [[String: Any]] else {
+            throw CatalogGeneratorError.validationFailed(
+                "\(appName): appIntents must be an array of objects"
+            )
+        }
+
+        for intent in intents {
+            guard let intentName = intent["intentName"] as? String, !intentName.isEmpty else {
+                throw CatalogGeneratorError.validationFailed(
+                    "\(appName): each appIntent must have intentName"
+                )
+            }
+            guard intent["intentDescription"] is String,
+                  intent["exampleUsage"] is String,
+                  intent["reliabilityScore"] as? Double != nil,
+                  intent["avgExecutionTimeMS"] as? Int != nil else {
+                throw CatalogGeneratorError.validationFailed(
+                    "\(appName): appIntent '\(intentName)' is missing required fields " +
+                    "(intentDescription, exampleUsage, reliabilityScore, avgExecutionTimeMS)"
+                )
+            }
+            guard let parameters = intent["parameters"] as? [[String: Any]] else {
+                throw CatalogGeneratorError.validationFailed(
+                    "\(appName): appIntent '\(intentName)' parameters must be an array of objects"
+                )
+            }
+            for parameter in parameters {
+                guard parameter["name"] is String,
+                      parameter["type"] is String,
+                      parameter["isRequired"] is Bool else {
+                    throw CatalogGeneratorError.validationFailed(
+                        "\(appName): appIntent '\(intentName)' parameters need name (String), " +
+                        "type (String), isRequired (Bool)"
+                    )
+                }
+                for optionalKey in ["defaultValue", "parameterDescription"] {
+                    if let value = parameter[optionalKey], !(value is String || value is NSNull) {
+                        throw CatalogGeneratorError.validationFailed(
+                            "\(appName): appIntent '\(intentName)' parameter \(optionalKey) " +
+                            "must be a string or null"
+                        )
+                    }
+                }
+            }
+        }
+
+        guard let heuristics = entry["timingHeuristics"] as? [String: Any],
+              heuristics["launchDelay"] as? Int != nil,
+              heuristics["actionDelay"] as? Int != nil else {
+            throw CatalogGeneratorError.validationFailed(
+                "\(appName): timingHeuristics must provide launchDelay (Int) and actionDelay (Int)"
+            )
         }
 
         guard let patterns = entry["commonPatterns"] as? [[String: Any]] else {
