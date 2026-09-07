@@ -692,6 +692,68 @@ final class CodeHostListPanelControllerTests: XCTestCase {
 
     // MARK: - startOrRefresh
 
+    /// Opening a card mid-extraction cancels the in-flight list extraction;
+    /// the late payload must never scrape MR-detail DOM into list cards.
+    func testOpenCancelsInFlightExtractionAndRejectsLatePayload() async {
+        let extractGate = ContinuationGate<String?>()
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in true },
+            executor: { _ in await extractGate.wait() }
+        )
+
+        controller.startIfNeeded()
+        await waitUntil { extractGate.pendingCount == 1 }
+        XCTAssertEqual(controller.state, .extracting)
+        let generationBefore = controller.currentGeneration
+
+        controller.open(summary(index: 3))
+
+        XCTAssertEqual(controller.presentation, .browser)
+        XCTAssertFalse(controller.isRefreshing, "Ordinary navigation cancels in-flight work")
+        XCTAssertGreaterThan(controller.currentGeneration, generationBefore)
+        XCTAssertTrue(controller.needsExtraction, "Cancelled first load resumes on next appearance")
+
+        extractGate.resume(itemsJSON(count: 3))
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(controller.state.retainedItems, [], "A late payload after open must not become cards")
+        XCTAssertTrue(Self.isIncompleteForTest(controller.state))
+    }
+
+    /// While sign-in recovery owns the retained page, startOrRefresh must
+    /// observe instead of force-reloading the list URL over an active SSO.
+    func testStartOrRefreshDuringActiveSignInDoesNotReload() async {
+        let loads = CounterBox()
+        let controller = makeController(
+            page: makePage(),
+            loader: { _, _ in
+                loads.increment()
+                return true
+            },
+            executor: { _ in "{\"outcome\":\"authenticationRequired\",\"items\":[]}" }
+        )
+
+        controller.startOrRefresh()
+        await waitForSettled(controller)
+        XCTAssertEqual(controller.state, .authenticationRequired)
+        XCTAssertTrue(controller.wantsAuthenticationObservation)
+        XCTAssertEqual(loads.value, 1)
+
+        controller.startOrRefresh()
+
+        XCTAssertEqual(loads.value, 1, "Sign-in observation must not be interrupted by a forced reload")
+        XCTAssertFalse(controller.isRefreshing)
+        XCTAssertEqual(controller.state, .authenticationRequired)
+        XCTAssertTrue(controller.wantsAuthenticationObservation)
+    }
+
+    private static func isIncompleteForTest(_ state: MergeRequestListPanelState) -> Bool {
+        switch state {
+        case .loadingPage, .extracting: return true
+        default: return false
+        }
+    }
+
     func testStartOrRefreshDoesNotDoubleFirstLoad() async {
         let loads = CounterBox()
         let controller = makeController(

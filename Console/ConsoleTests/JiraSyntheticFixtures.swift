@@ -111,6 +111,48 @@ enum JiraSyntheticFixtures {
         """
     }
 
+    /// A non-issue table (filters/stats) rendered above the real issue table.
+    /// Readiness sees issue rows document-wide; extraction must still find the
+    /// issue table instead of reporting the first table's zero rows.
+    static func listHTMLWithLeadingNonIssueTable() -> String {
+        let statsTable = """
+          <table id="sprint-stats">
+            <thead><tr><th>Assigned</th><th>In review</th></tr></thead>
+            <tbody><tr><td>3</td><td>1</td></tr></tbody>
+          </table>
+        """
+        let full = listHTML()
+        return full.replacingOccurrences(
+            of: "<main data-testid=\"issue-navigator-container\">",
+            with: "<main data-testid=\"issue-navigator-container\">\n\(statsTable)"
+        )
+    }
+
+    /// A signed-in page whose only table is unrelated to the issue navigator.
+    /// Without native issue-table identity this is an unsupported page, never
+    /// a legitimate empty list.
+    static func unrelatedTablePageHTML(signedIn: Bool = true) -> String {
+        let chrome = signedIn
+            ? "<nav><button data-testid=\"atlassian-navigation--secondary-actions--profile--trigger\"><img src=\"https://jira.example.com/universal_avatar/view/type/user\" alt=\"\"></button></nav>"
+            : "<nav><a href=\"/login\">Log in</a></nav>"
+        return """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Profile - Jira</title></head>
+        <body>
+          \(chrome)
+          <main data-testid="page-layout.root">
+            <h1>Activity summary</h1>
+            <table id="activity-stats">
+              <thead><tr><th>Comments</th><th>Reports</th></tr></thead>
+              <tbody><tr><td>12</td><td>4</td></tr></tbody>
+            </table>
+          </main>
+        </body>
+        </html>
+        """
+    }
+
     static func emptyListHTML(signedIn: Bool = true) -> String {
         let chrome = signedIn
             ? "<nav><button data-testid=\"atlassian-navigation--secondary-actions--profile--trigger\"><img src=\"https://jira.example.com/universal_avatar/view/type/user\" alt=\"\"></button></nav>"

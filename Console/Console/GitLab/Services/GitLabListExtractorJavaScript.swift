@@ -134,6 +134,8 @@ enum GitLabListExtractorJavaScript {
       return JSON.stringify({ outcome: 'authenticationRequired', items: [] });
     }
 
+    const hasListContainer = matchesAny(LIST_SELECTORS);
+
     const anchors = [];
     for (const anchor of document.querySelectorAll('a[href]')) {
       if (!anchor.pathname) { continue; }
@@ -151,12 +153,18 @@ enum GitLabListExtractorJavaScript {
       rowsInOrder.get(rowElement).push(anchor);
     }
 
+    if (rowsInOrder.size > 0 && !hasListContainer) {
+      // MR links on a page without a merge-request list container (dashboard
+      // widget, wiki) are not a merge-request list.
+      return JSON.stringify({ outcome: 'unsupported', items: [] });
+    }
+
     if (rowsInOrder.size === 0) {
-      const hasContainer = matchesAny(LIST_SELECTORS);
-      const hasEmptyState = matchesAny(EMPTY_SELECTORS);
-      if (hasContainer || hasEmptyState) {
+      if (matchesAny(EMPTY_SELECTORS)) {
         return JSON.stringify({ outcome: 'empty', items: [] });
       }
+      // A bare list container may still be hydrating; without positive
+      // empty-state evidence it is never a decisive empty list.
       return JSON.stringify({ outcome: 'unsupported', items: [] });
     }
 

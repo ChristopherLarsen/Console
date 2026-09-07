@@ -164,17 +164,25 @@ final class JiraPanelController {
                 guard case .authenticationRequired = state else { return }
                 let snapshot = await service.readiness()
                 guard startGeneration == generation else { return }
-                var hasRows = false
-                if case let .pending(rows, _) = snapshot {
-                    hasRows = rows
+                var listIsBack = false
+                if case let .pending(hasRows, hasContainer) = snapshot {
+                    // A container without rows can be a legitimate signed-in
+                    // empty list; it must recover too, not wait on rows that
+                    // will never come. The bounded readiness pipeline that
+                    // follows decides empty versus rows.
+                    listIsBack = hasRows || hasContainer
                 }
-                if hasRows, startGeneration == generation {
-                    await finishExtraction(generation: startGeneration)
+                if listIsBack, startGeneration == generation, let url = configuredURL() {
+                    await startExtraction(url: url, generation: startGeneration)
                     return
                 }
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
         }
+    }
+
+    private func configuredURL() -> URL? {
+        configuredURLString.flatMap(URL.init(string:))
     }
 
     private func apply(extraction: JiraListExtraction) {

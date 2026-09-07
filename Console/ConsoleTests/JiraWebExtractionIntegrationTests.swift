@@ -150,6 +150,26 @@ final class JiraWebExtractionIntegrationTests: XCTestCase {
         XCTAssertEqual(tickets.count, JiraSyntheticFixtures.fixtures.count)
     }
 
+    func testLeadingNonIssueTableDoesNotHideIssueRows() async throws {
+        let page = try await loadFixture(JiraSyntheticFixtures.listHTMLWithLeadingNonIssueTable())
+        _ = await waitForRows(page)
+
+        let extraction = await JiraListExtractor.extract(from: page)
+
+        guard case let .tickets(tickets) = extraction else {
+            return XCTFail("expected tickets, got \(extraction)")
+        }
+        XCTAssertEqual(tickets.map(\.key), JiraSyntheticFixtures.expectedOrder)
+    }
+
+    func testUnrelatedTableWithoutIssueIdentityIsUnsupportedNeverFalseEmpty() async throws {
+        let page = try await loadFixture(JiraSyntheticFixtures.unrelatedTablePageHTML())
+
+        let extraction = await JiraListExtractor.extract(from: page)
+
+        XCTAssertEqual(extraction, .unsupportedPage)
+    }
+
     func testEmptyListIsPositivelyIdentified() async throws {
         let page = try await loadFixture(JiraSyntheticFixtures.emptyListHTML(signedIn: true))
 

@@ -112,8 +112,15 @@ final class CodeHostListPanelController {
 
     /// Starts or resumes extraction if the current URL still needs work;
     /// otherwise performs a manual reload. The first load is not doubled.
+    ///
+    /// While sign-in recovery owns the retained page, no reload is forced:
+    /// loading the list URL would abort an in-progress SSO round trip. The
+    /// active navigation watch re-extracts when sign-in completes.
     func startOrRefresh() {
         startIfNeeded()
+        if wantsAuthenticationObservation {
+            return
+        }
         if !isRefreshing {
             refresh()
         }
@@ -193,7 +200,14 @@ final class CodeHostListPanelController {
     }
 
     /// Reveals the same retained page and navigates it to the captured MR URL.
+    /// Ordinary navigation cancels any in-flight list extraction so a late
+    /// payload scraped from the detail page can never replace the panel.
     func open(_ item: MergeRequestSummary) {
+        let wasInFlight = extractionTask != nil || isRefreshing
+        cancelInFlightDOMExtraction()
+        if wasInFlight, Self.isIncomplete(state) {
+            needsExtraction = true
+        }
         presentation = .browser
         page.load(URLRequest(url: item.mergeRequestURL))
     }

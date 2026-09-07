@@ -140,7 +140,22 @@ extension JiraListExtractor {
     if (hasPassword || authHost || location.pathname.indexOf('/login') === 0) {
       return JSON.stringify({ kind: 'auth' });
     }
-    const table = document.querySelector('table');
+    // The issue table is positively identified before any rows are read: a
+    // leading non-issue table (filters, stats) must never satisfy the probe
+    // while the real issue table goes unread, and an unrelated table without
+    // native issue-table identity must never read as a legitimate empty list.
+    const tables = document.querySelectorAll('table');
+    let table = null;
+    for (const candidate of tables) {
+      if (candidate.querySelector('[data-testid^="native-issue-table"]')) { table = candidate; break; }
+    }
+    if (!table) {
+      let bestCount = 0;
+      for (const candidate of tables) {
+        const count = candidate.querySelectorAll('a[href*="/browse/"]').length;
+        if (count > bestCount) { bestCount = count; table = candidate; }
+      }
+    }
     const rows = table
       ? table.querySelectorAll('tbody tr[data-testid="native-issue-table.ui.issue-row"], tbody tr[role="row"]')
       : [];
@@ -221,7 +236,7 @@ extension JiraListExtractor {
     if (outRows.length > 0) {
       return JSON.stringify({ kind: 'tickets', rows: outRows });
     }
-    if (table || document.querySelectorAll('[data-testid^="native-issue-table"]').length > 0) {
+    if (document.querySelectorAll('[data-testid^="native-issue-table"]').length > 0) {
       return JSON.stringify({ kind: 'empty', signedIn: signedInMarkers() });
     }
     return JSON.stringify({ kind: 'unsupported' });

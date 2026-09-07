@@ -89,6 +89,50 @@ final class MergeRequestListExtractorTests: XCTestCase {
         """
     }
 
+    /// A merge-request list container that has rendered but has no rows and no
+    /// empty state yet — hydration in progress, never a decisive empty list.
+    private var hydratingContainerHTML: String {
+        """
+        <html><body>
+        <ul class="merge_requests-list" id="merge_requests_list"></ul>
+        </body></html>
+        """
+    }
+
+    private var containerWithEmptyStateHTML: String {
+        """
+        <html><body>
+        <ul class="merge_requests-list" id="merge_requests_list"></ul>
+        <div class="gl-empty-state"><h4>No merge requests</h4></div>
+        </body></html>
+        """
+    }
+
+    /// A non-list page that merely links one merge request must not be read
+    /// as a one-item list.
+    private var nonListPageWithMRLinkHTML: String {
+        """
+        <html><body>
+        <h1>Project wiki</h1>
+        <p>Related work:
+          <a href="https://gitlab.example.test/group/console-ios/-/merge_requests/77">Fix login loop</a>
+        </p>
+        </body></html>
+        """
+    }
+
+    private var dashboardWidgetWithMRLinkHTML: String {
+        """
+        <html><body>
+        <div class="dashboard-widget">
+          <ul class="widget-list">
+            <li><a href="https://gitlab.example.test/group/console-ios/-/merge_requests/31">Widget change</a></li>
+          </ul>
+        </div>
+        </body></html>
+        """
+    }
+
     /// Same MR linked twice inside one row plus the same URL repeated in a
     /// second row; must collapse to one card.
     private var duplicateAnchorsHTML: String {
@@ -222,6 +266,26 @@ final class MergeRequestListExtractorTests: XCTestCase {
 
     func testUnsupportedPageIsReportedWhenNothingMatches() async throws {
         let result = try await extract(from: unsupportedPageHTML)
+        XCTAssertEqual(result, .unsupportedPage)
+    }
+
+    func testHydratingContainerWithoutRowsOrEmptyStateIsNotDecisiveEmpty() async throws {
+        let result = try await extract(from: hydratingContainerHTML)
+        XCTAssertEqual(result, .unsupportedPage, "A bare container may still be hydrating")
+    }
+
+    func testContainerWithPositiveEmptyStateIsStillEmpty() async throws {
+        let result = try await extract(from: containerWithEmptyStateHTML)
+        XCTAssertEqual(result, .empty)
+    }
+
+    func testMRLinkOnNonListPageIsUnsupported() async throws {
+        let result = try await extract(from: nonListPageWithMRLinkHTML)
+        XCTAssertEqual(result, .unsupportedPage)
+    }
+
+    func testDashboardWidgetWithMRLinkIsUnsupported() async throws {
+        let result = try await extract(from: dashboardWidgetWithMRLinkHTML)
         XCTAssertEqual(result, .unsupportedPage)
     }
 

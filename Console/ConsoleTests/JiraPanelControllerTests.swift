@@ -146,6 +146,27 @@ final class JiraPanelControllerTests: XCTestCase {
         }
     }
 
+    /// A container-only readiness snapshot is a legitimate signed-in empty
+    /// list; post-auth recovery must run the bounded extraction pipeline
+    /// instead of waiting on rows that will never come.
+    func testPostAuthenticationWatchRecoversForContainerOnlyEmptyList() async {
+        service.readinessResult = .authenticationDetected
+        controller.configure(url: listURL1)
+        await waitFor(controller.state == .authenticationRequired)
+        XCTAssertEqual(service.extractionCount, 0)
+
+        service.readinessResult = .pending(hasRows: false, hasContainer: true)
+        service.extractionResult = .empty
+
+        await waitFor({
+            if case .empty = controller.state { return true }
+            return false
+        }(), timeout: 25)
+        XCTAssertFalse(controller.showsBrowser)
+        XCTAssertGreaterThanOrEqual(service.extractionCount, 1)
+        XCTAssertEqual(service.loadedURLs.count, 1, "Recovery must not stack loads")
+    }
+
     func testUnsupportedPageWithoutPriorCardsShowsBrowser() async {
         service.readinessResult = .pending(hasRows: true, hasContainer: true)
         service.extractionResult = .unsupportedPage

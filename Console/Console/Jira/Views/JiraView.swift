@@ -11,8 +11,26 @@ final class JiraWebSession {
     let panelController = JiraPanelController()
     /// Normalized URL string last loaded into `page`, if any.
     var lastLoadedURLString: String?
+    /// True while the retained page intentionally shows a card or deep-link
+    /// navigation target instead of the configured list. Memory-only.
+    var isShowingNavigatedPage = false
 
     private init() {}
+
+    /// Whether the retained page already shows what the user intends and must
+    /// not be yanked back to the configured list when the destination
+    /// remounts. A card/deep-link navigation target survives remounts; an
+    /// explicit settings change (`force`) never does.
+    nonisolated static func shouldKeepRetainedPage(
+        configuredURLString: String,
+        lastLoadedURLString: String?,
+        isShowingNavigatedPage: Bool,
+        force: Bool
+    ) -> Bool {
+        if force { return false }
+        if isShowingNavigatedPage { return true }
+        return lastLoadedURLString == configuredURLString
+    }
 }
 
 extension JiraWebSession: JiraPageServicing {
@@ -20,6 +38,7 @@ extension JiraWebSession: JiraPageServicing {
 
     func load(url: URL) {
         lastLoadedURLString = url.absoluteString
+        isShowingNavigatedPage = false
         page.load(URLRequest(url: url))
     }
 
@@ -28,7 +47,8 @@ extension JiraWebSession: JiraPageServicing {
     }
 
     func navigate(to url: URL) {
-        lastLoadedURLString = nil
+        lastLoadedURLString = url.absoluteString
+        isShowingNavigatedPage = true
         page.load(URLRequest(url: url))
     }
 
@@ -234,11 +254,17 @@ struct JiraView: View {
     }
 
     private func loadIfNeeded(url: URL, force: Bool) {
-        let normalized = url.absoluteString
-        if !force, JiraWebSession.shared.lastLoadedURLString == normalized {
+        let session = JiraWebSession.shared
+        if JiraWebSession.shouldKeepRetainedPage(
+            configuredURLString: url.absoluteString,
+            lastLoadedURLString: session.lastLoadedURLString,
+            isShowingNavigatedPage: session.isShowingNavigatedPage,
+            force: force
+        ) {
             return
         }
-        JiraWebSession.shared.lastLoadedURLString = normalized
+        session.lastLoadedURLString = url.absoluteString
+        session.isShowingNavigatedPage = false
         page.load(URLRequest(url: url))
     }
 
