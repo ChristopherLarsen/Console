@@ -10,7 +10,7 @@ struct AIProviderConfig: Codable {
         .openAI: AIProviderConfig(
             provider: .openAI,
             endpointURL: "https://api.openai.com/v1/chat/completions",
-            apiKeyKeychainRef: "ai-provider-openai",
+            apiKeyKeychainRef: "ai-provider-openAI",
             modelName: "gpt-4o"
         ),
         .claude: AIProviderConfig(

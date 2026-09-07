@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 GENERATOR_DIR="$ROOT_DIR/CatalogGenerator"
-CATALOG_OUTPUT="$ROOT_DIR/Console/Console/Resources/ActionCatalog.json"
+CATALOG_OUTPUT="$ROOT_DIR/Console/Console/Resources/Catalog/ActionCatalog.json"
 
 echo "=== Console Catalog Generator ==="
 

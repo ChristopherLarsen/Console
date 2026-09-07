@@ -28,7 +28,8 @@ final class AIProviderManager {
         }
     }
 
-    func recordLastRequest(success: Bool) {
+    func recordLastRequest(success: Bool, for provider: AIProvider) {
+        guard provider == selectedProvider else { return }
         lastRequest = success ? .succeeded : .failed
     }
 
@@ -172,9 +173,7 @@ final class AIProviderManager {
             ]
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         case .gemini:
-            var components = URLComponents(string: cfg.endpointURL)
-            components?.queryItems = [URLQueryItem(name: "key", value: apiKey)]
-            guard let geminiURL = components?.url else {
+            guard let geminiURL = URL(string: "\(cfg.endpointURL)/\(cfg.modelName):generateContent?key=\(apiKey)") else {
                 return .error("Invalid Gemini URL")
             }
             request.url = geminiURL
@@ -205,13 +204,13 @@ final class AIProviderManager {
                     provider: provider, endpoint: actualURL, model: cfg.modelName,
                     requestBody: requestBody, responseBody: nil, statusCode: nil
                 )
-                recordLastRequest(success: false)
+                recordLastRequest(success: false, for: provider)
                 return .error("Unexpected response")
             }
             let body = String(data: data, encoding: .utf8) ?? "<non-UTF8 body>"
             switch http.statusCode {
             case 200..<300:
-                recordLastRequest(success: true)
+                recordLastRequest(success: true, for: provider)
                 return .success
             case 401, 403:
                 printConnectionFailure(
@@ -219,7 +218,7 @@ final class AIProviderManager {
                     provider: provider, endpoint: actualURL, model: cfg.modelName,
                     requestBody: requestBody, responseBody: body, statusCode: http.statusCode
                 )
-                recordLastRequest(success: false)
+                recordLastRequest(success: false, for: provider)
                 return .invalidKey
             case 429:
                 printConnectionFailure(
@@ -227,7 +226,7 @@ final class AIProviderManager {
                     provider: provider, endpoint: actualURL, model: cfg.modelName,
                     requestBody: requestBody, responseBody: body, statusCode: http.statusCode
                 )
-                recordLastRequest(success: false)
+                recordLastRequest(success: false, for: provider)
                 return .rateLimited
             default:
                 printConnectionFailure(
@@ -237,7 +236,7 @@ final class AIProviderManager {
                     headers: http.allHeaderFields
                 )
                 let msg = String(body.prefix(120))
-                recordLastRequest(success: false)
+                recordLastRequest(success: false, for: provider)
                 return .error("[\(http.statusCode)] \(msg)")
             }
         } catch let error as URLError {
@@ -247,7 +246,7 @@ final class AIProviderManager {
                 requestBody: requestBody, responseBody: nil, statusCode: nil,
                 errorDetail: "URLError code: \(error.code.rawValue) (\(error.localizedDescription))"
             )
-            recordLastRequest(success: false)
+            recordLastRequest(success: false, for: provider)
             return .networkError(error.localizedDescription)
         } catch {
             printConnectionFailure(
@@ -256,7 +255,7 @@ final class AIProviderManager {
                 requestBody: requestBody, responseBody: nil, statusCode: nil,
                 errorDetail: "\(error)"
             )
-            recordLastRequest(success: false)
+            recordLastRequest(success: false, for: provider)
             return .error(error.localizedDescription)
         }
     }
@@ -313,13 +312,13 @@ final class AIProviderManager {
                     provider: .lmStudio, endpoint: endpoint, model: cfg.modelName,
                     requestBody: "<GET>", responseBody: nil, statusCode: nil
                 )
-                recordLastRequest(success: false)
+                recordLastRequest(success: false, for: .lmStudio)
                 return .error("Unexpected response")
             }
             let body = String(data: data, encoding: .utf8) ?? "<non-UTF8 body>"
             switch http.statusCode {
             case 200..<300:
-                recordLastRequest(success: true)
+                recordLastRequest(success: true, for: .lmStudio)
                 return .success
             case 401, 403:
                 printConnectionFailure(
@@ -327,7 +326,7 @@ final class AIProviderManager {
                     provider: .lmStudio, endpoint: endpoint, model: cfg.modelName,
                     requestBody: "<GET>", responseBody: body, statusCode: http.statusCode
                 )
-                recordLastRequest(success: false)
+                recordLastRequest(success: false, for: .lmStudio)
                 return .invalidKey
             default:
                 printConnectionFailure(
@@ -336,7 +335,7 @@ final class AIProviderManager {
                     requestBody: "<GET>", responseBody: body, statusCode: http.statusCode,
                     headers: http.allHeaderFields
                 )
-                recordLastRequest(success: false)
+                recordLastRequest(success: false, for: .lmStudio)
                 return .error("[\(http.statusCode)] \(String(body.prefix(120)))")
             }
         } catch let error as URLError {
@@ -346,7 +345,7 @@ final class AIProviderManager {
                 requestBody: "<GET>", responseBody: nil, statusCode: nil,
                 errorDetail: "URLError code: \(error.code.rawValue) (\(error.localizedDescription))"
             )
-            recordLastRequest(success: false)
+            recordLastRequest(success: false, for: .lmStudio)
             if LMStudioAPI.isUnreachable(error) {
                 let origin = LMStudioAPI.origin(from: cfg.endpointURL)
                 return .networkError("Could not reach LM Studio at \(origin). Start the local server (Developer tab or lms server start) and try again.")
@@ -359,7 +358,7 @@ final class AIProviderManager {
                 requestBody: "<GET>", responseBody: nil, statusCode: nil,
                 errorDetail: "\(error)"
             )
-            recordLastRequest(success: false)
+            recordLastRequest(success: false, for: .lmStudio)
             return .error(error.localizedDescription)
         }
     }

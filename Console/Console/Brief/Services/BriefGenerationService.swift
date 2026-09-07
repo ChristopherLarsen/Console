@@ -33,14 +33,41 @@ enum BriefOperationOutcome: Equatable {
 final class BriefGenerationService {
     private let store: BriefStore
     private let collector: any BriefActivityCollecting
+    private let sequencer: BriefOperationSequencer
 
-    private var operationGeneration: UInt64 = 0
     private var taskEditRevisionByDay: [Date: UInt64] = [:]
 
     init(store: BriefStore? = nil,
          collector: (any BriefActivityCollecting)? = nil) {
-        self.store = store ?? BriefStore()
+        let resolvedStore = store ?? BriefStore()
+        self.store = resolvedStore
+        self.sequencer = BriefGenerationService.sequencer(forDirectory: resolvedStore.directory)
         self.collector = collector ?? BriefActivityCollector()
+    }
+
+    /// Operation generations are shared by every service that persists to the
+    /// same brief directory, so a late generate from one instance cannot
+    /// overwrite a newer write from another (e.g. launch bootstrap vs the
+    /// Brief panel).
+    @MainActor
+    private final class BriefOperationSequencer {
+        private(set) var generation: UInt64 = 0
+
+        func nextID() -> UInt64 {
+            generation += 1
+            return generation
+        }
+
+        var currentID: UInt64 { generation }
+    }
+
+    private static var sequencersByDirectory: [String: BriefOperationSequencer] = [:]
+
+    private static func sequencer(forDirectory directory: URL) -> BriefOperationSequencer {
+        if let existing = sequencersByDirectory[directory.path] { return existing }
+        let created = BriefOperationSequencer()
+        sequencersByDirectory[directory.path] = created
+        return created
     }
 
     // MARK: - Queries
@@ -50,7 +77,7 @@ final class BriefGenerationService {
     }
 
     func isCurrent(_ token: BriefOperationToken) -> Bool {
-        token.id == operationGeneration
+        token.id == sequencer.currentID
     }
 
     /// Increments the operation generation. Any previously started generate
@@ -60,9 +87,9 @@ final class BriefGenerationService {
                         for day: Date,
                         calendar: Calendar = .current) -> BriefOperationToken {
         let dayStart = BriefStore.startOfDay(for: day, calendar: calendar)
-        operationGeneration += 1
+        let id = sequencer.nextID()
         return BriefOperationToken(
-            id: operationGeneration,
+            id: id,
             day: dayStart,
             kind: kind,
             taskEditRevision: taskEditRevisionByDay[dayStart] ?? 0

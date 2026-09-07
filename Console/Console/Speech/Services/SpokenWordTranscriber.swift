@@ -38,13 +38,10 @@ final class SpokenWordTranscriber {
         }
 
         analyzer = SpeechAnalyzer(modules: [transcriber])
-        
-        do {
-            try await ensureModel(transcriber: transcriber, locale: Locale.current)
-        } catch let error as TranscriptionError {
-            printDebug("SpokenWordTranscriber: \(error.descriptionString)")
-            return
-        }
+
+        // Fail closed: a swallowed TranscriptionError would leave the UI
+        // "active" with inputBuilder/format unset and no text ever arriving.
+        try await ensureModel(transcriber: transcriber, locale: Locale.current)
         
         self.analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber])
         (inputSequence, inputBuilder) = AsyncStream<AnalyzerInput>.makeStream()

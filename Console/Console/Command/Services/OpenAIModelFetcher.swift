@@ -2,6 +2,7 @@ import Foundation
 
 struct OpenAIModelFetcher: ModelFetcher {
     let apiKey: String
+    let provider: AIProvider
     let baseURL: String
 
     private static let chatPrefixes = ["gpt-", "o1", "o3", "o4"]
@@ -25,6 +26,7 @@ struct OpenAIModelFetcher: ModelFetcher {
 
     init(apiKey: String, config: AIProviderConfig) {
         self.apiKey = apiKey
+        self.provider = config.provider
         // Derive base URL from chat completions endpoint
         self.baseURL = config.endpointURL
             .replacingOccurrences(of: "/chat/completions", with: "")
@@ -35,7 +37,7 @@ struct OpenAIModelFetcher: ModelFetcher {
         var request = URLRequest(url: url, timeoutInterval: 15)
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
-        let (data, response) = try await performProviderGETRequest(request)
+        let (data, response) = try await performProviderGETRequest(request, provider: provider)
         let httpResponse = response as? HTTPURLResponse
 
         switch httpResponse?.statusCode {

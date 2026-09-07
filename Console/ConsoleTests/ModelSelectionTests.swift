@@ -71,11 +71,11 @@ final class ModelSelectionTests: XCTestCase {
     func testRefreshInvalidatesCacheForProvider() {
         let cache = ModelCacheManager.shared
         let models = [AvailableModel(id: "gpt-4o", displayName: "GPT-4o")]
-        cache.cacheModels(models, for: .openAI)
-        XCTAssertNotNil(cache.getCachedModels(for: .openAI))
+        cache.cacheModels(models, for: .openAI, endpointURL: "https://api.test", apiKey: "k1")
+        XCTAssertNotNil(cache.getCachedModels(for: .openAI, endpointURL: "https://api.test", apiKey: "k1"))
 
         cache.invalidateCache(for: .openAI)
-        XCTAssertNil(cache.getCachedModels(for: .openAI))
+        XCTAssertNil(cache.getCachedModels(for: .openAI, endpointURL: "https://api.test", apiKey: "k1"))
     }
 
     // MARK: - Model Source Enum

@@ -4,7 +4,7 @@ import Foundation
 /// Application Support/Console/brief/. Content is local-only: commit
 /// subjects and the user's own task lines.
 struct BriefStore {
-    private let directory: URL
+    let directory: URL
     private let fileManager: FileManager
 
     private static let dayFormatter: DateFormatter = {

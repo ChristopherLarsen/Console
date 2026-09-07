@@ -77,8 +77,8 @@ final class ModelFetcherTests: XCTestCase {
     func testCacheStoreAndRetrieve() {
         let cache = ModelCacheManager.shared
         let models = [AvailableModel(id: "test-model", displayName: "Test")]
-        cache.cacheModels(models, for: .openAI)
-        let cached = cache.getCachedModels(for: .openAI)
+        cache.cacheModels(models, for: .openAI, endpointURL: "https://api.test", apiKey: "k1")
+        let cached = cache.getCachedModels(for: .openAI, endpointURL: "https://api.test", apiKey: "k1")
         XCTAssertNotNil(cached)
         XCTAssertEqual(cached?.count, 1)
         XCTAssertEqual(cached?.first?.id, "test-model")
@@ -87,26 +87,49 @@ final class ModelFetcherTests: XCTestCase {
     func testCacheMissForDifferentProvider() {
         let cache = ModelCacheManager.shared
         let models = [AvailableModel(id: "test-model", displayName: "Test")]
-        cache.cacheModels(models, for: .openAI)
-        let cached = cache.getCachedModels(for: .gemini)
+        cache.cacheModels(models, for: .openAI, endpointURL: "https://api.test", apiKey: "k1")
+        let cached = cache.getCachedModels(for: .gemini, endpointURL: "https://api.test", apiKey: "k1")
         // May or may not be nil depending on prior test state, but should not crash
         XCTAssertTrue(cached == nil || cached!.first?.id != "test-model" || true)
     }
 
+    func testCacheMissForDifferentEndpoint() {
+        let cache = ModelCacheManager.shared
+        let models = [AvailableModel(id: "endpoint-model", displayName: "E")]
+        cache.cacheModels(models, for: .lmStudio, endpointURL: "http://127.0.0.1:1234", apiKey: "")
+        XCTAssertNil(cache.getCachedModels(for: .lmStudio, endpointURL: "http://localhost:1234", apiKey: ""))
+    }
+
+    func testCacheMissForDifferentAPIKey() {
+        let cache = ModelCacheManager.shared
+        let models = [AvailableModel(id: "key-model", displayName: "K")]
+        cache.cacheModels(models, for: .openAI, endpointURL: "https://api.test", apiKey: "key-a")
+        XCTAssertNil(cache.getCachedModels(for: .openAI, endpointURL: "https://api.test", apiKey: "key-b"))
+    }
+
     func testCacheInvalidation() {
         let cache = ModelCacheManager.shared
-        cache.cacheModels([AvailableModel(id: "x", displayName: "X")], for: .claude)
+        cache.cacheModels([AvailableModel(id: "x", displayName: "X")], for: .claude, endpointURL: "https://api.test", apiKey: "k1")
         cache.invalidateCache(for: .claude)
-        XCTAssertNil(cache.getCachedModels(for: .claude))
+        XCTAssertNil(cache.getCachedModels(for: .claude, endpointURL: "https://api.test", apiKey: "k1"))
+    }
+
+    func testCacheInvalidationCoversAllEndpointsForKey() {
+        let cache = ModelCacheManager.shared
+        cache.cacheModels([AvailableModel(id: "x", displayName: "X")], for: .claude, endpointURL: "https://a.test", apiKey: "k1")
+        cache.cacheModels([AvailableModel(id: "y", displayName: "Y")], for: .claude, endpointURL: "https://b.test", apiKey: "k1")
+        cache.invalidateCache(for: .claude)
+        XCTAssertNil(cache.getCachedModels(for: .claude, endpointURL: "https://a.test", apiKey: "k1"))
+        XCTAssertNil(cache.getCachedModels(for: .claude, endpointURL: "https://b.test", apiKey: "k1"))
     }
 
     func testCacheClearAll() {
         let cache = ModelCacheManager.shared
-        cache.cacheModels([AvailableModel(id: "a", displayName: "A")], for: .openAI)
-        cache.cacheModels([AvailableModel(id: "b", displayName: "B")], for: .claude)
+        cache.cacheModels([AvailableModel(id: "a", displayName: "A")], for: .openAI, endpointURL: "https://api.test", apiKey: "k1")
+        cache.cacheModels([AvailableModel(id: "b", displayName: "B")], for: .claude, endpointURL: "https://api.test", apiKey: "k1")
         cache.clearAllCaches()
-        XCTAssertNil(cache.getCachedModels(for: .openAI))
-        XCTAssertNil(cache.getCachedModels(for: .claude))
+        XCTAssertNil(cache.getCachedModels(for: .openAI, endpointURL: "https://api.test", apiKey: "k1"))
+        XCTAssertNil(cache.getCachedModels(for: .claude, endpointURL: "https://api.test", apiKey: "k1"))
     }
 
     // MARK: - ModelFetcherFactory

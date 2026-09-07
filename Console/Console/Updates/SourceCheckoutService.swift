@@ -83,13 +83,19 @@ struct SourceCheckoutService: SourceCheckouting {
         try fm.createDirectory(atPath: destinationRoot, withIntermediateDirectories: true)
 
         if fm.fileExists(atPath: destination) {
-            // Idempotent re-prepare: accept only a real checkout already holding the tag.
+            // Idempotent re-prepare: accept only a real checkout already
+            // holding the tag. The tag ref existing is not enough — HEAD
+            // must resolve to the same commit.
             let result = try await runGit(
-                ["-C", destination, "rev-parse", "--verify", "--quiet", "refs/tags/\(tag)^{commit}"],
+                ["-C", destination, "rev-parse", "--verify", "--quiet", "HEAD", "refs/tags/\(tag)^{commit}"],
                 description: "Verifying existing checkout",
                 workingDirectory: destination
             )
-            guard result.succeeded, let projectPath = Self.locateXcodeProject(in: destination) else {
+            let commits = result.standardOutput
+                .split(whereSeparator: \.isNewline)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard result.succeeded, commits.count == 2, commits[0] == commits[1],
+                  let projectPath = Self.locateXcodeProject(in: destination) else {
                 throw SourceCheckoutError.destinationExists(destination)
             }
             return PreparedSource(directoryPath: destination, xcodeProjectPath: projectPath)
