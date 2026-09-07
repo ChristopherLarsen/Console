@@ -143,6 +143,12 @@ final class NoteDictationMode: ListeningMode {
             speechBuffer = ""
         }
 
+        // The volatile span was just committed manually above; the final flush
+        // below finalizes that same span, so stop the delivery callbacks from
+        // appending it a second time.
+        transcriber?.onFinalizedTextUpdate = nil
+        transcriber?.onVolatileTextUpdate = nil
+
         do {
             try await transcriber?.finishTranscribing()
         } catch {
@@ -190,7 +196,7 @@ final class NoteDictationMode: ListeningMode {
         }
 
         let tfMatcher = ConsoleCommandMatcher(confidenceThreshold: 0.80)
-        if let match = tfMatcher.bestMatch(for: delta, availableIn: .exclusive) {
+        if let match = Self.exactExclusiveCommand(in: delta) {
             pendingCommand = (command: match.command, precedingText: delta)
             commandDeferralTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self] _ in
                 Task { @MainActor [weak self] in
@@ -203,6 +209,18 @@ final class NoteDictationMode: ListeningMode {
         }
 
         appendText(delta)
+    }
+
+    /// A finalized delta defers a note command only when it is exactly the
+    /// command phrase; a fuzzy match like "say copy" is dictated prose whose
+    /// words must be kept.
+    @available(macOS 26.0, *)
+    static func exactExclusiveCommand(in delta: String) -> ConsoleCommandMatch? {
+        let matcher = ConsoleCommandMatcher(confidenceThreshold: 0.80)
+        guard let match = matcher.bestMatch(for: delta, availableIn: .exclusive) else { return nil }
+        let cleanedDelta = delta.lowercased().filter { $0.isLetter }
+        let cleanedPhrase = match.triggerPhrase.lowercased().filter { $0.isLetter }
+        return cleanedDelta == cleanedPhrase ? match : nil
     }
 
     // MARK: - Volatile Command Detection

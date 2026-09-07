@@ -32,9 +32,11 @@ struct TriggersView: View {
 
     private func syncDetectorWakeWords() {
         guard let wakeWordManager else { return }
-        if #available(macOS 26.0, *),
-           let mode = AudioSessionController.shared.activeMode as? CommandListeningMode {
-            mode.updateWakeWords(wakeWordManager.enabledWords, allWakeWords: wakeWordManager.enabledWords)
+        if #available(macOS 26.0, *) {
+            CommandListeningMode.pushWakeWords(
+                wakeWordManager.enabledWords,
+                to: AudioSessionController.shared
+            )
         }
     }
 

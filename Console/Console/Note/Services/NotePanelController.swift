@@ -55,6 +55,10 @@ final class NotePanelController {
 
         if let mode = modeToRelease {
             Task {
+                // If this note mode is suspended behind another mode (e.g.
+                // field dictation), drop it from the suspended stack so its
+                // release cannot resurrect a dismissed panel.
+                await AudioSessionController.shared.discardSuspendedMode(mode)
                 await AudioSessionController.shared.releaseMode(mode)
                 if AudioSessionController.shared.activeMode == nil,
                    let vm = MenuBarViewModel.shared,

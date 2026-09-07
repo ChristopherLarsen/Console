@@ -81,6 +81,9 @@ enum ExecuteCommandIntentRunner {
         if run.result.alreadyRunning {
             return CommandRun.alreadyRunningMessage
         }
+        if run.result.authorizationDenied {
+            return "Authorization denied for \"\(run.result.command.name)\"."
+        }
         let status = run.result.overallSuccess ? "succeeded" : "failed"
         return "Ran \"\(run.result.command.name)\": \(status)."
     }

@@ -6,9 +6,17 @@ import AppKit
 struct PermissionsView: View {
     @Environment(PermissionBackgroundObserver.self) private var permissionObserver: PermissionBackgroundObserver?
     @State private var fallbackViewModel: PermissionsViewModel?
-    
+
     @AppStorage("hasSeenPermissionsWelcome") private var hasSeenWelcome = false
     @State private var selectedPermissionForModal: PermissionType?
+    @State private var modalStage: PermissionModalStage = .grant
+
+    private enum PermissionModalStage {
+        case grant
+        case waiting
+        case success
+        case failure
+    }
     
     /// Optional dismiss handler; when set, a close button is shown (modal presentation).
     var onDismiss: (() -> Void)? = nil
@@ -196,6 +204,7 @@ struct PermissionsView: View {
                         viewModel: viewModel,
                         onAction: { permissionType in
                             withAnimation(.easeOut(duration: 0.2)) {
+                                modalStage = .grant
                                 selectedPermissionForModal = permissionType
                             }
                         }
@@ -222,19 +231,19 @@ struct PermissionsView: View {
             .onTapGesture {
                 // Allow dismissing by tapping outside
                 withAnimation(.easeOut(duration: 0.2)) {
-                    selectedPermissionForModal = nil
+                    closeModal()
                 }
             }
-        
+
         let isGranted = viewModel.permissionStatus(for: permissionType) == .granted
-        
+
         // Modal content with scale + fade transition
         if isGranted {
             PermissionManageModalView(
                 permissionType: permissionType,
                 onDismiss: {
                     withAnimation(.easeOut(duration: 0.2)) {
-                        selectedPermissionForModal = nil
+                        closeModal()
                     }
                 },
                 onOpenSettings: {
@@ -247,26 +256,92 @@ struct PermissionsView: View {
             .transition(.scale(scale: 0.95).combined(with: .opacity))
             .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
         } else {
-            PermissionGrantModalView(
-                permissionType: permissionType,
-                onDismiss: {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        selectedPermissionForModal = nil
-                    }
-                },
-                onGrant: {
-                    Task {
-                        await viewModel.requestPermission(permissionType)
-                        await MainActor.run {
+            Group {
+                switch modalStage {
+                case .grant:
+                    PermissionGrantModalView(
+                        permissionType: permissionType,
+                        onDismiss: {
                             withAnimation(.easeOut(duration: 0.2)) {
-                                selectedPermissionForModal = nil
+                                closeModal()
+                            }
+                        },
+                        onGrant: { beginGrantFlow(for: permissionType) }
+                    )
+                case .waiting:
+                    PermissionModalWaitingView(
+                        permissionType: permissionType,
+                        checkPermission: {
+                            await viewModel.refreshStatus(for: permissionType)
+                            return viewModel.permissionStatus(for: permissionType)
+                        },
+                        onPermissionGranted: {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                modalStage = .success
+                            }
+                        },
+                        onCancel: {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                closeModal()
+                            }
+                        },
+                        onOpenSettings: {
+                            if let url = permissionType.systemSettingsURL {
+                                NSWorkspace.shared.open(url)
                             }
                         }
-                    }
+                    )
+                case .success:
+                    PermissionModalSuccessView(
+                        permissionType: permissionType,
+                        onDone: {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                closeModal()
+                            }
+                        }
+                    )
+                case .failure:
+                    PermissionModalFailureView(
+                        permissionType: permissionType,
+                        onTryAgain: { beginGrantFlow(for: permissionType) },
+                        onDismiss: {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                closeModal()
+                            }
+                        },
+                        onOpenSettings: {
+                            if let url = permissionType.systemSettingsURL {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                    )
                 }
-            )
+            }
             .transition(.scale(scale: 0.95).combined(with: .opacity))
             .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
+        }
+    }
+
+    private func closeModal() {
+        selectedPermissionForModal = nil
+        modalStage = .grant
+    }
+
+    /// Runs the system permission request while the modal shows its waiting
+    /// state; the waiting view keeps polling and flips to success, and an
+    /// explicit denial lands on the failure view instead of a silent dismiss.
+    private func beginGrantFlow(for permissionType: PermissionType) {
+        modalStage = .waiting
+        Task {
+            await viewModel.requestPermission(permissionType)
+            let status = viewModel.permissionStatus(for: permissionType)
+            withAnimation(.easeOut(duration: 0.2)) {
+                if status == .granted {
+                    modalStage = .success
+                } else if modalStage == .waiting {
+                    modalStage = .failure
+                }
+            }
         }
     }
 }
@@ -386,7 +461,16 @@ struct PermissionRowView: View {
                 
                 // Action button with animated label change
                 Button(state.currentStatus.actionLabel) {
-                    onAction?(state.type)
+                    // A policy-restricted permission cannot be granted; its
+                    // "View Details" action expands the row details instead
+                    // of opening the grant flow.
+                    if state.currentStatus == .restricted {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isExpanded = true
+                        }
+                    } else {
+                        onAction?(state.type)
+                    }
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)

@@ -45,8 +45,7 @@ actor PermissionStatusPoller {
             }
             group.addTask {
                 let sfStatus = SFSpeechRecognizer.authorizationStatus()
-                let status: PermissionStatus = sfStatus == .authorized ? .granted : .notGranted
-                return (.speechRecognition, status)
+                return (.speechRecognition, Self.mapSpeechAuthorizationStatus(sfStatus))
             }
             
             for await (type, status) in group {
@@ -74,13 +73,32 @@ actor PermissionStatusPoller {
             status = await MainActor.run { AutomationPermissionChecker.checkStatus() }
         case .speechRecognition:
             let sfStatus = SFSpeechRecognizer.authorizationStatus()
-            status = sfStatus == .authorized ? .granted : .notGranted
+            status = Self.mapSpeechAuthorizationStatus(sfStatus)
         }
         
         lastStatuses[type] = status
         
         await MainActor.run {
             viewModel.updateStatus(for: type, status: status)
+        }
+    }
+
+    /// Maps SFSpeechRecognizer authorization to a display status without
+    /// collapsing denied/restricted into notGranted (mirrors the mic mapping).
+    nonisolated static func mapSpeechAuthorizationStatus(
+        _ status: SFSpeechRecognizerAuthorizationStatus
+    ) -> PermissionStatus {
+        switch status {
+        case .notDetermined:
+            return .notGranted
+        case .restricted:
+            return .restricted
+        case .denied:
+            return .denied
+        case .authorized:
+            return .granted
+        @unknown default:
+            return .notGranted
         }
     }
 }

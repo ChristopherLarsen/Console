@@ -2,6 +2,7 @@ import XCTest
 @testable import Console
 
 /// H16-F01/F02/F04 — wake word detection and command extraction.
+/// H16-F05 — punctuation-only revisions must not arm capture timers.
 final class WakeWordCaptureTests: XCTestCase {
 
     @MainActor
@@ -132,6 +133,45 @@ final class WakeWordCaptureTests: XCTestCase {
         mode.handleTranscriptUpdate("console open terminal", isFinal: true)
         await fulfillment(of: [command], timeout: 2.0)
         XCTAssertEqual(commandText, "open terminal")
+        await mode.deactivate()
+    }
+
+    // MARK: - H16-F05: punctuation-only revisions must not count as speech
+
+    @MainActor
+    func testPunctuationOnlyRevisionDoesNotArmPostWakeWordSpeech() async {
+        let mode = await makeActivatedMode(wakeWords: ["console"])
+
+        mode.onWakeWordDetected = { _ in }
+        mode.handleTranscriptUpdate("console", isFinal: false)
+        XCTAssertFalse(mode.hasReceivedPostWakeWordSpeech)
+
+        // SR revised the wake word with trailing punctuation: no speech yet.
+        mode.handleTranscriptUpdate("console.", isFinal: false)
+        XCTAssertFalse(mode.hasReceivedPostWakeWordSpeech)
+
+        // Real command content arms the flag.
+        mode.handleTranscriptUpdate("console. open terminal", isFinal: false)
+        XCTAssertTrue(mode.hasReceivedPostWakeWordSpeech)
+        await mode.deactivate()
+    }
+
+    @MainActor
+    func testPunctuationOnlyRevisionDoesNotCancelCaptureAfterStabilityWindow() async {
+        let mode = await makeActivatedMode(wakeWords: ["console"])
+
+        mode.onWakeWordDetected = { _ in }
+        let cancelled = expectation(description: "capture must not be cancelled")
+        cancelled.isInverted = true
+        mode.onCommandCancelled = { cancelled.fulfill() }
+
+        mode.handleTranscriptUpdate("console", isFinal: false)
+        mode.handleTranscriptUpdate("console.", isFinal: false)
+
+        // Longer than the 0.75s stability threshold: capture must still be live.
+        try? await Task.sleep(for: .milliseconds(1000))
+        XCTAssertEqual(mode.phase, .capturingCommand)
+        await fulfillment(of: [cancelled], timeout: 0.1)
         await mode.deactivate()
     }
 }

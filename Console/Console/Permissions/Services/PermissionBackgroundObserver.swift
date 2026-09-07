@@ -24,6 +24,9 @@ final class PermissionBackgroundObserver {
     /// Notification observers for app lifecycle events
     private var activeObserver: NSObjectProtocol?
     private var resignObserver: NSObjectProtocol?
+
+    /// Periodic revocation-detection loop for the current active cycle.
+    private var changeDetectionTask: Task<Void, Never>?
     
     private var appTerminatedObserver: NSObjectProtocol?
     
@@ -109,7 +112,10 @@ final class PermissionBackgroundObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             appTerminatedObserver = nil
         }
-        
+
+        changeDetectionTask?.cancel()
+        changeDetectionTask = nil
+
         viewModel.stopPolling()
         isActive = false
     }
@@ -144,7 +150,10 @@ final class PermissionBackgroundObserver {
     private func handleAppWillResignActive() {
         guard isActive else { return }
         isActive = false
-        
+
+        changeDetectionTask?.cancel()
+        changeDetectionTask = nil
+
         viewModel.stopPolling()
     }
     
@@ -168,12 +177,15 @@ final class PermissionBackgroundObserver {
     }
     
     /// Schedule periodic checks for permission revocations.
+    /// Cancels any previous cycle's loop so rapid active/resign/active
+    /// transitions cannot stack parallel detection tasks.
     private func scheduleChangeDetection() {
-        Task {
+        changeDetectionTask?.cancel()
+        changeDetectionTask = Task {
             // Wait for polling to update states
             try? await Task.sleep(nanoseconds: 6_000_000_000) // 6 seconds (after first poll)
-            
-            while isActive {
+
+            while !Task.isCancelled && isActive {
                 await detectRevocations()
                 try? await Task.sleep(nanoseconds: 5_000_000_000) // Check every 5 seconds
             }

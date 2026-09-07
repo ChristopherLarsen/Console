@@ -104,6 +104,36 @@ final class NoteDictationModeTests: XCTestCase {
     }
 }
 
+// MARK: - Note command deferral tests (H18-F06)
+
+@available(macOS 26.0, *)
+final class NoteDictationCommandDeferralTests: XCTestCase {
+
+    @MainActor
+    func testExactCommandPhraseIsDeferred() {
+        let match = NoteDictationMode.exactExclusiveCommand(in: "copy")
+        XCTAssertEqual(match?.command.id, "note-copy")
+
+        let punctuated = NoteDictationMode.exactExclusiveCommand(in: "Copy.")
+        XCTAssertEqual(punctuated?.command.id, "note-copy")
+    }
+
+    @MainActor
+    func testFuzzyProseMatchIsNotTreatedAsCommand() {
+        // "say copy" fuzzily matches the copy phrase (≈0.81 confidence) but is
+        // dictated prose: it must be kept as text, not deferred to the command.
+        XCTAssertNil(NoteDictationMode.exactExclusiveCommand(in: "say copy"))
+        XCTAssertNil(NoteDictationMode.exactExclusiveCommand(in: "please copy this"))
+        XCTAssertNil(NoteDictationMode.exactExclusiveCommand(in: "copies"))
+    }
+
+    @MainActor
+    func testExactNonExclusiveCommandDoesNotDefer() {
+        // Exclusive note commands only; primary commands are not note commands.
+        XCTAssertNil(NoteDictationMode.exactExclusiveCommand(in: "settings"))
+    }
+}
+
 // MARK: - NoteViewModel.done Clipboard Tests (H18-F03)
 
 @available(macOS 26.0, *)

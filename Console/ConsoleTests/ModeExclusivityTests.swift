@@ -147,6 +147,70 @@ final class ModeExclusivityTests: XCTestCase {
         XCTAssertTrue(controller.activeMode === command)
     }
 
+    // MARK: - H18-F05: exclusive field dictation suspends and resumes note dictation
+
+    @MainActor
+    func testFieldDictationSuspendsAndResumesNoteDictation() async {
+        let controller = AudioSessionController.shared
+        let note = MockNoteMode()
+        let field = MockFieldMode()
+
+        await controller.requestMode(note)
+        let success = await controller.requestMode(field)
+
+        XCTAssertTrue(success)
+        XCTAssertTrue(controller.activeMode === field)
+        XCTAssertEqual(controller.suspendedModes.last?.modeIdentifier, "noteDictation")
+
+        await controller.releaseMode(field)
+
+        XCTAssertFalse(field.isActive)
+        XCTAssertTrue(note.isActive)
+        XCTAssertTrue(controller.activeMode === note)
+    }
+
+    // MARK: - Suspended modes restore in reverse suspension order
+
+    @MainActor
+    func testSuspendedStackRestoresInReverseOrder() async {
+        let controller = AudioSessionController.shared
+        let command = MockCommandMode()
+        let note = MockNoteMode()
+        let field = MockFieldMode()
+
+        await controller.requestMode(command)   // primary
+        await controller.requestMode(note)      // exclusive suspends command
+        await controller.requestMode(field)     // exclusive suspends note
+
+        await controller.releaseMode(field)
+        XCTAssertTrue(controller.activeMode === note)
+        XCTAssertTrue(note.isActive)
+
+        await controller.releaseMode(note)
+        XCTAssertTrue(controller.activeMode === command)
+        XCTAssertTrue(command.isActive)
+        XCTAssertTrue(controller.suspendedModes.isEmpty)
+    }
+
+    // MARK: - Discarding a suspended mode prevents its restoration
+
+    @MainActor
+    func testDiscardSuspendedModePreventsRestore() async {
+        let controller = AudioSessionController.shared
+        let command = MockCommandMode()
+        let field = MockFieldMode()
+
+        await controller.requestMode(command)
+        await controller.requestMode(field)
+
+        await controller.discardSuspendedMode(command)
+        await controller.releaseMode(field)
+
+        XCTAssertNil(controller.activeMode)
+        XCTAssertFalse(command.isActive)
+        XCTAssertFalse(controller.isEngineRunning)
+    }
+
     // MARK: - No mode → Command → release → clean state
 
     @MainActor

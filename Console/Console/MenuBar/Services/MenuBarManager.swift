@@ -17,7 +17,7 @@ final class MenuBarManager: NSObject {
     private let settings = AppSettings()
     private var previousListeningState: ListeningState = .off
     private var spinnerTimer: Timer?
-    private var spinnerAngle: CGFloat = 0
+    private var spinnerAngle: Int = 0
 
     private var visualFeedbackEnabled: Bool {
         UserDefaults.standard.bool(forKey: "visualFeedbackEnabled")
@@ -348,16 +348,39 @@ final class MenuBarManager: NSObject {
         spinnerTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, let button = self.statusItem?.button else { return }
-                self.spinnerAngle += 30
-                if self.spinnerAngle >= 360 { self.spinnerAngle = 0 }
-
-                guard let image = NSImage(named: "buddy_listening") else { return }
-                image.isTemplate = true
-                image.size = NSSize(width: 18, height: 18)
-                button.image = image
+                self.spinnerAngle = (self.spinnerAngle + 30) % 360
+                if let image = Self.rotatedSpinnerImage(angle: self.spinnerAngle) {
+                    button.image = image
+                }
             }
         }
     }
+
+    /// The executing spinner rotates the listening glyph; build the rotated
+    /// variant (cached per 30° step) that the timer actually shows.
+    private static func rotatedSpinnerImage(angle: Int) -> NSImage? {
+        guard let base = NSImage(named: "buddy_listening") else { return nil }
+        let step = ((angle % 360) + 360) % 360
+        if let cached = spinnerImageCache[step] { return cached }
+
+        let size = NSSize(width: 18, height: 18)
+        let rotated = NSImage(size: size, flipped: false) { rect in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            context.translateBy(x: rect.midX, y: rect.midY)
+            context.rotate(by: CGFloat(step) * .pi / 180)
+            base.draw(
+                in: NSRect(x: -rect.width / 2, y: -rect.height / 2, width: rect.width, height: rect.height)
+            )
+            return true
+        }
+        rotated.isTemplate = true
+        rotated.size = size
+        spinnerImageCache[step] = rotated
+        return rotated
+    }
+
+    @MainActor
+    private static var spinnerImageCache: [Int: NSImage] = [:]
 
     private func stopIconAnimations() {
         spinnerTimer?.invalidate()

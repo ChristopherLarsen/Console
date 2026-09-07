@@ -118,6 +118,21 @@ final class CommandListeningMode: ListeningMode {
         allConfiguredWakeWords = allWakeWords
     }
 
+    /// Pushes the given enabled wake words to the active command mode and to
+    /// any command mode suspended behind another listening mode, so disabling
+    /// a trigger while command capture is suspended still takes effect when
+    /// the mode is restored.
+    static func pushWakeWords(_ words: [String], to controller: AudioSessionController) {
+        if let mode = controller.activeMode as? CommandListeningMode {
+            mode.updateWakeWords(words, allWakeWords: words)
+        }
+        for suspended in controller.suspendedModes {
+            if let mode = suspended as? CommandListeningMode {
+                mode.updateWakeWords(words, allWakeWords: words)
+            }
+        }
+    }
+
     // MARK: - ListeningMode Protocol
 
     func activate(audioStream: AsyncStream<AVAudioPCMBuffer>?) async {
@@ -171,17 +186,21 @@ final class CommandListeningMode: ListeningMode {
 
         case .capturingCommand:
             transcribedText = transcript
-            hasReceivedPostWakeWordSpeech = true
             lastSpeechTime = Date()
 
             if transcript != lastTranscriptSnapshot {
                 lastTranscriptSnapshot = transcript
-                resetStabilityTimer()
 
-                // Eager matching: extract command text and try to match immediately
-                if let onEagerMatchAttempt {
-                    let commandText = extractCommandText(from: transcript)
-                    if !commandText.isEmpty, onEagerMatchAttempt(commandText) {
+                let commandText = extractCommandText(from: transcript)
+                // Only content beyond the wake word itself counts as post-wake
+                // speech; a punctuation-only revision of the wake word must not
+                // arm the silence/stability timers or trigger eager matching.
+                if hasContentBeyondWakeWord(commandText) {
+                    hasReceivedPostWakeWordSpeech = true
+                    resetStabilityTimer()
+
+                    // Eager matching: try to match the command immediately
+                    if let onEagerMatchAttempt, onEagerMatchAttempt(commandText) {
                         finalizeCommand(reason: .recognitionFinal)
                         return
                     }
@@ -333,6 +352,19 @@ final class CommandListeningMode: ListeningMode {
     }
 
     /// Extracts the command portion from the current transcript by stripping the wake word.
+    /// Whether the extracted command text carries tokens beyond the wake word
+    /// itself (case- and punctuation-insensitive). A punctuation-only revision
+    /// of the wake word is not post-wake speech.
+    private func hasContentBeyondWakeWord(_ commandText: String) -> Bool {
+        let commandTokens = Set(commandText.lowercased()
+            .split(separator: " ")
+            .map { $0.trimmingCharacters(in: .punctuationCharacters) }
+            .filter { !$0.isEmpty })
+        let wakeTokens = Set(wakeWordParts(currentWakeWord ?? ""))
+        return !commandTokens.subtracting(wakeTokens).isEmpty
+    }
+
+    /// Extracts the command portion from the current transcript by stripping the wake word.
     private func extractCommandText(from transcript: String) -> String {
         let rawText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawText.isEmpty, let wakeWord = currentWakeWord else { return "" }
@@ -415,8 +447,11 @@ final class CommandListeningMode: ListeningMode {
                     if nsError.domain == "kLSRErrorDomain" && nsError.code == 201 {
                         printDebug("[CommandMode] Fatal recognition error: \(nsError.localizedDescription)")
                         VisualFeedbackService.shared.show(.warning("Speech recognition unavailable"))
-                        self.onCommandCancelled?()
+                        // Release first so the cancel callback sees a mode that
+                        // is no longer active and ends listening instead of
+                        // returning to passive.
                         await AudioSessionController.shared.releaseMode(self)
+                        self.onCommandCancelled?()
                         return
                     }
                 }
@@ -468,10 +503,12 @@ final class CommandListeningMode: ListeningMode {
         if consecutiveFailures >= maxConsecutiveFailures {
             printDebug("[CommandMode] Max consecutive failures, releasing mode")
             VisualFeedbackService.shared.show(.warning("Speech recognition unavailable"))
-            onCommandCancelled?()
+            // Release first so the cancel callback ends listening (.off)
+            // instead of reporting passive with no mode left.
             Task { [weak self] in
                 guard let self else { return }
                 await AudioSessionController.shared.releaseMode(self)
+                self.onCommandCancelled?()
             }
             return
         }
@@ -545,7 +582,10 @@ final class CommandListeningMode: ListeningMode {
             repeats: false
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.finalizeCommand(reason: .silenceDetected)
+                // Speech may have resumed while the fired timer's task waited
+                // for the MainActor hop; re-check before finalizing.
+                guard let self, self.phase == .capturingCommand, self.isCurrentlySilent else { return }
+                self.finalizeCommand(reason: .silenceDetected)
             }
         }
     }
@@ -577,12 +617,17 @@ final class CommandListeningMode: ListeningMode {
             return
         }
 
+        let snapshotAtArming = lastTranscriptSnapshot
         stabilityTimer = Timer.scheduledTimer(
             withTimeInterval: transcriptStabilityThreshold,
             repeats: false
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.finalizeCommand(reason: .silenceDetected)
+                // A transcript revision may have landed between the timer
+                // firing and this task's MainActor hop; re-check stability.
+                guard let self, self.phase == .capturingCommand,
+                      self.lastTranscriptSnapshot == snapshotAtArming else { return }
+                self.finalizeCommand(reason: .silenceDetected)
             }
         }
     }

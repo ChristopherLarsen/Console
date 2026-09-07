@@ -16,7 +16,9 @@ final class AudioSessionController {
     private(set) var activeMode: (any ListeningMode)?
     private(set) var isEngineRunning: Bool = false
     private var isMicTapInstalled: Bool = false
-    private var suspendedMode: (any ListeningMode)?
+    /// Modes preempted by the active mode, most recently suspended last.
+    /// Restored in reverse order as active modes release.
+    private(set) var suspendedModes: [any ListeningMode] = []
     private var audioContinuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
     private(set) var currentAudioLevel: Float = 0.0
     private var configChangeObserver: NSObjectProtocol?
@@ -114,7 +116,7 @@ final class AudioSessionController {
             await mode.deactivate()
         }
         activeMode = nil
-        suspendedMode = nil
+        suspendedModes = []
 
         audioContinuation?.finish()
         audioContinuation = nil
@@ -135,7 +137,7 @@ final class AudioSessionController {
             await mode.deactivate()
             activeMode = nil
         }
-        suspendedMode = nil
+        suspendedModes = []
 
         audioContinuation?.finish()
         audioContinuation = nil
@@ -164,8 +166,14 @@ final class AudioSessionController {
             printDebug("[AudioSession] Deactivating mode: \(current.modeIdentifier)")
             await current.deactivate()
 
-            if current.priority == .primary && mode.priority == .exclusive {
-                suspendedMode = current
+            // An exclusive mode suspends what it preempts — both the primary
+            // command mode and an equal-priority exclusive mode (e.g. field
+            // dictation over note dictation) — so the preempted mode resumes
+            // when the winner releases.
+            let shouldSuspend = current.priority == .primary && mode.priority == .exclusive
+                || current.priority == .exclusive && mode.priority == .exclusive
+            if shouldSuspend {
+                suspendedModes.append(current)
                 printDebug("[AudioSession] Suspended mode: \(current.modeIdentifier)")
             }
         }
@@ -194,8 +202,7 @@ final class AudioSessionController {
         await mode.deactivate()
         activeMode = nil
 
-        if let suspended = suspendedMode {
-            suspendedMode = nil
+        if let suspended = suspendedModes.popLast() {
             printDebug("[AudioSession] Restoring suspended mode: \(suspended.modeIdentifier)")
             await requestMode(suspended)
         } else {
@@ -210,6 +217,12 @@ final class AudioSessionController {
             isEngineRunning = false
             printDebug("[AudioSession] No pending modes, engine stopped")
         }
+    }
+
+    /// Removes a mode from the suspended stack without activating it.
+    /// Used when a suspended mode's owner (e.g. the note panel) is dismissed.
+    func discardSuspendedMode(_ mode: any ListeningMode) {
+        suspendedModes.removeAll { $0 === mode }
     }
 
     private func createAudioStream() -> AsyncStream<AVAudioPCMBuffer> {

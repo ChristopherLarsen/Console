@@ -294,6 +294,97 @@ final class CommandEntryPointTests: XCTestCase {
     """
 }
 
+// MARK: - H19-F04: a cancelled capture whose mode was released ends listening
+
+@MainActor
+final class MenuBarCancelStateTests: XCTestCase {
+
+    @MainActor
+    override func setUp() async throws {
+        AudioSessionController._unitTestMode = true
+        await AudioSessionController.shared.shutdown()
+    }
+
+    @MainActor
+    override func tearDown() async throws {
+        await AudioSessionController.shared.shutdown()
+        AudioSessionController._unitTestMode = false
+    }
+
+    @MainActor
+    func testCancelWhileModeStillActiveReturnsToPassive() async {
+        let viewModel = MenuBarViewModel()
+        let mode = CommandListeningMode(transcriptSource: SyntheticTranscriptSource([]))
+        await AudioSessionController.shared.requestMode(mode)
+        viewModel.listeningState = .commandListening
+
+        viewModel.handleCommandCancelled(from: mode)
+
+        XCTAssertEqual(viewModel.listeningState, .passive)
+        await AudioSessionController.shared.releaseMode(mode)
+    }
+
+    @MainActor
+    func testCancelAfterModeWasReleasedEndsListening() async {
+        let viewModel = MenuBarViewModel()
+        let mode = CommandListeningMode(transcriptSource: SyntheticTranscriptSource([]))
+        await AudioSessionController.shared.requestMode(mode)
+        await AudioSessionController.shared.releaseMode(mode)
+        viewModel.listeningState = .commandListening
+
+        viewModel.handleCommandCancelled(from: mode)
+
+        XCTAssertEqual(viewModel.listeningState, .off)
+        XCTAssertEqual(viewModel.lastDetectedTrigger, "")
+    }
+
+    @MainActor
+    func testCancelIsIgnoredWhenAlreadyOff() async {
+        let viewModel = MenuBarViewModel()
+        viewModel.listeningState = .off
+
+        viewModel.handleCommandCancelled()
+
+        XCTAssertEqual(viewModel.listeningState, .off)
+    }
+}
+
+// MARK: - H23-F03: App Intent reports authorization denial truthfully
+
+@MainActor
+final class IntentStatusMessageTests: XCTestCase {
+
+    private func makeRun(denied: Bool, success: Bool = false) -> CommandRun {
+        let command = Command(
+            name: "Synthetic Intent Deny",
+            triggerPhrases: ["synthetic intent deny"],
+            actions: [],
+            executionMode: .appleScript
+        )
+        return CommandRun(
+            id: UUID(),
+            result: ExecutionResult(
+                command: command,
+                logs: [],
+                overallSuccess: success,
+                totalDurationMs: 0,
+                authorizationDenied: denied
+            )
+        )
+    }
+
+    func testDeniedRunReportsAuthorizationDenied() {
+        let message = ExecuteCommandIntentRunner.statusMessage(for: makeRun(denied: true))
+        XCTAssertTrue(message.contains("Authorization denied"), "Got: \(message)")
+        XCTAssertFalse(message.contains("Ran "), "Denial must not read as a generic run result: \(message)")
+    }
+
+    func testFailedRunStillReportsFailed() {
+        let message = ExecuteCommandIntentRunner.statusMessage(for: makeRun(denied: false))
+        XCTAssertEqual(message, "Ran \"Synthetic Intent Deny\": failed.")
+    }
+}
+
 @MainActor
 private final class CommandRunningSpy: CommandRunning {
     var isExecuting = false

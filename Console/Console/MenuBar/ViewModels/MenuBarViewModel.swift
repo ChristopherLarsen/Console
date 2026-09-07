@@ -128,9 +128,8 @@ final class MenuBarViewModel {
         mode.onCommandTranscribed = { [weak self] text in
             self?.handleCommandTranscribed(text)
         }
-        mode.onCommandCancelled = { [weak self] in
-            guard let self else { return }
-            if self.listeningState != .off { self.listeningState = .passive }
+        mode.onCommandCancelled = { [weak self, weak mode] in
+            self?.handleCommandCancelled(from: mode)
         }
         mode.onEagerMatchAttempt = { [weak self] text in
             self?.tryEagerMatch(text) ?? false
@@ -501,6 +500,19 @@ final class MenuBarViewModel {
         lastMatchResult = ""
         fuzzyMatchInputText = ""
         listeningState = .commandListening
+    }
+
+    /// A command capture was cancelled. When the command mode itself was
+    /// released (e.g. fatal speech-recognition failure), listening is over;
+    /// otherwise capture returns to passive.
+    func handleCommandCancelled(from mode: (any ListeningMode)? = nil) {
+        guard listeningState != .off else { return }
+        if let mode, AudioSessionController.shared.activeMode === mode {
+            listeningState = .passive
+        } else {
+            listeningState = .off
+            lastDetectedTrigger = ""
+        }
     }
 
     /// Attempts an eager match with a strict 90% confidence threshold.

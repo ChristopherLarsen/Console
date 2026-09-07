@@ -489,11 +489,15 @@ struct CommandCreationView: View {
         mode.onTextFinalized = { [self] text in
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
-            switch target {
+            // Read the CURRENT target so switching fields mid-dictation
+            // routes finalized text to the field now selected.
+            switch dictationTarget {
             case .phrase:
                 viewModel?.applyVoiceTranscriptToPhrase(trimmed)
             case .description:
                 viewModel?.applyVoiceTranscript(trimmed)
+            case .none:
+                break
             }
         }
         mode.onPauseDetected = { [self] in
