@@ -10,20 +10,27 @@ final class ConsoleWindowManager {
     static func bringToFront(_ id: String, openWindow: OpenWindowAction) {
         NSApp.activate(ignoringOtherApps: true)
 
-        if id == "main", let window = mainWindow {
+        func raise(_ window: NSWindow) {
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
             window.orderFrontRegardless()
             window.makeKey()
+        }
+
+        if id == "main", let window = mainWindow {
+            raise(window)
         } else if let existing = NSApp.windows.first(where: {
             $0.identifier?.rawValue.contains(id) == true
         }) {
-            existing.orderFrontRegardless()
-            existing.makeKey()
+            raise(existing)
         } else {
             openWindow(id: id)
             // One hop so SwiftUI has created the window before we raise it
             DispatchQueue.main.async {
-                NSApp.windows.last?.orderFrontRegardless()
-                NSApp.windows.last?.makeKey()
+                if let last = NSApp.windows.last {
+                    raise(last)
+                }
             }
         }
     }

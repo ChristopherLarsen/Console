@@ -193,6 +193,12 @@ struct SessionIntentPickerView: View {
         errorMessage = nil
         showsSettingsRoute = false
         inlineError = nil
+        // Opening Customize snapshots the current intent's automatic name.
+        // That snapshot is not a user override: drop it so a different intent
+        // regenerates its own automatic name.
+        if let previous = draft, customName == coordinator.refreshedName(for: previous) {
+            customName = ""
+        }
 
         switch purpose {
         case .newTicket, .general:
@@ -244,7 +250,10 @@ struct SessionIntentPickerView: View {
         Task { @MainActor in
             do {
                 guard try await coordinator.launch(draft: resolvedDraft) != nil else {
-                    if coordinator.pendingCollision != nil {
+                    // Both pending paths are hosted at MainView: the
+                    // shared-checkout warning and the one-time workspace
+                    // chooser. Dismiss so the popover never fights the sheet.
+                    if coordinator.pendingCollision != nil || coordinator.pendingChoice != nil {
                         dismiss()
                         return
                     }
@@ -295,8 +304,13 @@ struct SessionIntentPickerView: View {
             purpose: .review,
             identifierPrefix: "Sessions.Launcher.MergeRequest"
         ) { raw in
-            guard let info = MergeRequestSourceContext.parse(from: raw) else { return nil }
-            return .mergeRequest(iid: info.iid, title: nil, url: info.projectURL)
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let info = MergeRequestSourceContext.parse(from: trimmed),
+                  let mrURL = URL(string: trimmed) else { return nil }
+            // Keep the full MR URL (matching retained-page launches) so
+            // routingIdentity and artifact URLs point at the merge request,
+            // not the project root.
+            return .mergeRequest(iid: info.iid, title: nil, url: mrURL)
         }
     }
 
@@ -404,7 +418,10 @@ struct SessionIntentPickerView: View {
                         .controlSize(.small)
                         .accessibilityIdentifier("Sessions.Launcher.NameField")
 
-                    Picker("", selection: $overrideWorkspaceID) {
+                    // Shares the header's binding so "Auto" clears both the
+                    // override and the draft's explicit workspace — otherwise
+                    // the header keeps showing the stale folder.
+                    Picker("", selection: workspaceSelection) {
                         Text("Auto").tag(UUID?.none)
                         ForEach(workspaceStore.availableWorkspaces) { workspace in
                             Text(workspace.name).tag(UUID?.some(workspace.id))

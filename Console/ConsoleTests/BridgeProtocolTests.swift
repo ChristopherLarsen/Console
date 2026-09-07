@@ -102,6 +102,61 @@ final class BridgeProtocolTests: XCTestCase {
         XCTAssertThrowsError(try BridgeEnvelope.decode(from: env.encodedData()))
     }
 
+    func testWhitespaceOnlyRequiredStringsAreRejected() throws {
+        var attention = envelope(kind: .attention)
+        attention.attentionCategory = .blocked
+        attention.attentionMessage = "   "
+        XCTAssertThrowsError(try BridgeEnvelope.decode(from: attention.encodedData()))
+
+        var artifact = envelope(kind: .artifact)
+        artifact.artifactKind = .jiraIssue
+        artifact.artifactLabel = " \n\t "
+        XCTAssertThrowsError(try BridgeEnvelope.decode(from: artifact.encodedData()))
+
+        var completion = envelope(kind: .completion)
+        completion.completionOutcome = .completed
+        completion.completionSummary = "   "
+        XCTAssertThrowsError(try BridgeEnvelope.decode(from: completion.encodedData()))
+    }
+
+    func testArtifactURLRejectsControlCharacters() throws {
+        var env = envelope(kind: .artifact)
+        env.artifactKind = .gitlabMergeRequest
+        env.artifactLabel = "MR !1"
+        env.artifactURL = "https://fixture.example.test/a\u{1F}b"
+        XCTAssertThrowsError(try BridgeEnvelope.decode(from: env.encodedData())) { error in
+            XCTAssertEqual(error as? BridgeEnvelopeError, .controlCharacters(field: "artifactURL"))
+        }
+    }
+
+    func testLineBudgetKeepsTheTrailingNewlineInsideThe8KiBContract() {
+        XCTAssertEqual(
+            SessionBridgeSocketServer.maxLineBytes,
+            BridgeProtocol.maxEnvelopeBytes - 1,
+            "a line body plus its newline must fit in 8 KiB"
+        )
+    }
+
+    func testSocketInodeIsCreatedWithMode0700() throws {
+        guard let socketURL = SessionBridgeSocketServer.makeProtectedSocketURL() else {
+            XCTFail("no protected socket location available")
+            return
+        }
+        let server = SessionBridgeSocketServer(socketPath: socketURL.path) { _ in }
+        guard server.start() else {
+            XCTFail("socket listener failed to start")
+            return
+        }
+        defer { server.stop() }
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: socketURL.path)
+        XCTAssertEqual(
+            (attributes[.posixPermissions] as? NSNumber)?.uint16Value,
+            0o700,
+            "the socket inode itself is 0700, not just its directory"
+        )
+    }
+
     func testEventIDRestrictedToSafeCharset() throws {
         var env = envelope(kind: .lifecycle, eventID: "has space")
         env.lifecycleEvent = .sessionStarted
@@ -144,5 +199,41 @@ final class BridgeProtocolTests: XCTestCase {
         router.forget(sessionID: knownID)
         router.receive(rawData: makeLine("tok", knownID, eventID: "e3")!)
         XCTAssertEqual(applied.count, 3, "forgetting a session clears its dedupe window")
+    }
+
+    @MainActor
+    func testIdempotencyWindowEvictsOldestEventFirst() {
+        let knownID = UUID()
+        let tokens: [UUID: String] = [knownID: "tok"]
+        var applied: [String] = []
+        let router = SessionEventRouter(
+            apply: { _, envelope in applied.append(envelope.eventID) },
+            tokenForSession: { tokens[$0] }
+        )
+
+        func line(_ eventID: String) -> Data? {
+            var env = BridgeEnvelope(sessionID: knownID.uuidString, token: "tok", eventID: eventID, kind: .lifecycle)
+            env.lifecycleEvent = .promptSubmitted
+            return try? env.encodedData()
+        }
+
+        let windowSize = 512
+        for index in 0..<windowSize {
+            router.receive(rawData: line("evt-\(index)")!)
+        }
+        XCTAssertEqual(applied.count, windowSize)
+
+        // A new event evicts the oldest id first-in-first-out.
+        router.receive(rawData: line("evt-\(windowSize)")!)
+        XCTAssertEqual(applied.count, windowSize + 1)
+
+        // Every still-tracked id stays ignored, including the newest.
+        router.receive(rawData: line("evt-\(windowSize)")!)
+        router.receive(rawData: line("evt-1")!)
+        XCTAssertEqual(applied.count, windowSize + 1, "duplicates inside the window are ignored")
+
+        // The evicted id is exactly the oldest one, so it re-applies.
+        router.receive(rawData: line("evt-0")!)
+        XCTAssertEqual(applied.count, windowSize + 2, "the evicted id is exactly the oldest one")
     }
 }

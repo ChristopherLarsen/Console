@@ -124,6 +124,35 @@ final class SessionStoreTests: XCTestCase {
         // Bridge identity always wins and matches this session.
         XCTAssertEqual(environment["CONSOLE_TERM_BRIDGE_SESSION_ID"], consoleID.uuidString)
         XCTAssertFalse((environment["CONSOLE_TERM_BRIDGE_TOKEN"] ?? "").isEmpty)
+
+        // The launcher receives the complete sanitized environment: capture
+        // artifacts and stale bridge variables must already be gone.
+        XCTAssertNil(environment["PWD"])
+        XCTAssertNil(environment["OLDPWD"])
+        XCTAssertNil(environment["SHLVL"])
+        XCTAssertEqual(
+            environment.keys.filter { $0 != "CONSOLE_TERM_BRIDGE_HELPER" && $0 != "CONSOLE_TERM_BRIDGE_SOCKET" && $0 != "CONSOLE_TERM_BRIDGE_SESSION_ID" && $0 != "CONSOLE_TERM_BRIDGE_TOKEN" && $0.hasPrefix("CONSOLE_TERM_BRIDGE_") },
+            [],
+            "stale bridge-prefixed keys are stripped"
+        )
+    }
+
+    func testFailedLoginShellCaptureIsRetriedOnNextCreation() throws {
+        let (store, launcher) = makeStore()
+        let fixturePath = "/fixture/bin:/usr/bin"
+        var attempts = 0
+        store.loginShellEnvironmentCapture = {
+            attempts += 1
+            return attempts == 1 ? nil : ["PATH": fixturePath]
+        }
+
+        _ = try store.createSession(name: "First", workingDirectory: tmpDirectory("First"))
+        let firstEnvironment = try XCTUnwrap(launcher.lastEnvironment)
+        XCTAssertNotEqual(firstEnvironment["PATH"], fixturePath, "first capture failed; no shell layer yet")
+
+        _ = try store.createSession(name: "Second", workingDirectory: tmpDirectory("Second"))
+        let secondEnvironment = try XCTUnwrap(launcher.lastEnvironment)
+        XCTAssertEqual(secondEnvironment["PATH"], fixturePath, "a failed capture is retried, not locked out")
     }
 
     func testDuplicateActiveNamesAreSuffixed() throws {

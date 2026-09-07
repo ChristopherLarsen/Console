@@ -45,6 +45,19 @@ struct SessionLifecycleState: Equatable, Sendable {
     }
 
     mutating func apply(_ event: SessionLifecycleEvent) {
+        // Exit is terminal. Async hook reordering can deliver a late
+        // prompt/turn/completion after `sessionEnded`; those must not
+        // resurrect a dead session's activity, attention, or summary.
+        if activity == .exited {
+            switch event {
+            case .sessionEnded, .processTerminated:
+                activity = .exited
+            default:
+                break
+            }
+            return
+        }
+
         switch event {
         case .sessionStarted:
             activity = .idle

@@ -85,6 +85,39 @@ final class SessionWorkspaceStoreTests: XCTestCase {
         XCTAssertEqual(store.workspaces.map(\.name), ["Repo", "Repo 2"])
     }
 
+    // MARK: - Canonical path handling
+
+    func testContainsMatchesSymlinkAliasOfTheWorkspaceFolder() throws {
+        let store = makeStore()
+        let real = makeDirectory(named: "Real")
+        let workspace = store.add(name: "Real", directoryURL: real)
+        let aliasParent = tmpRoot.appendingPathComponent("Alias-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: aliasParent, withIntermediateDirectories: true)
+        let alias = aliasParent.appendingPathComponent("Real", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: real)
+
+        XCTAssertTrue(
+            SessionWorkspaceStore.contains(workspace, directory: alias),
+            "a session working directory that is a symlink alias of the checkout lives inside the workspace"
+        )
+        XCTAssertTrue(SessionWorkspaceStore.contains(workspace, directory: real))
+    }
+
+    func testAddingSymlinkAliasReturnsTheExistingEntry() throws {
+        let store = makeStore()
+        let real = makeDirectory(named: "Real")
+        let aliasParent = tmpRoot.appendingPathComponent("Alias-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: aliasParent, withIntermediateDirectories: true)
+        let alias = aliasParent.appendingPathComponent("Real", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: real)
+
+        let first = store.add(name: "Real", directoryURL: real)
+        let second = store.add(name: "RealAlias", directoryURL: alias)
+
+        XCTAssertEqual(store.workspaces.count, 1, "path aliases of one checkout collapse to one entry")
+        XCTAssertEqual(second.id, first.id)
+    }
+
     // MARK: - Rename / remove / set default
 
     func testRenameUpdatesOnlyTheName() throws {

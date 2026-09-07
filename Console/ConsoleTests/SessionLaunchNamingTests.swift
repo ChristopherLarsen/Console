@@ -252,6 +252,20 @@ final class SessionLaunchNamingTests: XCTestCase {
         XCTAssertEqual(outcome, .ambiguous)
     }
 
+    func testSymlinkAliasOfOneCheckoutCountsAsASingleMatch() async throws {
+        let resolver = RepositoryIdentityResolver()
+        let real = try makeGitRepo(named: "Real", remotes: ["https://gitlab.com/grp/proj.git"])
+        let aliasParent = tmpRoot.appendingPathComponent("Alias-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: aliasParent, withIntermediateDirectories: true)
+        let aliasURL = aliasParent.appendingPathComponent("Real", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: aliasURL, withDestinationURL: real.directoryURL)
+        let alias = SessionWorkspace(name: "RealAlias", directoryPath: aliasURL.path)
+
+        let outcome = await resolver.match(projectIdentity: "gitlab.com/grp/proj", in: [real, alias])
+
+        XCTAssertEqual(outcome, .unique(real), "two path aliases of one physical checkout are one match")
+    }
+
     func testMissingMatchReturnsNone() async throws {
         let resolver = RepositoryIdentityResolver()
         let alpha = try makeGitRepo(named: "Alpha", remotes: ["https://github.com/grp/proj.git"])

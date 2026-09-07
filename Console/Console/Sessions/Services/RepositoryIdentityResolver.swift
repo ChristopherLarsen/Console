@@ -117,12 +117,15 @@ final class RepositoryIdentityResolver {
 
     /// Matches an MR project identity (`host/project/path`) against the
     /// remotes of each workspace. Exactly one match resolves; zero or several
-    /// leave resolution to the next step in the documented order.
+    /// leave resolution to the next step in the documented order. Path
+    /// aliases (symlinks) of one physical checkout count as a single match.
     func match(projectIdentity: String, in workspaces: [SessionWorkspace]) async -> MatchOutcome {
         var matches: [SessionWorkspace] = []
+        var seenCanonicalPaths: Set<String> = []
         for workspace in workspaces {
             let identities = await remoteIdentities(forDirectoryAt: workspace.directoryURL)
-            if identities.contains(projectIdentity) {
+            guard identities.contains(projectIdentity) else { continue }
+            if seenCanonicalPaths.insert(CheckoutPath.canonical(workspace.directoryURL)).inserted {
                 matches.append(workspace)
             }
         }

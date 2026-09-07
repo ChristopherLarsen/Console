@@ -6,23 +6,43 @@ import ServiceManagement
 // Minimizes to the Dock on window close instead of destroying the window
 private struct WindowCloseInterceptor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            guard let window = view.window else { return }
+        let view = CloseInterceptorView()
+        view.onWindowAvailable = { window in
             context.coordinator.attach(to: window)
         }
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let view = nsView as? CloseInterceptorView else { return }
+        // Attach is not one-shot: if the first hop landed before the window
+        // existed, the next update still installs the interceptor so close
+        // can never destroy MainView.
+        if let window = view.window {
+            context.coordinator.attach(to: window)
+        }
+    }
     func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class CloseInterceptorView: NSView {
+        var onWindowAvailable: ((NSWindow) -> Void)?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window {
+                onWindowAvailable?(window)
+            }
+        }
+    }
 
     final class Coordinator: NSObject, NSWindowDelegate {
         private weak var originalDelegate: NSWindowDelegate?
+        private weak var attachedWindow: NSWindow?
 
         func attach(to window: NSWindow) {
+            guard attachedWindow !== window else { return }
             originalDelegate = window.delegate
             window.delegate = self
+            attachedWindow = window
         }
 
         func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -231,6 +251,8 @@ struct ConsoleApp: App {
 
             let activeSessionStore = sessionStore
             let activeNextModel = nextButtonModel
+            let activeBuildCoordinator = iosBuildCoordinator
+            let activeCommandExecutor = localCommandExecutor
             // Cancel any in-flight update check or clone when the app terminates.
             NotificationCenter.default.addObserver(
                 forName: NSApplication.willTerminateNotification,
@@ -240,6 +262,11 @@ struct ConsoleApp: App {
                 MainActor.assumeIsolated {
                     updates?.cancelAll()
                     activeNextModel.cancel()
+                    // Console-owned iOS build/test children must not outlive
+                    // the app.
+                    activeBuildCoordinator.cancelAll()
+                    // Shell/osascript commands must not outlive the app.
+                    activeCommandExecutor.cancelExecution()
                     // Real termination stops all session processes; hiding the
                     // window never reaches this path.
                     activeSessionStore.terminateAll()

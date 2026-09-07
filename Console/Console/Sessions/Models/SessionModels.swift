@@ -147,7 +147,13 @@ enum DisplayedSessionState: String, Sendable, Equatable {
 }
 
 /// Resolves the displayed state from independent activity and attention values.
+/// Exit wins over lingering attention: a dead session never presents as
+/// needs-you (the attention flag itself is kept for diagnostics only).
 func displayedSessionState(activity: SessionActivity, attention: SessionAttention) -> DisplayedSessionState {
+    if activity == .exited {
+        return .exited
+    }
+
     switch attention {
     case .permission: return .needsApproval
     case .question: return .needsInput

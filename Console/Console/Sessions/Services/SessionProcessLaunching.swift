@@ -32,11 +32,10 @@ final class ClaudeSessionLauncher: SessionProcessLaunching {
         workingDirectory: String,
         terminalView: LocalProcessTerminalView
     ) throws {
-        var fullEnvironment = ProcessInfo.processInfo.environment
-        for (key, value) in environment {
-            fullEnvironment[key] = value
-        }
-        let environmentEntries = fullEnvironment.map { "\($0.key)=\($0.value)" }.sorted()
+        // The caller passes the complete, already-sanitized child environment
+        // (SessionEnvironmentBuilder). Re-merging ProcessInfo here would
+        // restore keys sanitization deliberately dropped.
+        let environmentEntries = environment.map { "\($0.key)=\($0.value)" }.sorted()
         terminalView.startProcess(
             executable: executable,
             args: arguments,
@@ -44,6 +43,11 @@ final class ClaudeSessionLauncher: SessionProcessLaunching {
             execName: "claude",
             currentDirectory: workingDirectory
         )
+        // SwiftTerm's forkpty failure is silent (shellPid stays 0). Throw so
+        // createSession's rollback removes the ghost row and token.
+        guard let pid = terminalView.process?.shellPid, pid > 0, terminalView.process?.running == true else {
+            throw SessionCreationError.sessionLaunchFailed
+        }
     }
 }
 

@@ -5,6 +5,7 @@ import SwiftTerm
 enum SessionCreationError: LocalizedError, Equatable {
     case claudeNotFound
     case pluginAssemblyFailed
+    case sessionLaunchFailed
 
     var errorDescription: String? {
         switch self {
@@ -12,6 +13,8 @@ enum SessionCreationError: LocalizedError, Equatable {
             return "Claude Code was not found on this Mac. Install Claude Code or pick its executable in Settings → Claude Executable."
         case .pluginAssemblyFailed:
             return "Console could not prepare the local bridge for this session. The terminal will still work, but session status is unavailable."
+        case .sessionLaunchFailed:
+            return "Console could not start Claude for this session. Check the executable path in Settings → Claude Executable."
         }
     }
 }
@@ -47,6 +50,10 @@ final class SessionStore {
     /// first capture attempt, which happens at first session creation.
     @ObservationIgnored private var cachedLoginShellEnvironment: [String: String]?
     @ObservationIgnored private var didCaptureLoginShellEnvironment = false
+    /// Injectable so tests can stage a failed capture followed by success.
+    @ObservationIgnored var loginShellEnvironmentCapture: () -> [String: String]? = {
+        SessionEnvironmentBuilder.captureLoginShellEnvironment()
+    }
 
     static let gracefulStopGraceSeconds: UInt64 = 3
 
@@ -250,8 +257,9 @@ final class SessionStore {
         let coordinator = SessionTerminalCoordinator(sessionID: consoleID, store: self)
         terminalView.processDelegate = coordinator
 
-        // Plugin/bridge preparation is optional. A failure still launches the
-        // resolved Claude executable without unusable plugin arguments.
+        // Plugin/bridge preparation is optional. A failure of either the
+        // plugin assembly or the socket/server still launches the resolved
+        // Claude executable without unusable plugin arguments.
         let pluginRoot = materializePluginRoot()
         let token: String?
         let arguments: [String]
@@ -259,7 +267,7 @@ final class SessionStore {
         let bridgeStatus: BridgeStatus
         let instrumentationWarning: String?
 
-        if let pluginRoot {
+        if let pluginRoot, isBridgeInstrumented, socketPath != nil {
             let sessionToken = Self.generateToken()
             token = sessionToken
             arguments = Self.launchArguments(
@@ -275,7 +283,7 @@ final class SessionStore {
                 ]
             )
             // Unknown until a validated envelope arrives; never start as active.
-            bridgeStatus = socketServer != nil ? .unknown : .unavailable
+            bridgeStatus = .unknown
             instrumentationWarning = nil
         } else {
             token = nil
@@ -380,7 +388,9 @@ final class SessionStore {
         if didCaptureLoginShellEnvironment {
             return cachedLoginShellEnvironment
         }
-        let captured = SessionEnvironmentBuilder.captureLoginShellEnvironment()
+        guard let captured = loginShellEnvironmentCapture() else {
+            return nil
+        }
         didCaptureLoginShellEnvironment = true
         cachedLoginShellEnvironment = captured
         return captured
@@ -439,15 +449,19 @@ final class SessionStore {
     }
 
     /// Force stop (SIGKILL), offered only when graceful termination did not
-    /// complete within the grace period.
+    /// complete within the grace period. Liveness, not the activity flag,
+    /// decides: a session marked exited by a bridge event can still own a
+    /// live process.
     func forceStop(id: UUID) {
         awaitingForceStopSessionID = nil
-        guard let session = session(withID: id), session.activity != .exited else { return }
+        guard let session = session(withID: id) else { return }
         let pid = session.terminalView.process?.shellPid ?? 0
         guard pid > 0 else {
             handleProcessTerminated(sessionID: id)
             return
         }
+        // A process that no longer exists needs nothing; zombies included.
+        guard kill(pid, 0) == 0 else { return }
         kill(pid, SIGKILL)
     }
 
@@ -523,9 +537,10 @@ final class SessionStore {
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(Self.gracefulStopGraceSeconds))
             guard let self else { return }
-            guard let session = self.session(withID: id),
-                  session.activity != .exited,
-                  kill(pid, 0) == 0 else { return }
+            // Liveness decides, not the activity flag: a bridge
+            // `sessionEnded` can mark the row exited while the process
+            // still hangs, and that process must still be escalatable.
+            guard self.session(withID: id) != nil, kill(pid, 0) == 0 else { return }
             self.awaitingForceStopSessionID = id
         }
     }
@@ -537,8 +552,15 @@ final class SessionStore {
     }
 
     /// Drops a session and its plumbing entirely. The terminal view, process
-    /// handle, and scrollback are released with it.
+    /// handle, and scrollback are released with it. A process that is still
+    /// alive is killed first, so removing a row marked exited by a bridge
+    /// event cannot orphan its PTY child.
     private func closeSession(id: UUID) {
+        if let session = session(withID: id),
+           let pid = session.terminalView.process?.shellPid,
+           pid > 0, kill(pid, 0) == 0 {
+            kill(pid, SIGKILL)
+        }
         sessions.removeAll(where: { $0.id == id })
         sessionTokens.removeValue(forKey: id)
         router.forget(sessionID: id)
@@ -558,14 +580,17 @@ final class SessionStore {
     }
 
     /// Stops every running session. Used on actual app termination only —
-    /// hiding the window leaves everything running.
+    /// hiding the window leaves everything running. Sessions marked exited
+    /// by a bridge event but still owning a live process are killed too.
     func terminateAll() {
-        for session in sessions where session.activity != .exited {
+        for session in sessions {
             let pid = session.terminalView.process?.shellPid ?? 0
-            if pid > 0 {
+            if pid > 0, kill(pid, 0) == 0 {
                 kill(pid, SIGKILL)
             }
-            handleProcessTerminated(sessionID: session.id)
+            if session.activity != .exited {
+                handleProcessTerminated(sessionID: session.id)
+            }
         }
     }
 
