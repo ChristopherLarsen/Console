@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 @testable import Console
 
 // MARK: - NoteVoiceCommand Tests
@@ -100,5 +101,54 @@ final class NoteDictationModeTests: XCTestCase {
 
         XCTAssertFalse(mode.isActive)
         XCTAssertNil(controller.activeMode)
+    }
+}
+
+// MARK: - NoteViewModel.done Clipboard Tests (H18-F03)
+
+@available(macOS 26.0, *)
+final class NoteViewModelDoneTests: XCTestCase {
+
+    @MainActor
+    func testDoneCopiesVolatileTextWithNote() async {
+        let vm = NoteViewModel(aiProviderManager: AIProviderManager())
+        vm.noteText = "alpha "
+        vm.appendVolatileText("beta")
+        try? await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(vm.volatileText, "beta")
+
+        let previousClipboard = NSPasteboard.general.string(forType: .string)
+        NSPasteboard.general.clearContents()
+        defer {
+            NSPasteboard.general.clearContents()
+            if let previousClipboard {
+                NSPasteboard.general.setString(previousClipboard, forType: .string)
+            }
+        }
+
+        vm.done()
+        try? await Task.sleep(for: .milliseconds(700))
+
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "alpha beta")
+    }
+
+    @MainActor
+    func testDoneCopiesOnlyCommittedTextWhenVolatileFinalized() async {
+        let vm = NoteViewModel(aiProviderManager: AIProviderManager())
+        vm.noteText = "committed text"
+
+        let previousClipboard = NSPasteboard.general.string(forType: .string)
+        NSPasteboard.general.clearContents()
+        defer {
+            NSPasteboard.general.clearContents()
+            if let previousClipboard {
+                NSPasteboard.general.setString(previousClipboard, forType: .string)
+            }
+        }
+
+        vm.done()
+        try? await Task.sleep(for: .milliseconds(300))
+
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "committed text")
     }
 }

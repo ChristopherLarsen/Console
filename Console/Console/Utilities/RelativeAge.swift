@@ -73,9 +73,10 @@ enum RelativeAge {
             return (.second, 0)
         }
 
-        // "about 3 hours ago", "2d ago", "1 hour ago", "less than a minute ago".
+        // "about 3 hours ago", "2d ago", "1 hour ago", "less than a minute ago",
+        // GitLab abbreviations: "2h", "5m", "1d ago".
         let pattern =
-            "^(?:about\\s+|almost\\s+|over\\s+|less\\s+than\\s+)?(a|an|\\d+)\\s+(second|minute|hour|day|week|month|year)s?\\s+ago$"
+            "^(?:about\\s+|almost\\s+|over\\s+|less\\s+than\\s+)?(a|an|\\d+)\\s*(second|minute|min|hour|hr|day|week|month|year|mo|s|m|h|d|w|y)s?(?:\\s+ago)?$"
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: lowered, range: NSRange(lowered.startIndex..., in: lowered)),
               match.numberOfRanges >= 3
@@ -90,13 +91,13 @@ enum RelativeAge {
         let amount = amountText == "a" || amountText == "an" ? 1 : Int(amountText) ?? 0
 
         switch text(2) {
-        case "second": return (.second, amount)
-        case "minute": return (.minute, amount)
-        case "hour": return (.hour, amount)
-        case "day": return (.day, amount)
-        case "week": return (.day, amount * 7)
-        case "month": return (.day, amount * 30)
-        case "year": return (.day, amount * 365)
+        case "second", "s": return (.second, amount)
+        case "minute", "min", "m": return (.minute, amount)
+        case "hour", "hr", "h": return (.hour, amount)
+        case "day", "d": return (.day, amount)
+        case "week", "w": return (.day, amount * 7)
+        case "month", "mo": return (.day, amount * 30)
+        case "year", "y": return (.day, amount * 365)
         default: return nil
         }
     }
@@ -105,6 +106,8 @@ enum RelativeAge {
         let formats = [
             "MMM d, yyyy, h:mm a",
             "MMM d, yyyy, HH:mm",
+            "MMM d, yyyy 'at' h:mm a",
+            "MMM d, yyyy 'at' HH:mm",
             "MMM d, yyyy h:mm a",
             "MMM d, yyyy",
             "yyyy-MM-dd HH:mm:ss",

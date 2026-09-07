@@ -59,6 +59,49 @@ final class FieldDictationModeTests: XCTestCase {
         await mode.deactivate()
     }
 
+    // MARK: - Manual stop commits pending text (H18-F01)
+
+    @MainActor
+    func testDeactivateDeliversAccumulatedText() async {
+        let mode = FieldDictationMode()
+        var delivered: String?
+        mode.onTextFinalized = { delivered = $0 }
+
+        await mode.activate(audioStream: nil)
+        mode.appendAccumulatedTextForTesting("hello world")
+
+        await mode.deactivate()
+
+        XCTAssertEqual(delivered, "hello world")
+        XCTAssertFalse(mode.isActive)
+    }
+
+    @MainActor
+    func testDeactivateTrimsDeliveredText() async {
+        let mode = FieldDictationMode()
+        var delivered: String?
+        mode.onTextFinalized = { delivered = $0 }
+
+        await mode.activate(audioStream: nil)
+        mode.appendAccumulatedTextForTesting("  padded text  ")
+
+        await mode.deactivate()
+
+        XCTAssertEqual(delivered, "padded text")
+    }
+
+    @MainActor
+    func testDeactivateWithNoAccumulatedTextDoesNotFinalize() async {
+        let mode = FieldDictationMode()
+        var delivered: String?
+        mode.onTextFinalized = { delivered = $0 }
+
+        await mode.activate(audioStream: nil)
+        await mode.deactivate()
+
+        XCTAssertNil(delivered)
+    }
+
     // MARK: - Callback wiring
 
     @MainActor

@@ -92,6 +92,27 @@ final class HomeCardGrammarTests: XCTestCase {
         XCTAssertEqual(RelativeAge.compact(from: "Aug 20, 2026, 11:34 PM", now: now), "1d")
     }
 
+    func testAbbreviatedRelativeStringsParse() {
+        let now = Date(timeIntervalSince1970: 1_787_000_000)
+        XCTAssertEqual(RelativeAge.compact(from: "2h", now: now), "2h")
+        XCTAssertEqual(RelativeAge.compact(from: "1d ago", now: now), "1d")
+        XCTAssertEqual(RelativeAge.compact(from: "5m", now: now), "5m")
+        XCTAssertEqual(RelativeAge.compact(from: "10min ago", now: now), "10m")
+        XCTAssertEqual(RelativeAge.compact(from: "2hrs", now: now), "2h")
+        XCTAssertEqual(RelativeAge.compact(from: "3w ago", now: now), "21d")
+        XCTAssertEqual(RelativeAge.compact(from: "2mo", now: now), "2mo")
+        XCTAssertEqual(RelativeAge.compact(from: "2y", now: now), "2y")
+        XCTAssertEqual(RelativeAge.compact(from: "30s", now: now), "now")
+        XCTAssertEqual(RelativeAge.compact(from: "updated 2h ago", now: now), "2h")
+        XCTAssertEqual(RelativeAge.compact(from: "created 1d", now: now), "1d")
+    }
+
+    func testJiraAtTimestampsParse() {
+        let now = RelativeAge.parseAbsoluteForTesting("Aug 21, 2026 at 11:34 PM")!
+        XCTAssertEqual(RelativeAge.compact(from: "Aug 21, 2026 at 11:04 PM", now: now), "30m")
+        XCTAssertEqual(RelativeAge.compact(from: "Aug 20, 2026 at 11:34 PM", now: now), "1d")
+    }
+
     func testUnparseableFallsBackVerbatim() {
         XCTAssertEqual(RelativeAge.compact(from: "yesterdayish"), "yesterdayish")
         XCTAssertEqual(RelativeAge.compact(from: ""), nil)
