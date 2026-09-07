@@ -20,6 +20,9 @@ enum TicketWorkflowAccessibility {
     static let openInJiraButton = "TicketWorkOpenInJira"
     static let checkStatusButton = "TicketWorkCheckStatus"
     static let templateEditor = "TicketWorkTemplateEditor"
+    static let persistenceBanner = "TicketWorkPersistenceBanner"
+    static let persistenceRetry = "TicketWorkPersistenceRetry"
+    static let persistenceReset = "TicketWorkPersistenceReset"
 
     static func workflowRow(_ id: UUID) -> String {
         "TicketWorkRow.\(id.uuidString)"

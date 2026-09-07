@@ -6,6 +6,9 @@ struct JiraPanelView: View {
     @AppStorage("sidebarSelection") private var sidebarSelection: SidebarSelection = .home
     @State private var controller = JiraWebSession.shared.panelController
     @Environment(SessionLaunchCoordinator.self) private var launchCoordinator
+    @Environment(TicketWorkflowCoordinator.self) private var ticketWorkflowCoordinator
+    @Environment(TicketWorkflowStore.self) private var ticketWorkflowStore
+    @Environment(SessionWorkspaceStore.self) private var workspaceStore
     @FocusState private var browserControlsFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -218,6 +221,19 @@ struct JiraPanelView: View {
                                         url: ticket.issueURL
                                     )
                                 }
+                            },
+                            onTrackWork: {
+                                Task {
+                                    await TicketWorkTracking.track(
+                                        coordinator: ticketWorkflowCoordinator,
+                                        store: ticketWorkflowStore,
+                                        key: ticket.key,
+                                        title: ticket.summary.isEmpty ? nil : ticket.summary,
+                                        status: ticket.status,
+                                        issueURL: ticket.issueURL,
+                                        workspaceID: workspaceStore.defaultWorkspaceID
+                                    )
+                                }
                             }
                         )
                     }
@@ -381,6 +397,7 @@ private struct JiraTicketCard: View {
     let accessibilityIdentifier: String
     let action: () -> Void
     var onStartSession: (() -> Void)?
+    var onTrackWork: (() -> Void)?
 
     @State private var hovering = false
     /// Vertical center of the title row in the card's own coordinate space;
@@ -399,25 +416,46 @@ private struct JiraTicketCard: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(cardAccessibilityLabel)
             .accessibilityAction(named: "Open in JIRA", action)
+            .accessibilityAction(named: "Track Work") {
+                onTrackWork?()
+            }
             .accessibilityIdentifier(accessibilityIdentifier)
 
-            // Secondary launch affordance, a sibling of the open button so
-            // the card keeps its single primary action. It lives entirely
-            // inside the 16pt slot reserved by row two.
-            if let onStartSession {
-                Button(action: onStartSession) {
-                    Image(systemName: "terminal")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: HomeCardMetrics.actionSlotWidth)
+            // Secondary affordances, siblings of the open button so the card
+            // keeps its single primary action. They live inside the reserved
+            // trailing slot — Track Work above Start Session when both exist.
+            if onStartSession != nil || onTrackWork != nil {
+                VStack(spacing: 2) {
+                    if let onTrackWork {
+                        Button(action: onTrackWork) {
+                            Image(systemName: "ticket")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                                .frame(width: HomeCardMetrics.actionSlotWidth)
+                        }
+                        .buttonStyle(.plain)
+                        .frame(height: 18)
+                        .opacity(hovering ? 1 : 0.3)
+                        .help("Track this ticket in Ticket Work")
+                        .accessibilityLabel("Track work")
+                        .accessibilityIdentifier("JiraTicketCard.TrackWork")
+                    }
+                    if let onStartSession {
+                        Button(action: onStartSession) {
+                            Image(systemName: "terminal")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                                .frame(width: HomeCardMetrics.actionSlotWidth)
+                        }
+                        .buttonStyle(.plain)
+                        .frame(height: 18)
+                        .opacity(hovering ? 1 : 0.3)
+                        .help("Start a Claude session for this ticket")
+                        .accessibilityLabel("Start Claude session")
+                        .accessibilityIdentifier("JiraTicketCard.StartSession")
+                    }
                 }
-                .buttonStyle(.plain)
-                .frame(height: 18)
-                .opacity(hovering ? 1 : 0.3)
                 .padding(.top, startButtonTopInset)
-                .help("Start a Claude session for this ticket")
-                .accessibilityLabel("Start Claude session")
-                .accessibilityIdentifier("JiraTicketCard.StartSession")
             }
         }
         .coordinateSpace(name: Self.slotSpace)

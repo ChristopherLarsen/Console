@@ -286,6 +286,7 @@ struct MainView: View {
 }
 
 #Preview {
+    let ticketStore = TicketWorkflowStore()
     MainView()
         .environment(SessionStore())
         .environment(NextButtonModel())
@@ -294,5 +295,7 @@ struct MainView: View {
         .environment(IOSBuildCoordinator(processRunner: SystemProcessRunner()))
         .environment(SessionLaunchCoordinator(store: SessionStore(), workspaceStore: SessionWorkspaceStore()))
         .environment(SessionWorkspaceLayoutController())
+        .environment(ticketStore)
+        .environment(TicketWorkflowCoordinator(store: ticketStore))
         .modelContainer(for: [Command.self, WakeWord.self], inMemory: true)
 }

@@ -19,15 +19,18 @@ struct TicketWorkRootView: View {
         NavigationStack {
             Group {
                 if let listModel {
-                    TicketWorkListView(model: listModel) { id in
-                        TicketWorkDetailView(
-                            model: TicketWorkDetailViewModel(
-                                workflowID: id,
-                                store: store,
-                                handlers: handlers,
-                                resultsProvider: resultsProvider
+                    VStack(spacing: 0) {
+                        TicketWorkPersistenceBanner(store: store)
+                        TicketWorkListView(model: listModel) { id in
+                            TicketWorkDetailView(
+                                model: TicketWorkDetailViewModel(
+                                    workflowID: id,
+                                    store: store,
+                                    handlers: handlers,
+                                    resultsProvider: resultsProvider
+                                )
                             )
-                        )
+                        }
                     }
                 } else {
                     ProgressView()
@@ -59,6 +62,101 @@ struct TicketWorkRootView: View {
             if listModel == nil {
                 listModel = TicketWorkListViewModel(store: store)
             }
+        }
+    }
+}
+
+/// Surfaces durable-progress lock / recovery / corrupt states without exposing
+/// ticket content.
+struct TicketWorkPersistenceBanner: View {
+    @Bindable var store: TicketWorkflowStore
+    @State private var confirmingReset = false
+
+    var body: some View {
+        Group {
+            switch store.persistenceState {
+            case .ready:
+                EmptyView()
+            case .lockedRetryable:
+                banner(
+                    message: "Ticket Work progress is locked. Unlock Keychain, then retry.",
+                    retry: true,
+                    reset: false
+                )
+            case .missingKeyNeedsRecovery:
+                banner(
+                    message: "Ticket Work identity key is missing. Reset progress to continue tracking.",
+                    retry: true,
+                    reset: true
+                )
+            case .corruptPreserved:
+                banner(
+                    message: "Saved Ticket Work progress is unreadable. Reset to start fresh.",
+                    retry: false,
+                    reset: true
+                )
+            case .newerFormatPreserved(let version):
+                banner(
+                    message: "Ticket Work progress was saved by a newer Console (format \(version)). Upgrade or reset.",
+                    retry: false,
+                    reset: true
+                )
+            case .saveFailed:
+                banner(
+                    message: "Could not save Ticket Work progress.",
+                    retry: true,
+                    reset: false
+                )
+            }
+        }
+    }
+
+    private func banner(message: String, retry: Bool, reset: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.system(size: 12))
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if retry {
+                Button("Retry") {
+                    Task {
+                        await store.retryLoadAfterKeychainAvailable()
+                        if store.persistenceState == .ready {
+                            store.applyCoordinatorRestartHooks()
+                        } else if store.persistenceState == .saveFailed {
+                            await store.saveProgress()
+                        }
+                    }
+                }
+                .controlSize(.small)
+                .accessibilityIdentifier(TicketWorkflowAccessibility.persistenceRetry)
+            }
+            if reset {
+                Button("Reset", role: .destructive) {
+                    confirmingReset = true
+                }
+                .controlSize(.small)
+                .accessibilityIdentifier(TicketWorkflowAccessibility.persistenceReset)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.12))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(TicketWorkflowAccessibility.persistenceBanner)
+        .confirmationDialog(
+            "Reset Ticket Work progress? Existing associations cannot be recovered.",
+            isPresented: $confirmingReset,
+            titleVisibility: .visible
+        ) {
+            Button("Reset Progress", role: .destructive) {
+                Task {
+                    try? await store.resetDurableProgressForRecovery()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
         }
     }
 }

@@ -97,8 +97,10 @@ struct ConsoleApp: App {
 
         let workspaceStore = SessionWorkspaceStore()
         _workspaceStore = State(initialValue: workspaceStore)
-        _iosProfileStore = State(initialValue: IOSProjectProfileStore())
-        _iosBuildCoordinator = State(initialValue: IOSBuildCoordinator(processRunner: SystemProcessRunner()))
+        let iosProfileStore = IOSProjectProfileStore()
+        let iosBuildCoordinator = IOSBuildCoordinator(processRunner: SystemProcessRunner())
+        _iosProfileStore = State(initialValue: iosProfileStore)
+        _iosBuildCoordinator = State(initialValue: iosBuildCoordinator)
 
         // Always open on Home for each process launch (do not restore last sidebar page).
         UserDefaults.standard.set(SidebarSelection.home.rawValue, forKey: ConsoleNavigation.sidebarKey)
@@ -215,6 +217,9 @@ struct ConsoleApp: App {
             fileStore: TicketWorkflowFileStore()
         )
         let ticketCoordinator = TicketWorkflowCoordinator(store: ticketStore)
+        ticketCoordinator.buildCoordinator = iosBuildCoordinator
+        ticketCoordinator.profileStore = iosProfileStore
+        ticketCoordinator.workspaceStore = workspaceStore
         _ticketWorkflowStore = State(initialValue: ticketStore)
         _ticketWorkflowCoordinator = State(initialValue: ticketCoordinator)
         _ = sessionStore.addLifecycleSubscriber { sessionID, event in
