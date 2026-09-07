@@ -2,7 +2,23 @@
 # Renders every preview page to images/ at 2x, sized to its own content height.
 set -e
 cd "$(dirname "$0")"
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+# Chrome binary: $CHROME overrides, then standard install locations.
+CHROME="${CHROME:-}"
+if [ -z "$CHROME" ]; then
+  for candidate in \
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    "$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
+    if [ -x "$candidate" ]; then
+      CHROME="$candidate"
+      break
+    fi
+  done
+fi
+if [ -z "$CHROME" ]; then
+  echo "error: Google Chrome not found. Install Chrome or set CHROME=/path/to/chrome binary." >&2
+  exit 1
+fi
 for f in preview/*-light.html preview/*-dark.html; do
   base=$(basename "$f" .html)
   board=${base%-*}

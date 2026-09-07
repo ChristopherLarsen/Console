@@ -233,9 +233,12 @@ final class NoteViewModel {
                 try? await Task.sleep(for: .milliseconds(100))
             }
 
-            if !noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Volatile text still awaiting finalization belongs on the
+            // clipboard; it may only reach the note after dismissal.
+            let text = noteText + volatileText
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(noteText, forType: .string)
+                NSPasteboard.general.setString(text, forType: .string)
             }
             NotePanelController.shared.dismiss()
         }

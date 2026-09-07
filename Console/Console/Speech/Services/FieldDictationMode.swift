@@ -23,6 +23,11 @@ final class FieldDictationMode: ListeningMode {
     private var lastFinalizedLength: Int = 0
     private var accumulatedText: String = ""
 
+    /// Test hook: record finalized text as the transcriber would.
+    func appendAccumulatedTextForTesting(_ delta: String) {
+        accumulatedText += delta
+    }
+
     // MARK: - Pause Detection
 
     private var silenceTimer: Timer?
@@ -72,6 +77,13 @@ final class FieldDictationMode: ListeningMode {
             try await transcriber?.finishTranscribing()
         } catch {
             printDebug("[FieldDictation] Error finishing transcriber: \(error)")
+        }
+
+        // A manual stop never runs the silence timer, so anything spoken but
+        // not yet delivered must be committed here or it is lost.
+        let pendingText = accumulatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !pendingText.isEmpty {
+            onTextFinalized?(pendingText)
         }
 
         transcriber = nil
