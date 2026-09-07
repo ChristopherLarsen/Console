@@ -90,6 +90,14 @@ final class IOSBuildCoordinator {
         runningTask?.cancel()
     }
 
+    /// Cancels every queued or running job. Used on app termination so
+    /// Console-owned xcodebuild children cannot outlive the process.
+    func cancelAll() {
+        for job in jobs where !job.state.isTerminal {
+            cancel(job.id)
+        }
+    }
+
     /// Suspends until the job is terminal. Returns immediately if it already is.
     func wait(for id: UUID) async -> IOSBuildJob {
         if let job = job(id: id), job.state.isTerminal {

@@ -7,6 +7,7 @@ final class SessionEventRouter {
     private let apply: @MainActor (UUID, BridgeEnvelope) -> Void
     private var knownSessionTokens: (UUID) -> String?
     private var appliedEventIDs = [UUID: Set<String>]()
+    private var appliedEventOrder = [UUID: [String]]()
     private static let maxTrackedEventsPerSession = 512
 
     init(
@@ -33,6 +34,7 @@ final class SessionEventRouter {
 
     func forget(sessionID: UUID) {
         appliedEventIDs.removeValue(forKey: sessionID)
+        appliedEventOrder.removeValue(forKey: sessionID)
     }
 
     private func hasApplied(eventID: String, sessionID: UUID) -> Bool {
@@ -40,12 +42,17 @@ final class SessionEventRouter {
     }
 
     private func remember(eventID: String, sessionID: UUID) {
-        var set = appliedEventIDs[sessionID] ?? []
-        if set.count >= Self.maxTrackedEventsPerSession {
-            set.removeFirst()
+        var order = appliedEventOrder[sessionID] ?? []
+        var members = appliedEventIDs[sessionID] ?? []
+        // Evict oldest-first so a duplicate of an early event id within the
+        // window can never re-apply.
+        if order.count >= Self.maxTrackedEventsPerSession {
+            members.remove(order.removeFirst())
         }
-        set.insert(eventID)
-        appliedEventIDs[sessionID] = set
+        order.append(eventID)
+        members.insert(eventID)
+        appliedEventOrder[sessionID] = order
+        appliedEventIDs[sessionID] = members
     }
 
     private func constantTimeEquals(_ lhs: String, _ rhs: String) -> Bool {

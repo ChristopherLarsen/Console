@@ -9,7 +9,12 @@ import Darwin
 /// Runs entirely off the main actor on a private serial queue. Accepted and
 /// validated lines are delivered to a main-thread callback. No HTTP, no TCP.
 nonisolated final class SessionBridgeSocketServer: @unchecked Sendable {
-    static let maxLineBytes = BridgeProtocol.maxEnvelopeBytes + 1
+    /// Contract: 8 KiB maximum envelope including the trailing newline, so a
+    /// line body may carry at most one byte less.
+    static let maxLineBytes = BridgeProtocol.maxEnvelopeBytes - 1
+    /// A same-uid peer that connects and withholds data must not monopolize
+    /// the serial accept loop; idle reads fail closed after this long.
+    static let clientReadTimeout: TimeInterval = 5
 
     private var listenFD: Int32 = -1
     private let queue = DispatchQueue(label: "console.bridge.socket", qos: .userInitiated)
@@ -91,6 +96,12 @@ nonisolated final class SessionBridgeSocketServer: @unchecked Sendable {
             close(fd)
             return false
         }
+        // Explicit 0700 on the socket inode; the directory mode alone would
+        // leave the socket itself on umask defaults.
+        guard chmod(socketPath, 0o700) == 0 else {
+            close(fd)
+            return false
+        }
         guard listen(fd, 8) == 0 else {
             close(fd)
             return false
@@ -128,7 +139,9 @@ nonisolated final class SessionBridgeSocketServer: @unchecked Sendable {
     }
 
     /// Reads newline-delimited envelopes from one connection, verifying the
-    /// peer belongs to the current user, until EOF or error.
+    /// peer belongs to the current user, until EOF, error, or an idle read
+    /// timeout. The timeout keeps a stalled same-uid peer from blocking the
+    /// serial accept loop for every other session's helper.
     private func handle(clientFD: Int32) {
         defer { Darwin.close(clientFD) }
 
@@ -137,6 +150,16 @@ nonisolated final class SessionBridgeSocketServer: @unchecked Sendable {
         guard getpeereid(clientFD, &uid, &gid) == 0, uid == getuid() else {
             return
         }
+
+        var timeout = timeval()
+        timeout.tv_sec = Int(Self.clientReadTimeout)
+        _ = setsockopt(
+            clientFD,
+            SOL_SOCKET,
+            SO_RCVTIMEO,
+            &timeout,
+            socklen_t(MemoryLayout<timeval>.size)
+        )
 
         var buffer = [UInt8](repeating: 0, count: Self.maxLineBytes * 2)
         var line = [UInt8]()

@@ -675,7 +675,7 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         assertSourceMetadataAbsent(from: stack)
     }
 
-    func testSuccessfulRetryAfterLauncherFailureClearsErrorAndThenLearns() async throws {
+    func testSuccessfulRetryAfterLauncherFailureClearsErrorAndRecordsLastUse() async throws {
         let stack = makeStack()
         try addWorkspace(stack, named: "Home")
         stack.launcher.errorToThrow = SyntheticLaunchError()
@@ -691,7 +691,10 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         XCTAssertNil(stack.coordinator.lastFailureMessage)
         XCTAssertNotNil(stack.store.selectedSession)
         XCTAssertEqual(stack.store.sessions.count, 1)
-        XCTAssertEqual(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "ENG"), stack.workspaces.workspaces.first?.id)
+        // The launch resolved through the default-workspace fallthrough, which
+        // does not earn a durable routing association (H25-F01); the folder is
+        // still recorded as last used for the purpose.
+        XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "ENG"))
         XCTAssertEqual(stack.workspaces.lastUsedWorkspaceID(for: .existingTicket), stack.workspaces.workspaces.first?.id)
     }
 
@@ -752,10 +755,9 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             .rejected(.sessionNotAcceptingInput)
         )
         assertSourceMetadataAbsent(from: stack)
-        XCTAssertEqual(
-            stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "SYN"),
-            stack.workspaces.workspaces.first?.id
-        )
+        // This launch resolved through the default-workspace fallthrough,
+        // which does not learn a durable routing association (H25-F01).
+        XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "SYN"))
         XCTAssertEqual(stack.workspaces.lastUsedWorkspaceID(for: .existingTicket), stack.workspaces.workspaces.first?.id)
     }
 

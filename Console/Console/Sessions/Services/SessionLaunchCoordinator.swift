@@ -201,7 +201,11 @@ final class SessionLaunchCoordinator {
         }
 
         if let resolved = await resolveWorkspace(purpose: draft.purpose, source: draft.source) {
-            return try await performLaunch(draft: draft, workspaceID: resolved.id, rememberingAssociation: true)
+            return try await performLaunch(
+                draft: draft,
+                workspaceID: resolved.workspace.id,
+                rememberingAssociation: resolved.remembersAssociation
+            )
         }
 
         // 7. Ask once and remember.
@@ -501,13 +505,18 @@ final class SessionLaunchCoordinator {
         presentsCollisionSheet = false
     }
 
-    private func resolveWorkspace(purpose: SessionPurpose, source: SessionLaunchSource?) async -> SessionWorkspace? {
+    /// Resolved workspace plus whether this resolution step earned a durable
+    /// routing association. Only a remembered association and a unique remote
+    /// match prove the folder fits the source; fallthrough (containment,
+    /// last-used, default) launches without learning so a coincidental
+    /// workspace is never hashed for this routing identity.
+    private func resolveWorkspace(purpose: SessionPurpose, source: SessionLaunchSource?) async -> (workspace: SessionWorkspace, remembersAssociation: Bool)? {
         // 2. Remembered association for this ticket/MR project.
         if let identity = source?.routingIdentity,
            let rememberedID = workspaceStore.associatedWorkspaceID(forRoutingIdentity: identity),
            let remembered = workspaceStore.workspace(withID: rememberedID),
            SessionWorkspaceStore.meetsRequirement(for: remembered, purpose: purpose) {
-            return remembered
+            return (remembered, true)
         }
 
         // 3. Unique code-host remote match for review sources.
@@ -515,7 +524,7 @@ final class SessionLaunchCoordinator {
            let identity = MergeRequestSourceContext.projectIdentity(inURL: url) {
             switch await resolver.match(projectIdentity: identity, in: workspaceStore.resolvableWorkspaces(purpose: purpose)) {
             case let .unique(workspace):
-                return workspace
+                return (workspace, true)
             case .ambiguous, .none:
                 break
             }
@@ -527,21 +536,21 @@ final class SessionLaunchCoordinator {
            let containing = workspaceStore.availableWorkspaces.first(where: {
                SessionWorkspaceStore.contains($0, directory: selectedDirectory)
            }) {
-            return containing
+            return (containing, false)
         }
 
         // 5. Last workspace used for this purpose.
         if let lastUsedID = workspaceStore.lastUsedWorkspaceID(for: purpose),
            let lastUsed = workspaceStore.workspace(withID: lastUsedID),
            SessionWorkspaceStore.meetsRequirement(for: lastUsed, purpose: purpose) {
-            return lastUsed
+            return (lastUsed, false)
         }
 
         // 6. Global default workspace.
         if let defaultID = workspaceStore.defaultWorkspaceID,
            let fallback = workspaceStore.workspace(withID: defaultID),
            SessionWorkspaceStore.meetsRequirement(for: fallback, purpose: purpose) {
-            return fallback
+            return (fallback, false)
         }
 
         return nil
@@ -569,6 +578,8 @@ extension SessionLaunchFailure {
                 self.init(message: creation.localizedDescription, offersSettingsRoute: true)
             case .pluginAssemblyFailed:
                 self.init(message: creation.localizedDescription, offersSettingsRoute: false)
+            case .sessionLaunchFailed:
+                self.init(message: creation.localizedDescription, offersSettingsRoute: true)
             }
             return
         }

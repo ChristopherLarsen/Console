@@ -115,6 +115,37 @@ final class SessionLifecycleReducerTests: XCTestCase {
         XCTAssertEqual(state.activity, .exited)
     }
 
+    func testExitedBeatsHighAttentionInDisplayedState() {
+        XCTAssertEqual(displayed(.exited, .permission), .exited)
+        XCTAssertEqual(displayed(.exited, .question), .exited)
+        XCTAssertEqual(displayed(.exited, .blocked), .exited)
+        XCTAssertEqual(displayed(.exited, .needsReview), .exited)
+        XCTAssertEqual(displayed(.exited, .unreadCompletion), .exited)
+        XCTAssertEqual(displayed(.exited, .none), .exited)
+    }
+
+    func testPostExitLifecycleEventsDoNotResurrectActivity() {
+        var state = fresh
+        state.apply(.promptSubmitted)
+        state.apply(.attentionReported(.blocked, message: "needs you"))
+        state.apply(.sessionEnded)
+
+        // Async hook reordering: a late prompt/turn/completion must not make
+        // the dead row look live.
+        state.apply(.turnCompleted)
+        state.apply(.promptSubmitted)
+        state.apply(.turnFailed)
+        state.apply(.attentionReported(.needsReview, message: "late"))
+        state.apply(.completionReported(.blocked, summary: "late"))
+        state.apply(.cwdChanged("/tmp/late"))
+
+        XCTAssertEqual(state.activity, .exited)
+        XCTAssertEqual(state.displayedState, .exited)
+        // The last pre-exit summary survives; nothing new is written.
+        XCTAssertEqual(state.summary, "needs you")
+        XCTAssertNil(state.workingDirectoryPath)
+    }
+
     func testUserInputClearsPermissionAndQuestionOnly() {
         var state = fresh
         state.apply(.permissionRequested)

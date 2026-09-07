@@ -82,20 +82,24 @@ final class SessionWorkspaceStore {
     }
 
     /// True when the session directory lives inside the workspace folder.
+    /// Both paths are symlink-resolved so a workspace and a session working
+    /// directory that are aliases of the same physical checkout match.
     static func contains(_ workspace: SessionWorkspace, directory: URL) -> Bool {
-        let candidate = directory.standardizedFileURL.path
-        return candidate == workspace.directoryPath || candidate.hasPrefix(workspace.directoryPath + "/")
+        let candidate = CheckoutPath.canonical(directory)
+        let root = CheckoutPath.canonical(workspace.directoryURL)
+        return candidate == root || candidate.hasPrefix(root + "/")
     }
 
     // MARK: - Mutation
 
     /// Adds a workspace for a chosen folder. The first workspace ever added
     /// becomes the default automatically. Adding an existing folder again is
-    /// a no-op returning the saved entry.
+    /// a no-op returning the saved entry — path aliases (symlinks) of one
+    /// physical checkout collapse to the saved canonical entry.
     @discardableResult
     func add(name: String, directoryURL: URL) -> SessionWorkspace {
-        let path = directoryURL.standardizedFileURL.path
-        if let existing = workspaces.first(where: { $0.directoryPath == path }) {
+        let path = CheckoutPath.canonical(directoryURL)
+        if let existing = workspaces.first(where: { CheckoutPath.canonical($0.directoryURL) == path }) {
             return existing
         }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)

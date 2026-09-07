@@ -125,8 +125,12 @@ extension BridgeEnvelope {
             }
             envelope.attentionCategory = category
             if let message = raw.attentionMessage {
-                try validateText(message, maxLength: BridgeProtocol.maxAttentionMessageLength, field: "attentionMessage")
-                envelope.attentionMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                let trimmedMessage = try validatedTrimmedText(
+                    message,
+                    maxLength: BridgeProtocol.maxAttentionMessageLength,
+                    field: "attentionMessage"
+                )
+                envelope.attentionMessage = trimmedMessage
             } else if category != .permission && category != .question {
                 throw BridgeEnvelopeError.missingField("attentionMessage")
             }
@@ -137,12 +141,19 @@ extension BridgeEnvelope {
             guard let label = raw.artifactLabel else {
                 throw BridgeEnvelopeError.missingField("artifactLabel")
             }
-            try validateText(label, maxLength: BridgeProtocol.maxArtifactLabelLength, field: "artifactLabel")
             envelope.artifactKind = artifactKind
-            envelope.artifactLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+            envelope.artifactLabel = try validatedTrimmedText(
+                label,
+                maxLength: BridgeProtocol.maxArtifactLabelLength,
+                field: "artifactLabel"
+            )
             if let urlString = raw.artifactURL, !urlString.isEmpty {
                 guard urlString.count <= BridgeProtocol.maxURLLength else {
                     throw BridgeEnvelopeError.urlTooLong
+                }
+                // URLs follow the same scalar policy as every other string.
+                for scalar in urlString.unicodeScalars where containsForbiddenScalar(scalar) {
+                    throw BridgeEnvelopeError.controlCharacters(field: "artifactURL")
                 }
                 guard let url = URL(string: urlString), url.scheme?.lowercased() == "https" else {
                     throw BridgeEnvelopeError.urlNotHTTPS
@@ -156,9 +167,12 @@ extension BridgeEnvelope {
             guard let summary = raw.completionSummary else {
                 throw BridgeEnvelopeError.missingField("completionSummary")
             }
-            try validateText(summary, maxLength: BridgeProtocol.maxMessageLength, field: "completionSummary")
             envelope.completionOutcome = outcome
-            envelope.completionSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            envelope.completionSummary = try validatedTrimmedText(
+                summary,
+                maxLength: BridgeProtocol.maxMessageLength,
+                field: "completionSummary"
+            )
         case .cwd:
             guard let directory = raw.cwdDirectory else {
                 throw BridgeEnvelopeError.missingField("cwdDirectory")
@@ -185,6 +199,21 @@ extension BridgeEnvelope {
         for scalar in text.unicodeScalars where containsForbiddenScalar(scalar) {
             throw BridgeEnvelopeError.controlCharacters(field: field)
         }
+    }
+
+    /// Validates like `validateText` and additionally rejects values that
+    /// are empty once trimmed, mirroring the helper MCP's own contract.
+    private static func validatedTrimmedText(
+        _ text: String,
+        maxLength: Int,
+        field: String
+    ) throws -> String {
+        try validateText(text, maxLength: maxLength, field: field)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw BridgeEnvelopeError.missingField(field)
+        }
+        return trimmed
     }
 
     private static func containsForbiddenScalar(_ scalar: Unicode.Scalar) -> Bool {
