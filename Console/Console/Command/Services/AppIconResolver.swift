@@ -4,6 +4,9 @@ final class AppIconResolver {
     static let shared = AppIconResolver()
 
     private let maxCacheSize = 50
+    // Callers resolve icons off the main actor (Task.detached in showcase
+    // rows), so the mutable cache must be lock-guarded.
+    private let lock = NSLock()
     private var cache: [String: NSImage] = [:]
     private var accessOrder: [String] = []
 
@@ -11,10 +14,13 @@ final class AppIconResolver {
 
     func getIcon(for bundleID: String, size: CGFloat = 32) -> NSImage {
         let cacheKey = "\(bundleID)@\(Int(size))"
+        lock.lock()
         if let cached = cache[cacheKey] {
             promoteInAccessOrder(cacheKey)
+            lock.unlock()
             return cached
         }
+        lock.unlock()
 
         let icon: NSImage
         if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID),
@@ -60,6 +66,8 @@ final class AppIconResolver {
 
     // LRU eviction — remove least recently accessed entry when at capacity
     private func insertIntoCache(_ key: String, image: NSImage) {
+        lock.lock()
+        defer { lock.unlock() }
         if cache.count >= maxCacheSize, let oldest = accessOrder.first {
             cache.removeValue(forKey: oldest)
             accessOrder.removeFirst()

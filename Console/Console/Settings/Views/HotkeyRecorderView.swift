@@ -97,6 +97,12 @@ struct HotkeyRecorderView: View {
                 CapsuleButton("Save") {
                     let code = capturedKeyCode ?? GlobalHotkeyManager.shared.keyCode
                     let mods = capturedModifiers ?? GlobalHotkeyManager.shared.modifierFlags
+                    if let conflict = checkForConsoleConflict(keyCode: code, modifiers: mods) {
+                        // Saving a Console-internal chord silently swallows that
+                        // navigation everywhere; refuse instead.
+                        errorMessage = "\(conflict). Pick a different combination."
+                        return
+                    }
                     cleanup()
                     onSave(code, mods)
                 }
@@ -168,10 +174,11 @@ struct HotkeyRecorderView: View {
         guard !modifierOnlyKeyCodes.contains(event.keyCode) else { return }
 
         let warning = checkForSystemConflict(keyCode: event.keyCode, modifiers: relevantMods)
+        let consoleConflict = checkForConsoleConflict(keyCode: event.keyCode, modifiers: relevantMods)
 
         capturedKeyCode = event.keyCode
         capturedModifiers = relevantMods
-        conflictWarning = warning
+        conflictWarning = consoleConflict ?? warning
         errorMessage = nil
         stopRecording()
     }
@@ -242,6 +249,35 @@ struct HotkeyRecorderView: View {
             return "Overlaps with \(match.name)"
         }
 
+        return nil
+    }
+
+    // MARK: - Console Conflict Detection
+
+    /// Chords Console itself consumes (Go menu navigation and session
+    /// shortcuts). A global hotkey matching one of these is swallowed by the
+    /// local key monitor before the menu ever sees it.
+    private static let consoleShortcuts: [SystemShortcut] = {
+        let digits: [UInt16] = [
+            UInt16(kVK_ANSI_1), UInt16(kVK_ANSI_2), UInt16(kVK_ANSI_3), UInt16(kVK_ANSI_4),
+            UInt16(kVK_ANSI_5), UInt16(kVK_ANSI_6), UInt16(kVK_ANSI_7), UInt16(kVK_ANSI_8),
+            UInt16(kVK_ANSI_9), UInt16(kVK_ANSI_0),
+        ]
+        var shortcuts: [SystemShortcut] = []
+        for (offset, code) in digits.enumerated() {
+            let number = offset < 9 ? offset + 1 : 0
+            shortcuts.append(.init(keyCode: code, modifiers: [.control], name: "⌃\(number) — Console sidebar navigation"))
+            shortcuts.append(.init(keyCode: code, modifiers: [.command], name: "⌘\(number) — Console session shortcut"))
+        }
+        shortcuts.append(.init(keyCode: UInt16(kVK_ANSI_Grave), modifiers: [.command], name: "⌘` — Console sidebar Sessions"))
+        return shortcuts
+    }()
+
+    private func checkForConsoleConflict(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> String? {
+        let inputMods = modifiers.intersection([.control, .option, .shift, .command])
+        for shortcut in Self.consoleShortcuts where shortcut.keyCode == keyCode && shortcut.modifiers == inputMods {
+            return "Conflicts with \(shortcut.name)"
+        }
         return nil
     }
 

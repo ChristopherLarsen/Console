@@ -15,7 +15,7 @@ final class AuthorizationPanelController: NSObject, NSWindowDelegate {
 
         let settings = AppSettings()
         let allowVoiceAuth = settings.voiceOnlyAuthorization
-        let timeout = settings.authorizationTimeoutSeconds
+        let timeout = Int(settings.authorizationTimeout)
 
         let dialog = AuthorizationDialog(
             command: command,

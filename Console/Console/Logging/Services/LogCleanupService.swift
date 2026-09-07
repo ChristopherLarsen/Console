@@ -74,9 +74,15 @@ final class LogCleanupService {
 
     // MARK: - Helpers
 
-    private func extractDate(from url: URL, formatter: DateFormatter) -> Date? {
+    // Internal so retention date parsing can be unit-tested.
+    func extractDate(from url: URL, formatter: DateFormatter) -> Date? {
+        // Match the embedded yyyy-MM-dd token so non-command-log files in the
+        // logs directory (generation-failure-*.md) still age out instead of
+        // bypassing retention forever.
         let name = url.deletingPathExtension().lastPathComponent
-        let dateString = name.replacingOccurrences(of: "command-log-", with: "")
-        return formatter.date(from: dateString)
+        guard let range = name.range(of: "\\d{4}-\\d{2}-\\d{2}", options: .regularExpression) else {
+            return nil
+        }
+        return formatter.date(from: String(name[range]))
     }
 }

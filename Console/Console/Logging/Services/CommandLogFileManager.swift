@@ -9,13 +9,8 @@ final class CommandLogFileManager: @unchecked Sendable {
     private let bufferFlushCount = 5
     private let bufferFlushInterval: TimeInterval = 30
 
-    // Write buffer — accessed only on `queue`
-    private var pendingEntries: [CommandExecutionLog] = []
-    private var flushTimer: DispatchSourceTimer?
-    private var terminationObserver: NSObjectProtocol?
-
     // ~/Library/Application Support/Console/logs/
-    let logsDirectory: URL = {
+    static let defaultLogsDirectory: URL = {
         let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -25,7 +20,17 @@ final class CommandLogFileManager: @unchecked Sendable {
             .appendingPathComponent("logs", isDirectory: true)
     }()
 
-    private init() {
+    let logsDirectory: URL
+
+    // Write buffer — accessed only on `queue`
+    private var pendingEntries: [CommandExecutionLog] = []
+    private var flushTimer: DispatchSourceTimer?
+    private var terminationObserver: NSObjectProtocol?
+
+    /// `logsDirectory` is injectable so retention/buffer behavior can be tested
+    /// against a scratch directory instead of the user's real logs.
+    init(logsDirectory: URL? = nil) {
+        self.logsDirectory = logsDirectory ?? Self.defaultLogsDirectory
         #if DEBUG
         ensureDirectoryExists()
         startFlushTimer()
@@ -127,6 +132,11 @@ final class CommandLogFileManager: @unchecked Sendable {
     }
 
     func deleteAllLogs() {
+        // Drop buffered-but-unwritten entries too, or the next flush would
+        // resurrect the deleted log file.
+        queue.sync { [self] in
+            pendingEntries.removeAll()
+        }
         for file in getAllLogFiles() {
             deleteLog(at: file)
         }
@@ -161,18 +171,17 @@ final class CommandLogFileManager: @unchecked Sendable {
     // Must be called on `queue`
     private func writePendingEntries() {
         guard !pendingEntries.isEmpty else { return }
-        let batch = pendingEntries
-        pendingEntries.removeAll()
-
         let fileURL = todayLogPath()
         let isNewFile = !FileManager.default.fileExists(atPath: fileURL.path)
 
-        // Enforce 10MB limit — skip writes if file already at cap
+        // Enforce 10MB limit — skip writes if file already at cap. The buffer
+        // is kept so the batch is not silently lost.
         if !isNewFile, fileSize(at: fileURL) >= maxFileBytes {
             printDebug("[CommandLogFileManager] File size limit reached, skipping write")
             return
         }
 
+        let batch = pendingEntries
         do {
             if isNewFile {
                 let firstLog = batch[0]
@@ -195,6 +204,9 @@ final class CommandLogFileManager: @unchecked Sendable {
                 }
                 try content.write(to: fileURL, atomically: true, encoding: .utf8)
             }
+            // Only discard the buffer after a successful write; a failure keeps
+            // the entries for the next flush.
+            pendingEntries.removeAll()
         } catch {
             printDebug("[CommandLogFileManager] Failed to write log batch: \(error.localizedDescription)")
         }

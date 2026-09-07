@@ -24,11 +24,13 @@ import Foundation
 /// - Good: "This command will:\n• Launch Safari\n• Navigate to gmail.com"
 /// - Bad: "Opens Safari and goes to Gmail" (no bullets)
 enum CommandGeneratorPrompt {
-    static let system: String = {
+    // Recomputed per generation: a stored static would freeze the user context
+    // (frontmost app, running apps) for the entire process lifetime.
+    static var system: String {
         let catalog = ActionCatalogManager.shared.getCatalog()
         let context = UserContext.current()
         return SystemPrompt.generate(catalog: catalog, userContext: context)
-    }()
+    }
 
     static let maxSummaryLength = 60
 
@@ -45,18 +47,26 @@ enum CommandGeneratorPrompt {
         let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
 
-        var result = trimmed
-        if !result.hasPrefix("This command will:") {
-            result = "This command will:\n\(result)"
+        let header = "This command will:"
+        var lines = trimmed.components(separatedBy: "\n")
+
+        // A body on the same line as the header ("This command will: Do X")
+        // is a bullet, not decoration — keep it instead of discarding it.
+        if let first = lines.first, first.hasPrefix(header) {
+            let sameLineBody = first.dropFirst(header.count).trimmingCharacters(in: .whitespaces)
+            if !sameLineBody.isEmpty {
+                lines[0] = sameLineBody
+            } else {
+                lines.removeFirst()
+            }
         }
-        if !result.contains("•") {
-            let lines = result.components(separatedBy: "\n").dropFirst()
-            let bulleted = lines.map { line -> String in
-                let clean = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                return clean.isEmpty ? "" : "• \(clean)"
-            }.filter { !$0.isEmpty }
-            result = "This command will:\n\(bulleted.joined(separator: "\n"))"
-        }
-        return result
+
+        let bullets = lines
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map { $0.hasPrefix("•") ? $0 : "• \($0)" }
+
+        guard !bullets.isEmpty else { return "" }
+        return "\(header)\n\(bullets.joined(separator: "\n"))"
     }
 }

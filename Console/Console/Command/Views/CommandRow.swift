@@ -6,6 +6,7 @@ struct ExpandableCommandRow: View {
     let onToggleExpand: () -> Void
     let onDelete: () -> Void
     let onTest: () async -> Void
+    var onStop: (() -> Void)?
     let onEdit: () -> Void
     var onSave: (() -> Void)?
 
@@ -280,22 +281,29 @@ struct ExpandableCommandRow: View {
 
     private var testButton: some View {
         Button {
-            testCommand()
+            if isTesting {
+                onStop?()
+            } else {
+                testCommand()
+            }
         } label: {
             HStack(spacing: 4) {
                 if isTesting {
                     ProgressView()
                         .controlSize(.small)
+                    Text("Stop")
+                        .font(.callout)
+                } else {
+                    Text("Test")
+                        .font(.callout)
                 }
-                Text("Test")
-                    .font(.callout)
             }
         }
         .buttonStyle(.plain)
         .foregroundStyle(Color.accentColor)
-        .disabled(isTesting)
-        .help("Test command")
-        .accessibilityLabel(isTesting ? "Testing in progress" : "Test command")
+        .disabled(isTesting && onStop == nil)
+        .help(isTesting ? "Stop command" : "Test command")
+        .accessibilityLabel(isTesting ? "Stop command" : "Test command")
     }
 
     private func testCommand() {

@@ -80,20 +80,29 @@ enum ConsoleNavigation {
         show(.home)
     }
 
-    // MARK: - Sidebar hotkeys (⌃1…⌃9)
+    // MARK: - Sidebar hotkeys (⌃1…⌃9, ⌃0)
 
-    /// Sidebar destinations addressed by ⌃1…⌃9 in sidebar order.
-    /// Settings deliberately has no number.
+    /// Sidebar destinations addressed by ⌃1…⌃9 plus ⌃0, in visible sidebar
+    /// order. Settings deliberately has no number.
     static let sidebarHotkeyDestinations: [SidebarSelection] = [
-        .home, .next, .brief, .jira,
-        .mergeRequests, .triggers, .commands,
-        .aiProvider, .sessions
+        .home, .next, .brief, .jira, .ticketWork,
+        .sessions, .mergeRequests, .triggers, .commands,
+        .aiProvider
     ]
 
-    /// The sidebar destination targeted by ⌃N; nil when N is out of range.
+    /// The sidebar destination targeted by ⌃N (⌃0 selects the tenth item);
+    /// nil when N has no destination.
     static func sidebarDestination(hotkeyNumber number: Int) -> SidebarSelection? {
-        guard sidebarHotkeyDestinations.indices.contains(number - 1) else { return nil }
-        return sidebarHotkeyDestinations[number - 1]
+        guard number >= 0, number <= 9, number != 10 else { return nil }
+        let index = number == 0 ? 9 : number - 1
+        guard sidebarHotkeyDestinations.indices.contains(index) else { return nil }
+        return sidebarHotkeyDestinations[index]
+    }
+
+    /// The keyboard character for a hotkey offset: ⌃1…⌃9, then ⌃0 for the
+    /// tenth destination.
+    static func hotkeyKeyCharacter(forOffset offset: Int) -> String {
+        offset < 9 ? "\(offset + 1)" : "0"
     }
 
     // MARK: - Session hotkeys (⌘1…⌘9)

@@ -475,17 +475,7 @@ final class MenuBarViewModel {
     }
 
     func fetchEnabledCommands() -> [Command] {
-        guard let modelContext else { return [] }
-        let includeBuiltIn = UserDefaults.standard.bool(forKey: "enableBuiltInCommands")
-        let predicate: Predicate<Command>
-        if includeBuiltIn {
-            predicate = #Predicate<Command> { $0.isEnabled }
-        } else {
-            predicate = #Predicate<Command> { $0.isEnabled && $0.catalogVersion == nil }
-        }
-        var descriptor = FetchDescriptor<Command>(predicate: predicate, sortBy: [SortDescriptor(\.name)])
-        descriptor.fetchLimit = 50
-        return (try? modelContext.fetch(descriptor)) ?? []
+        LocalCommandExecutor.fetchEnabledCommands(in: modelContext)
     }
 
     // MARK: - Voice Pipeline
@@ -528,9 +518,6 @@ final class MenuBarViewModel {
         guard UserDefaults.standard.bool(forKey: "recognizeBuiltInCommands") else { return false }
         guard listeningState != .off else { return false }
 
-        let triggerWord = lastDetectedWakeWord ?? ""
-        let rawTranscript = lastRawTranscript ?? text
-
         // Check ConsoleCommands first (they take priority)
         let tfMatcher = ConsoleCommandMatcher(confidenceThreshold: 0.90)
         if let match = tfMatcher.bestMatch(for: text, availableIn: .primary) {
@@ -565,18 +552,8 @@ final class MenuBarViewModel {
 
                 _ = await match.command.handler()
                 if self.listeningState != .off { self.listeningState = .passive }
-                // Log the execution
-                logCommandExecution(
-                    triggerWord: triggerWord,
-                    rawTranscript: rawTranscript,
-                    strippedTranscript: text,
-                    matchedCommand: "[Built-in] \(match.command.name)",
-                    confidence: 1.0,
-                    result: .success,
-                    duration: 0,
-                    error: nil,
-                    commandType: .console
-                )
+                // Logging happens inside the handler's logBuiltIn path; a
+                // second log here would double-record every built-in.
             }
             return true
         }
@@ -604,7 +581,8 @@ final class MenuBarViewModel {
         logCommandExecution(
             triggerWord: triggerWord, rawTranscript: rawTranscript,
             strippedTranscript: strippedTranscript, matchedCommand: command,
-            confidence: 1.0, result: .success, duration: 0, error: nil
+            confidence: 1.0, result: .success, duration: 0, error: nil,
+            commandType: .console
         )
     }
 
@@ -676,8 +654,19 @@ final class MenuBarViewModel {
         duration: TimeInterval
     ) -> Bool {
         guard !run.result.alreadyRunning else { return false }
-        let errorMsg = run.result.failedSteps.first?.message
-        let logResult: CommandLogResult = run.result.overallSuccess ? .success : .failed
+
+        let logResult: CommandLogResult
+        let errorMsg: String?
+        if run.result.authorizationDenied {
+            logResult = .failed
+            errorMsg = "Authorization denied"
+        } else if run.result.wasCancelled {
+            logResult = .cancelled
+            errorMsg = "Cancelled"
+        } else {
+            logResult = run.result.overallSuccess ? .success : .failed
+            errorMsg = run.result.failedSteps.first?.message
+        }
         logCommandExecution(
             triggerWord: triggerWord,
             rawTranscript: rawTranscript,
