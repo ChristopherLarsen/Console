@@ -73,4 +73,39 @@ final class BriefAIResponseParserTests: XCTestCase {
         let long = String(repeating: "x", count: 200)
         XCTAssertEqual(BriefAIResponseParser.clean(long).count, BriefComposer.maxLineLength)
     }
+
+    // MARK: - H38-F02: only numbered Y*/T* slot tags are slots
+
+    func testProseWithPipeIsNotIngestedAsTasks() {
+        let parsed = BriefAIResponseParser.parse("""
+        Team follow-up | ping bob about the MR
+        Today: standup | 10am
+        """)
+        XCTAssertNil(parsed, "prose with pipes must not become tasks")
+    }
+
+    func testProseWithPipeIsIgnoredAroundValidSlots() {
+        let parsed = BriefAIResponseParser.parse("""
+        Y1 | Merged the feature
+        Team follow-up | ping bob about the MR
+        T1 | Polish the brief
+        """)
+
+        XCTAssertEqual(parsed?.yesterdayLines, ["Merged the feature"])
+        XCTAssertEqual(parsed?.todayTasks, ["Polish the brief"])
+    }
+
+    func testUnnumberedSlotTagsAreRejected() {
+        XCTAssertNil(BriefAIResponseParser.parse("Y | Unnumbered line"))
+        XCTAssertNil(BriefAIResponseParser.parse("T | Unnumbered task"))
+        XCTAssertNil(BriefAIResponseParser.parse("Yesterday | worked hard"))
+    }
+
+    func testSlotTagPredicate() {
+        XCTAssertTrue(BriefAIResponseParser.isSlotTag("Y1"))
+        XCTAssertTrue(BriefAIResponseParser.isSlotTag("T12"))
+        XCTAssertFalse(BriefAIResponseParser.isSlotTag("Y"))
+        XCTAssertFalse(BriefAIResponseParser.isSlotTag("TEAM FOLLOW-UP"))
+        XCTAssertFalse(BriefAIResponseParser.isSlotTag("Y1A"))
+    }
 }

@@ -179,23 +179,40 @@ class CatalogDiscoverer {
     // MARK: - App Intents Metadata Extraction
 
     private func extractAppIntentsMetadata(_ appURL: URL) -> [String: Any]? {
-        let metadataPath = appURL
-            .appendingPathComponent("Contents/Resources/AppIntents.metadata.plist")
+        // Modern apps ship `Contents/Resources/Metadata.appintents/`
+        // (extract.actionsdata JSON + version.json). The legacy
+        // AppIntents.metadata.plist is kept as a fallback.
+        let metadataDir = appURL
+            .appendingPathComponent("Contents/Resources/Metadata.appintents", isDirectory: true)
 
-        guard fileManager.fileExists(atPath: metadataPath.path) else {
+        var directoryExists: Bool = false
+        if let values = try? fileManager.attributesOfItem(atPath: metadataDir.path),
+           values[.type] as? FileAttributeType == .typeDirectory {
+            directoryExists = true
+        }
+        guard directoryExists
+            || fileManager.fileExists(atPath: appURL.appendingPathComponent("Contents/Resources/AppIntents.metadata.plist").path)
+        else {
             return nil
         }
 
-        do {
-            let data = try Data(contentsOf: metadataPath)
-            let plist = try PropertyListSerialization.propertyList(
-                from: data, options: [], format: nil
-            )
+        if let actions = try? loadJSONDictionary(at: metadataDir.appendingPathComponent("extract.actionsdata")) {
+            return actions
+        }
+
+        let legacyPath = appURL.appendingPathComponent("Contents/Resources/AppIntents.metadata.plist")
+        if let data = try? Data(contentsOf: legacyPath),
+           let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) {
             return plist as? [String: Any]
-        } catch {
-            if verbose { print("  Error reading AppIntents metadata: \(error)") }
-            return nil
         }
+        // Directory present but nothing parseable — still count as having
+        // App Intents metadata so intents-only apps pass the automation filter.
+        return directoryExists ? [:] : nil
+    }
+
+    private func loadJSONDictionary(at url: URL) throws -> [String: Any]? {
+        let data = try Data(contentsOf: url)
+        return try JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
     // MARK: - Shortcuts Database (Experimental)

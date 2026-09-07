@@ -17,6 +17,11 @@ enum BriefAIResponseParser {
         var todayTasks: [String]
     }
 
+    /// Slot tags are strictly numbered (`Y1`, `T2`, …) per the refinement
+    /// prompt. Prose that merely starts with "Y"/"T" before a pipe must not be
+    /// mistaken for a slot.
+    private static let slotTagPattern = try? NSRegularExpression(pattern: "^[YT][0-9]+$")
+
     static func parse(_ response: String) -> Parsed? {
         var yesterday: [String] = []
         var today: [String] = []
@@ -28,7 +33,7 @@ enum BriefAIResponseParser {
             let tag = trimmed[trimmed.startIndex..<pipeIndex]
                 .trimmingCharacters(in: .whitespaces)
                 .uppercased()
-            guard tag.hasPrefix("Y") || tag.hasPrefix("T") else { continue }
+            guard isSlotTag(tag) else { continue }
             let content = clean(String(trimmed[trimmed.index(after: pipeIndex)...]))
             guard !content.isEmpty else { continue }
             if tag.hasPrefix("Y") {
@@ -40,6 +45,12 @@ enum BriefAIResponseParser {
 
         guard !yesterday.isEmpty else { return nil }
         return Parsed(yesterdayLines: yesterday, todayTasks: today)
+    }
+
+    static func isSlotTag(_ tag: String) -> Bool {
+        guard let slotTagPattern else { return false }
+        let range = NSRange(tag.startIndex..., in: tag)
+        return slotTagPattern.firstMatch(in: tag, range: range) != nil
     }
 
     /// Strips bullet markers, wrapping quotes, and trailing punctuation noise.

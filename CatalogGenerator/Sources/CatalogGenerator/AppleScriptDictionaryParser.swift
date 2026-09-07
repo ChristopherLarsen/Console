@@ -40,7 +40,7 @@ struct ScriptClass: Codable {
 struct ScriptParameter: Codable {
     let name: String
     let code: String
-    let type: String
+    var type: String
     let description: String?
     let isOptional: Bool
 }
@@ -48,7 +48,7 @@ struct ScriptParameter: Codable {
 struct ScriptProperty: Codable {
     let name: String
     let code: String
-    let type: String
+    var type: String
     let description: String?
     let access: String
 }
@@ -100,6 +100,8 @@ private class ScriptDictionaryParserDelegate: NSObject, XMLParserDelegate {
 
     // Element tracking
     private var inDirectParameter = false
+    private var inParameter = false
+    private var inProperty = false
 
     // MARK: - XMLParserDelegate
 
@@ -140,6 +142,7 @@ private class ScriptDictionaryParserDelegate: NSObject, XMLParserDelegate {
 
         case "parameter":
             if inCommand {
+                inParameter = true
                 let param = ScriptParameter(
                     name: attrs["name"] ?? "",
                     code: attrs["code"] ?? "",
@@ -148,6 +151,24 @@ private class ScriptDictionaryParserDelegate: NSObject, XMLParserDelegate {
                     isOptional: attrs["optional"] == "yes"
                 )
                 currentParameters.append(param)
+            }
+
+        case "type":
+            // Some dictionaries declare the type as a child element instead
+            // of an attribute (e.g. Music's `convert` direct-parameter:
+            // <direct-parameter><type type="specifier" list="yes"/>).
+            if inCommand, inDirectParameter, currentDirectParameter != nil {
+                if currentDirectParameter?.type.isEmpty == true {
+                    currentDirectParameter?.type = attrs["type"] ?? ""
+                }
+            } else if inCommand, inParameter, !currentParameters.isEmpty {
+                if currentParameters[currentParameters.count - 1].type.isEmpty {
+                    currentParameters[currentParameters.count - 1].type = attrs["type"] ?? ""
+                }
+            } else if inClass, inProperty, !currentProperties.isEmpty {
+                if currentProperties[currentProperties.count - 1].type.isEmpty {
+                    currentProperties[currentProperties.count - 1].type = attrs["type"] ?? ""
+                }
             }
 
         case "class", "class-extension":
@@ -159,6 +180,7 @@ private class ScriptDictionaryParserDelegate: NSObject, XMLParserDelegate {
 
         case "property":
             if inClass {
+                inProperty = true
                 let access = attrs["access"] ?? "rw"
                 let prop = ScriptProperty(
                     name: attrs["name"] ?? "",
@@ -197,6 +219,12 @@ private class ScriptDictionaryParserDelegate: NSObject, XMLParserDelegate {
 
         case "direct-parameter":
             inDirectParameter = false
+
+        case "parameter":
+            inParameter = false
+
+        case "property":
+            inProperty = false
 
         case "class", "class-extension":
             if inClass {

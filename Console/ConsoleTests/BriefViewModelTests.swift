@@ -40,8 +40,8 @@ final class BriefViewModelTests: XCTestCase {
         CommitActivity(repositoryName: "Repo", subject: subject, committedAt: day)
     }
 
-    private func seedBrief(day: Date, subject: String, tasks: [String]) {
-        store.save(BriefComposer.compose(
+    private func seedBrief(day: Date, subject: String, tasks: [String]) throws {
+        try store.save(BriefComposer.compose(
             day: day,
             activities: [activity(subject, on: calendar.date(byAdding: .day, value: -1, to: day)!)],
             carriedTasks: tasks
@@ -65,7 +65,7 @@ final class BriefViewModelTests: XCTestCase {
 
     func testTaskEditsSurviveSuspendedRegenerationInUIAndAfterReload() async throws {
         let today = startOfDay(0)
-        seedBrief(day: today, subject: "Old work", tasks: ["Original"])
+        try seedBrief(day: today, subject: "Old work", tasks: ["Original"])
         let collector = SuspendableActivityCollector(activities: [activity("New work", on: startOfDay(-1))])
         let refiner = SuspendableBriefRefiner(parsed: .init(yesterdayLines: ["AI line"], todayTasks: ["AI task"]))
         let viewModel = makeViewModel(collector: collector, refiner: refiner)
@@ -98,7 +98,7 @@ final class BriefViewModelTests: XCTestCase {
 
     func testTaskEditsSurviveSuspendedRefinementInUIAndAfterReload() async throws {
         let today = startOfDay(0)
-        seedBrief(day: today, subject: "Local work", tasks: ["Original"])
+        try seedBrief(day: today, subject: "Local work", tasks: ["Original"])
         let collector = SuspendableActivityCollector(activities: [activity("Unused", on: startOfDay(-1))])
         let refiner = SuspendableBriefRefiner(
             parsed: .init(yesterdayLines: ["Polished work"], todayTasks: ["AI should not win"])
@@ -160,7 +160,7 @@ final class BriefViewModelTests: XCTestCase {
     func testPreviousDayDelayedGenerationDoesNotReplaceTodaysDisplayedBrief() async throws {
         let yesterday = startOfDay(-1)
         let today = startOfDay(0)
-        seedBrief(day: today, subject: "Today already stored", tasks: ["Today plan"])
+        try seedBrief(day: today, subject: "Today already stored", tasks: ["Today plan"])
 
         let collector = SuspendableActivityCollector(
             activities: [activity("Yesterday collect", on: startOfDay(-2))]
@@ -193,7 +193,7 @@ final class BriefViewModelTests: XCTestCase {
     private func assertLastStartedWins(startRefineFirst: Bool,
                                        releaseFirstStartedFirst: Bool) async throws {
         let today = startOfDay(0)
-        seedBrief(day: today, subject: "Seed work", tasks: ["Original"])
+        try seedBrief(day: today, subject: "Seed work", tasks: ["Original"])
         let collector = SuspendableActivityCollector(
             activities: [activity("Generated work", on: startOfDay(-1))]
         )
@@ -278,6 +278,87 @@ final class BriefViewModelTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 20_000_000)
         }
         XCTAssertTrue(condition(), "Condition not met before timeout", file: file, line: line)
+    }
+
+    // MARK: - H38-F04: day rollover without remounting
+
+    func testDayRolloverRegeneratesNewDayWhilePanelStaysSelected() async throws {
+        let today = startOfDay(0)
+        let tomorrow = startOfDay(1)
+        let collector = SuspendableActivityCollector(activities: [
+            activity("Fresh work", on: today)
+        ])
+        let viewModel = makeViewModel(
+            collector: collector,
+            refiner: SuspendableBriefRefiner(parsed: .init(yesterdayLines: [], todayTasks: []))
+        )
+
+        viewModel.prepareIfNeeded(now: today)
+        await waitUntil { collector.pendingCount == 1 }
+        collector.releaseOldest()
+        await waitUntil { viewModel.brief?.day == today }
+
+        // Midnight passes while the panel stays selected (no onAppear).
+        viewModel.handleDayRollover(now: tomorrow)
+        await waitUntil { collector.pendingCount == 1 }
+        collector.releaseOldest()
+        await waitUntil { viewModel.brief?.day == tomorrow }
+
+        XCTAssertTrue(
+            viewModel.brief?.yesterdayLines.contains(where: { $0.contains("Fresh work") }) ?? false
+        )
+    }
+
+    func testDayRolloverOnSameDayIsNoOp() async throws {
+        let today = startOfDay(0)
+        try seedBrief(day: today, subject: "Stored work", tasks: [])
+        let collector = SuspendableActivityCollector(activities: [])
+        let viewModel = makeViewModel(
+            collector: collector,
+            refiner: SuspendableBriefRefiner(parsed: .init(yesterdayLines: [], todayTasks: []))
+        )
+
+        viewModel.prepareIfNeeded(now: today)
+        await waitUntil { viewModel.brief != nil }
+
+        viewModel.handleDayRollover(now: today.addingTimeInterval(3600))
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(viewModel.brief?.day, today, "same-day rollover must not regenerate")
+        XCTAssertEqual(collector.pendingCount, 0)
+    }
+
+    // MARK: - H38-F03: save failures surface in the view model
+
+    func testFailedSaveSurfacesErrorMessageForGenerationAndTaskEdits() async throws {
+        let today = startOfDay(0)
+        // Occupy the brief directory path with a file so every write fails.
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        let blocked = tempDirectory.appendingPathComponent("blocked", isDirectory: true)
+        try Data("occupant".utf8).write(to: blocked)
+        let failingStore = BriefStore(directory: blocked)
+        let collector = SuspendableActivityCollector(activities: [activity("Work", on: today)])
+        let service = BriefGenerationService(
+            store: failingStore,
+            collector: collector
+        )
+        let viewModel = BriefViewModel(
+            generationService: service,
+            workspacePathsProvider: { ["/tmp/Repo"] },
+            refiner: SuspendableBriefRefiner(parsed: .init(yesterdayLines: [], todayTasks: [])),
+            attributionStore: BriefAttributionStore(defaults: attributionDefaults)
+        )
+
+        viewModel.prepareIfNeeded(now: today)
+        await waitUntil { collector.pendingCount == 1 }
+        collector.releaseOldest()
+        await waitUntil { viewModel.brief != nil }
+        XCTAssertNotNil(
+            viewModel.errorMessage,
+            "generation whose save failed must not look like success"
+        )
+        viewModel.addTask()
+        XCTAssertEqual(viewModel.brief?.todayTasks.count, 1, "UI state still advances")
+        XCTAssertNotNil(viewModel.errorMessage, "the failed task-edit write must be visible")
     }
 }
 

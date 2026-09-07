@@ -69,13 +69,11 @@ struct BriefStore {
 
     // MARK: - Save
 
-    func save(_ brief: MorningBrief) {
-        do {
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(brief)
-            try data.write(to: url(forDay: brief.day), options: .atomic)
-        } catch {
-            printDebug("[BriefStore] Failed to save brief: \(error.localizedDescription)")
-        }
+    /// Throws on write failure — callers must surface the error instead of
+    /// letting a failed persist masquerade as success.
+    func save(_ brief: MorningBrief) throws {
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let data = try JSONEncoder().encode(brief)
+        try data.write(to: url(forDay: brief.day), options: .atomic)
     }
 }

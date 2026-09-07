@@ -74,9 +74,36 @@ struct BriefActivityCollector: BriefActivityCollecting, BriefIdentityReading {
     func readConfiguredIdentity(at path: String) async -> BriefAuthorIdentity {
         let name = await gitConfigValue("user.name", at: path)
         let email = await gitConfigValue("user.email", at: path)
-        return BriefAuthorIdentity(
-            name: name,
-            emails: email.isEmpty ? [] : [email]
+        // `git log %aE/%aN` report mailmap-canonical identity; canonicalize the
+        // raw config values the same way so defaults match collected commits.
+        let canonical = await canonicalizedIdentity(name: name, email: email, at: path)
+        return BriefAuthorIdentity(name: canonical.name, emails: canonical.email.isEmpty ? [] : [canonical.email])
+    }
+
+    /// Applies the repository's `.mailmap` to the configured identity, exactly
+    /// as git does for `%aE`/`%aN`. Falls back to the raw values when the
+    /// command is unavailable or the inputs are empty.
+    private func canonicalizedIdentity(
+        name: String,
+        email: String,
+        at path: String
+    ) async -> (name: String, email: String) {
+        guard !name.isEmpty || !email.isEmpty else { return (name, email) }
+        let ident = "\(name) <\(email)>"
+        let output = await gitOutput(
+            arguments: ["-C", path, "check-mailmap", ident],
+            allowedExitCodes: [0]
+        )
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasSuffix(">"), let open = trimmed.lastIndex(of: "<") else {
+            return (name, email)
+        }
+        let canonicalName = trimmed[..<open].trimmingCharacters(in: .whitespaces)
+        let canonicalEmail = trimmed[trimmed.index(after: open)..<trimmed.index(before: trimmed.endIndex)]
+            .trimmingCharacters(in: .whitespaces)
+        return (
+            canonicalName.isEmpty ? name : canonicalName,
+            canonicalEmail.isEmpty ? email : canonicalEmail
         )
     }
 

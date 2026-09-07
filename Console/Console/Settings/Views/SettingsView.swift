@@ -875,7 +875,7 @@ struct SettingsView: View {
                         .accessibilityIdentifier("Updates.ProgressSpinner")
                 }
 
-                if updateManager.phase == .available, updateManager.offeredRelease != nil {
+                if updateManager.canRetryPreparation {
                     Button("Update") {
                         updateManager.prepareOfferedUpdate()
                     }

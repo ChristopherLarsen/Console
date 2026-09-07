@@ -60,6 +60,12 @@ final class UpdateManager {
         phase == .available && offeredRelease != nil && offeredRelease?.tagName != dismissedTag
     }
 
+    /// A failed prepare keeps the offer; the same release must stay retryable
+    /// from Settings without a fresh network re-check.
+    var canRetryPreparation: Bool {
+        (phase == .available || phase == .failed) && offeredRelease != nil
+    }
+
     nonisolated static func runningAppVersion() -> SemanticVersion? {
         guard let raw = BuildConfiguration.appVersion else { return nil }
         return SemanticVersion.parse(raw)
@@ -68,10 +74,19 @@ final class UpdateManager {
     // MARK: - Checking
 
     /// The single automatic check per process (non-test Release builds only).
+    /// It shares the tracked check path with manual checks so `cancelAll()`
+    /// covers it and a pending bootstrap task cannot race a manual check.
     func performAutomaticCheckIfNeeded() async {
         guard !didRunAutomaticCheck else { return }
         didRunAutomaticCheck = true
-        await runCheck(isAutomatic: true)
+        guard !isBusy else { return }
+        phase = .checking
+        errorMessage = nil
+        checkTask?.cancel()
+        checkTask = Task { [weak self] in
+            await self?.runCheck(isAutomatic: true)
+        }
+        await checkTask?.value
     }
 
     /// Manual "Check for Updates" from Settings.
@@ -156,6 +171,9 @@ final class UpdateManager {
 
         do {
             let prepared = try await checkout.prepare(tag: tag)
+            // A quit-time cancelAll() that lands after the await must not
+            // produce success side effects (phase report + Xcode launch).
+            try Task.checkCancellation()
             preparedSource = prepared
             phase = .prepared
             printDebug("[Updates] Source ready at \(prepared.directoryPath)")

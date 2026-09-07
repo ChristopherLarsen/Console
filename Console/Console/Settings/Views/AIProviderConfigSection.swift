@@ -109,7 +109,15 @@ struct AIProviderConfigSection: View {
                                 // row, and only search models if it connected.
                                 let result = await aiProviderManager.testConnection(for: provider)
                                 testResult = result
-                                guard result.isSuccess else { return }
+                                let state = Self.refreshStateAfterReconnect(
+                                    connectionResult: result,
+                                    previousModels: availableModels
+                                )
+                                guard state.shouldFetch else {
+                                    availableModels = state.models
+                                    modelFetchStatus = state.status
+                                    return
+                                }
                             }
                             await fetchAvailableModels()
                         }
@@ -441,6 +449,22 @@ struct AIProviderConfigSection: View {
     private func isAuthError(_ error: ModelFetchError) -> Bool {
         if case .unauthorized = error { return true }
         return false
+    }
+
+    /// Refresh outcome after the LM Studio reconnect ping. A failed reconnect
+    /// must not leave the stale model list behind with a success fetch status.
+    static func refreshStateAfterReconnect(
+        connectionResult: AIProviderManager.ConnectionTestResult,
+        previousModels: [AvailableModel]
+    ) -> (models: [AvailableModel], status: ModelFetchStatus, shouldFetch: Bool) {
+        guard connectionResult.isSuccess else {
+            return (
+                [],
+                .failed("Could not connect to LM Studio — start the local server and try Refresh again."),
+                false
+            )
+        }
+        return (previousModels, .success, true)
     }
 
 }

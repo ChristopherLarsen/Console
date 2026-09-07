@@ -20,6 +20,13 @@ enum LLMErrorFormatter {
             return "The AI returned an unexpected response format. Try regenerating."
 
         case .apiError(let message):
+            // A leading bracketed status is the authoritative HTTP result;
+            // classify by it before falling back to phrase heuristics so a
+            // body mentioning "500"/"429" cannot mislabel a 4xx response.
+            if let status = LLMAPIStatus.fromAPIMessage(message) {
+                return formatHTTPStatus(status, originalMessage: message)
+            }
+
             let lower = message.lowercased()
 
             if lower.contains("401") || lower.contains("unauthorized") || lower.contains("invalid api key") {
@@ -74,6 +81,27 @@ enum LLMErrorFormatter {
 
         case .unknownError(let message):
             return "⚠️ An unexpected error occurred\n\n\(message)\n\nTry rephrasing your command or simplifying the request."
+        }
+    }
+
+    private static func formatHTTPStatus(_ status: Int, originalMessage message: String) -> String {
+        switch status {
+        case 401:
+            return "Invalid API key. Check your API key in AI Provider."
+        case 403:
+            return "Access denied. Your API key may lack the required permissions."
+        case 429:
+            return "Rate limit exceeded. Wait a moment and try again."
+        case 402:
+            return "API quota or billing limit reached. Check your provider account."
+        case 500:
+            return "The AI service had an internal error. Try again shortly."
+        case 502, 503:
+            return "The AI service is temporarily unavailable. Try again in a minute."
+        case 504, 529:
+            return "The AI service is overloaded or timed out. Try again in a minute."
+        default:
+            return "API error: \(message)"
         }
     }
 

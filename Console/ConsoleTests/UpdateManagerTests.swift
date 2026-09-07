@@ -25,6 +25,9 @@ final class UpdateManagerTests: XCTestCase {
             PreparedSource(directoryPath: "/tmp/Console-v2.0.0", xcodeProjectPath: nil)
         )
         var hangsUntilCancelled = false
+        /// Simulates a clone whose closure ignores task cancellation and
+        /// returns success anyway — the manager must still discard it.
+        var completesDespiteCancellation = false
         private(set) var preparedTags: [String] = []
 
         func prepare(tag: String) async throws -> PreparedSource {
@@ -32,8 +35,8 @@ final class UpdateManagerTests: XCTestCase {
             if hangsUntilCancelled {
                 do {
                     try await Task.sleep(for: .seconds(30))
-                } catch is CancellationError {
-                    throw CancellationError()
+                } catch {
+                    if !completesDespiteCancellation { throw CancellationError() }
                 }
             }
             return try result.get()
@@ -299,5 +302,118 @@ final class UpdateManagerTests: XCTestCase {
 
         XCTAssertEqual(manager.phase, .idle)
         XCTAssertNil(manager.errorMessage)
+    }
+
+    // MARK: - H46-F02: quit-time cancellation must suppress success side effects
+
+    func testCancelledPrepareDoesNotReportSuccessOrOpenXcode() async {
+        let fetcher = StubReleaseFetcher()
+        fetcher.releases = [release(tag: "v2.0.0")]
+        let checkout = StubCheckout()
+        checkout.hangsUntilCancelled = true
+        checkout.completesDespiteCancellation = true
+        checkout.result = .success(PreparedSource(
+            directoryPath: "/tmp/Console-v2.0.0",
+            xcodeProjectPath: "/tmp/Console-v2.0.0/Console/Console.xcodeproj"
+        ))
+        let opener = RecordingOpener()
+        let manager = makeManager(fetcher: fetcher, checkout: checkout, opener: opener)
+
+        manager.checkForUpdates()
+        await waitUntil(manager.phase == .available)
+
+        manager.prepareOfferedUpdate()
+        await waitUntil(!checkout.preparedTags.isEmpty)
+
+        manager.cancelAll()
+        await waitUntil(!manager.isBusy)
+
+        XCTAssertEqual(manager.phase, .idle, "a cancelled prepare must not report success")
+        XCTAssertNil(manager.preparedSource)
+        XCTAssertTrue(opener.openedPaths.isEmpty, "Xcode must not open after quit-time cancellation")
+    }
+
+    // MARK: - H46-F03: failed prepare keeps the offer retryable
+
+    func testFailedPreparationKeepsOfferRetryableWithoutRecheck() async {
+        let fetcher = StubReleaseFetcher()
+        fetcher.releases = [release(tag: "v2.0.0")]
+        let checkout = StubCheckout()
+        checkout.result = .failure(SourceCheckoutError.commandFailed(
+            description: "Downloading source", exitCode: 128, stderr: "fatal: tag not found"
+        ))
+        let opener = RecordingOpener()
+        let manager = makeManager(fetcher: fetcher, checkout: checkout, opener: opener)
+
+        manager.checkForUpdates()
+        await waitUntil(manager.phase == .available)
+
+        manager.prepareOfferedUpdate()
+        await waitUntil(manager.phase == .failed)
+
+        XCTAssertTrue(manager.canRetryPreparation, "the same offer must stay retryable")
+        XCTAssertFalse(manager.shouldShowPrompt, "the modal prompt stays down after failure")
+
+        // Retry the same offer without any network re-check.
+        checkout.result = .success(PreparedSource(
+            directoryPath: "/tmp/Console-v2.0.0",
+            xcodeProjectPath: "/tmp/Console-v2.0.0/Console/Console.xcodeproj"
+        ))
+        manager.prepareOfferedUpdate()
+        await waitUntil(manager.phase == .prepared)
+
+        XCTAssertEqual(checkout.preparedTags, ["v2.0.0", "v2.0.0"])
+        XCTAssertEqual(opener.openedPaths, ["/tmp/Console-v2.0.0/Console/Console.xcodeproj"])
+    }
+
+    // MARK: - H46-F04: automatic check shares the tracked check path
+
+    func testCancelAllAbortsInFlightAutomaticCheck() async {
+        let fetcher = StubReleaseFetcher()
+        fetcher.releases = [release(tag: "v2.0.0")]
+        fetcher.delay = .seconds(30)
+        let manager = makeManager(fetcher: fetcher, checkout: StubCheckout())
+
+        let autoTask = Task { await manager.performAutomaticCheckIfNeeded() }
+        await waitUntil(manager.isChecking)
+
+        manager.cancelAll()
+        await waitUntil(!manager.isBusy)
+
+        XCTAssertEqual(manager.phase, .idle, "shutdown must cancel the automatic check")
+        XCTAssertEqual(fetcher.callCount, 1)
+        _ = await autoTask.value
+    }
+
+    func testManualCheckDuringAutomaticCheckDoesNotDoubleFetch() async {
+        let fetcher = StubReleaseFetcher()
+        fetcher.releases = [release(tag: "v1.3.0")]
+        fetcher.delay = .milliseconds(80)
+        let manager = makeManager(fetcher: fetcher, checkout: StubCheckout())
+
+        let autoTask = Task { await manager.performAutomaticCheckIfNeeded() }
+        await waitUntil(manager.isChecking)
+
+        manager.checkForUpdates()
+        await autoTask.value
+
+        XCTAssertEqual(fetcher.callCount, 1, "a manual check must not race the automatic check")
+        XCTAssertEqual(manager.phase, .available)
+    }
+
+    func testAutomaticCheckIsSkippedWhenManualCheckIsInFlight() async {
+        let fetcher = StubReleaseFetcher()
+        fetcher.releases = [release(tag: "v1.3.0")]
+        fetcher.delay = .milliseconds(80)
+        let manager = makeManager(fetcher: fetcher, checkout: StubCheckout())
+
+        manager.checkForUpdates()
+        await waitUntil(manager.isChecking)
+
+        await manager.performAutomaticCheckIfNeeded()
+        await waitUntil(manager.phase == .available)
+
+        XCTAssertEqual(fetcher.callCount, 1, "the pending bootstrap check must not run a second fetch")
+        XCTAssertEqual(manager.offeredRelease?.tagName, "v1.3.0")
     }
 }
