@@ -166,7 +166,7 @@ Names may be adjusted to match the codebase, but preserve separation between:
 
 ### Shared web session
 
-Extend or refactor `JiraWebSession.shared` so it remains the sole owner of the live `WebPage`. Both the Home panel and the full JIRA sidebar destination must use that same page. These destinations are mutually exclusive in `MainView`, so the same page can move between their `WebView` presentations without creating two browser sessions.
+Extend or refactor `JiraWebSession.shared` so it remains the sole owner of the live `WebPage`. Both the Home panel and the full JIRA sidebar destination must use that same page. These destinations are mutually exclusive in `MainView`, so the same page can move between their `WebView` presentations without creating two browser sessions. (macOS 26 constraint discovered 2026-09-09: a `WebPage` may be attached to only one `WebView` at a time. The swap must not mount the new `WebView` in the same transaction that dismantles the old one — both views defer their `WebView` mount by one runloop hop; see `JiraView.mountWebViewAfterSettling` and `JiraPanelView.webLayer`.)
 
 The shared session may also own or retain the panel controller, but do not create a cycle. It should be possible to navigate away from JIRA and back without losing authentication, the loaded page, cards, or the last successful extraction.
 

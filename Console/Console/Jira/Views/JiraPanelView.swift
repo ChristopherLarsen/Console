@@ -11,6 +11,12 @@ struct JiraPanelView: View {
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
     @FocusState private var browserControlsFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// A WebPage may be presented in only one WebView at a time on macOS 26.
+    /// Returning Home from the JIRA destination mounts this WebView in the
+    /// same transaction that dismantles the destination's WebView over the
+    /// same shared page, which traps in WebKit. Deferring the mount by one
+    /// runloop hop guarantees the old presentation is gone first.
+    @State private var isWebViewMounted = false
 
     var body: some View {
         Group {
@@ -54,12 +60,24 @@ struct JiraPanelView: View {
             if controller.showsBrowser {
                 compactBrowserControls
             }
-            WebView(JiraWebSession.shared.page)
-                .webViewBackForwardNavigationGestures(.enabled)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .allowsHitTesting(controller.showsBrowser)
-                .accessibilityHidden(!controller.showsBrowser)
-                .accessibilityIdentifier("JiraPanelWebView")
+            if isWebViewMounted {
+                WebView(JiraWebSession.shared.page)
+                    .webViewBackForwardNavigationGestures(.enabled)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(controller.showsBrowser)
+                    .accessibilityHidden(!controller.showsBrowser)
+                    .accessibilityIdentifier("JiraPanelWebView")
+            } else {
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityHidden(true)
+            }
+        }
+        .onAppear {
+            guard !isWebViewMounted else { return }
+            DispatchQueue.main.async {
+                isWebViewMounted = true
+            }
         }
     }
 

@@ -87,6 +87,12 @@ struct JiraView: View {
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
     @State private var page = JiraWebSession.shared.page
     @State private var isIssueTracked = false
+    /// A WebPage may be presented in only one WebView at a time on macOS 26.
+    /// Mounting this WebView in the same transaction that dismantles the Home
+    /// quadrant's WebView over the same shared page traps in WebKit. Deferring
+    /// the mount by one runloop hop guarantees the old presentation is gone
+    /// before this one attaches.
+    @State private var isWebViewMounted = false
 
     var body: some View {
         Group {
@@ -99,13 +105,19 @@ struct JiraView: View {
                             .progressViewStyle(.linear)
                     }
 
-                    WebView(page)
-                        .webViewBackForwardNavigationGestures(.enabled)
-                        .webViewMagnificationGestures(.enabled)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .accessibilityIdentifier("JiraWebView")
+                    if isWebViewMounted {
+                        WebView(page)
+                            .webViewBackForwardNavigationGestures(.enabled)
+                            .webViewMagnificationGestures(.enabled)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .accessibilityIdentifier("JiraWebView")
+                    } else {
+                        Color.clear
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
                 .onAppear {
+                    mountWebViewAfterSettling()
                     if let pending = JiraDeepLink.shared.consume() {
                         JiraWebSession.shared.navigate(to: pending)
                         refreshTrackedState()
@@ -251,6 +263,16 @@ struct JiraView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("JiraEmptyState")
+    }
+
+    /// Mounts the WebView on the next runloop hop so the previous presentation
+    /// of the shared page (the Home quadrant, or this destination itself) is
+    /// fully dismantled first.
+    private func mountWebViewAfterSettling() {
+        guard !isWebViewMounted else { return }
+        DispatchQueue.main.async {
+            isWebViewMounted = true
+        }
     }
 
     private func loadIfNeeded(url: URL, force: Bool) {
