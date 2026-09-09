@@ -16,6 +16,26 @@ class AppSettings {
     static let webViewGitLabMyMergeRequestsURLKey = "webViewGitLabMyMergeRequestsURL"
     static let webViewMergeRequestsURLLegacyKey = "webViewMergeRequestsURL"
 
+    // Terminal drawer settings
+    /// Folder where new Terminal sessions start. Supports "~" for the home
+    /// directory. Defaults to the user's home directory.
+    static let defaultTerminalFolderKey = "defaultTerminalFolder"
+    static let defaultTerminalFolderDefault = "~"
+
+    /// Expands the stored terminal folder setting to a real start directory,
+    /// falling back to the home directory when unset, empty, or missing.
+    static func resolvedTerminalStartDirectory(from stored: String?) -> String {
+        let trimmed = stored?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return NSHomeDirectory() }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory),
+           isDirectory.boolValue {
+            return expanded
+        }
+        return NSHomeDirectory()
+    }
+
     @AppStorage(AppSettings.webViewGitLabReviewsURLKey) var webViewGitLabReviewsURL: String = ""
     @AppStorage(AppSettings.webViewGitLabMyMergeRequestsURLKey) var webViewGitLabMyMergeRequestsURL: String = ""
 

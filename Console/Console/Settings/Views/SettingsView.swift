@@ -30,6 +30,7 @@ struct SettingsView: View {
     @AppStorage("showErrorPopups") private var showErrorPopups: Bool = false
     @AppStorage("popupDurationSeconds") private var popupDurationSeconds: Int = 3
     @AppStorage("sleepAfterInterval") private var sleepAfterInterval: String = AppSettings.SleepInterval.thirtyMinutes.rawValue
+    @AppStorage(AppSettings.defaultTerminalFolderKey) private var defaultTerminalFolder: String = AppSettings.defaultTerminalFolderDefault
     
     @Environment(InfoManager.self) private var infoManager
     @Environment(PermissionBackgroundObserver.self) private var permissionObserver: PermissionBackgroundObserver?
@@ -57,8 +58,7 @@ struct SettingsView: View {
                 generalSection
                 claudeSection
                 SessionsSettingsSection()
-                IOSProjectSettingsSection()
-                IOSBuildJobView()
+                terminalSection
                 urlsSection
                 popupsSection
                 permissionsSection
@@ -308,6 +308,66 @@ struct SettingsView: View {
             guard locator.isValidExecutable(path) else { return }
             locator.storeOverride(path)
             detectedClaudePath = path
+        }
+    }
+
+    // MARK: - Terminal
+
+    private var terminalSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    Text("Default Terminal Folder")
+
+                    Spacer()
+
+                    Button("Choose…") { chooseTerminalFolder() }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityIdentifier("Settings.Terminal.ChooseButton")
+                }
+
+                TextField(
+                    "",
+                    text: $defaultTerminalFolder,
+                    prompt: Text(AppSettings.defaultTerminalFolderDefault)
+                        .foregroundStyle(Color(nsColor: .placeholderTextColor))
+                )
+                    .textFieldStyle(.plain)
+                    .padding(6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                    )
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("Settings.Terminal.FolderField")
+            }
+        } header: {
+            Text("Terminal")
+        } footer: {
+            Text("New Terminal sessions start in this folder. \"~\" means your home directory.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func chooseTerminalFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.directoryURL = URL(
+            fileURLWithPath: AppSettings.resolvedTerminalStartDirectory(from: defaultTerminalFolder)
+        )
+
+        panel.beginSheetModal(for: NSApp.keyWindow ?? NSApp.mainWindow!) { response in
+            guard response == .OK, let url = panel.url else { return }
+            defaultTerminalFolder = url.path
         }
     }
 

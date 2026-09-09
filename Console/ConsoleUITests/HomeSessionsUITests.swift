@@ -50,10 +50,8 @@ final class HomeSessionsUITests: XCTestCase {
             "fresh launch shows the quiet empty state. Tree:\n\(app.debugDescription)"
         )
 
-        // Sibling panels are untouched.
+        // Sibling panel is untouched.
         XCTAssertTrue(element("HomePanelJiraTickets").exists, "JIRA panel still present")
-        XCTAssertTrue(element("HomePanelGitLabMRsToReview").exists, "GitLab review panel still present")
-        XCTAssertTrue(element("HomePanelGitLabMyMRs").exists, "GitLab authored panel still present")
     }
 
     // MARK: - Radar with injected sessions

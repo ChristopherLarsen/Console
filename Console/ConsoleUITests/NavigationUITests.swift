@@ -113,66 +113,6 @@ final class NavigationUITests: XCTestCase {
         XCTAssertTrue(gitLabMyMRsURLLabel.waitForExistence(timeout: 5), "Settings should show Web View GitLab My MRs URL field")
     }
 
-    // MARK: - Home Panel 3 (GitLab MRs to Review)
-
-    func testHomePanelThreeIsNotPlaceholder() throws {
-        app.launch()
-
-        let mainWindow = app.windows.firstMatch
-        XCTAssertTrue(mainWindow.waitForExistence(timeout: 5), "Main window should appear")
-
-        let homeDashboard = app.descendants(matching: .any)["HomeDashboard"].firstMatch
-        XCTAssertTrue(homeDashboard.waitForExistence(timeout: 5), "App should start on Home")
-
-        let reviewsPanel = app.descendants(matching: .any)["HomePanelGitLabMRsToReview"].firstMatch
-        XCTAssertTrue(reviewsPanel.waitForExistence(timeout: 5), "Panel 3 container should be present")
-
-        // The GitLab panel body replaces the placeholder: its own chrome is
-        // rendered instead of the "Panel 3" placeholder copy.
-        XCTAssertFalse(
-            reviewsPanel.staticTexts["Panel 3"].exists,
-            "Panel 3 should no longer render the placeholder body"
-        )
-        XCTAssertTrue(
-            reviewsPanel.buttons["GitLabPanelRefreshButton"].waitForExistence(timeout: 5),
-            "Panel 3 should expose its Refresh control"
-        )
-        XCTAssertTrue(
-            reviewsPanel.buttons["GitLabPanelShowGitLabButton"].exists || reviewsPanel.otherElements["GitLabPanelUnconfiguredState"].exists,
-            "Panel 3 should be interactive or explain an unconfigured URL"
-        )
-    }
-
-    // MARK: - Home Panel 4 (GitLab My MRs)
-
-    func testHomePanelFourIsNotPlaceholder() throws {
-        app.launch()
-
-        let mainWindow = app.windows.firstMatch
-        XCTAssertTrue(mainWindow.waitForExistence(timeout: 5), "Main window should appear")
-
-        let homeDashboard = app.descendants(matching: .any)["HomeDashboard"].firstMatch
-        XCTAssertTrue(homeDashboard.waitForExistence(timeout: 5), "App should start on Home")
-
-        let authoredPanel = app.descendants(matching: .any)["HomePanelGitLabMyMRs"].firstMatch
-        XCTAssertTrue(authoredPanel.waitForExistence(timeout: 5), "Panel 4 container should be present")
-
-        // The authored-MR panel body replaces the placeholder: its own chrome
-        // is rendered instead of the "Panel 4" placeholder copy.
-        XCTAssertFalse(
-            authoredPanel.staticTexts["Panel 4"].exists,
-            "Panel 4 should no longer render the placeholder body"
-        )
-        XCTAssertTrue(
-            authoredPanel.buttons["GitLabPanelRefreshButton"].waitForExistence(timeout: 5),
-            "Panel 4 should expose its Refresh control"
-        )
-        XCTAssertTrue(
-            authoredPanel.buttons["GitLabPanelShowGitLabButton"].exists || authoredPanel.otherElements["GitLabPanelUnconfiguredState"].exists,
-            "Panel 4 should be interactive or explain an unconfigured URL"
-        )
-    }
-
     func testSettingsSidebarShowsSettings() throws {
         app.launch()
 

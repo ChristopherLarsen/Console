@@ -1,11 +1,9 @@
 import SwiftUI
 
-/// The four Home dashboard quadrants in fixed reading order.
+/// The Home dashboard panels in fixed reading order.
 enum HomePanel: Int, CaseIterable, Identifiable {
     case jiraTickets
     case sessions
-    case gitLabReviews
-    case gitLabAuthored
 
     var id: Int { rawValue }
 
@@ -13,8 +11,6 @@ enum HomePanel: Int, CaseIterable, Identifiable {
         switch self {
         case .jiraTickets: return "My Tickets"
         case .sessions: return "Sessions"
-        case .gitLabReviews: return "MRs to Review"
-        case .gitLabAuthored: return "My MRs"
         }
     }
 
@@ -22,14 +18,11 @@ enum HomePanel: Int, CaseIterable, Identifiable {
         switch self {
         case .jiraTickets: return "HomePanelJiraTickets"
         case .sessions: return "HomePanelSessions"
-        case .gitLabReviews: return "HomePanelGitLabMRsToReview"
-        case .gitLabAuthored: return "HomePanelGitLabMyMRs"
         }
     }
 }
 
-/// Four-panel Home dashboard frame: JIRA tickets, sessions, and both hosted
-/// GitLab merge-request lists.
+/// Two-panel Home dashboard frame: JIRA tickets and sessions.
 struct HomeView: View {
     private enum Layout {
         static let edgePadding: CGFloat = 12
@@ -49,11 +42,12 @@ struct HomeView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            // Equal rows that fill the available height, clamped to a minimum so
-            // both rows survive short windows by scrolling instead of collapsing.
+            // Single row that fills the available height, clamped to a minimum
+            // so the panels survive short windows by scrolling instead of
+            // collapsing.
             let rowHeight = max(
                 minimumPanelHeight,
-                (geometry.size.height - 2 * Layout.edgePadding - Layout.gridSpacing) / 2
+                geometry.size.height - 2 * Layout.edgePadding
             )
 
             ScrollView(.vertical) {
@@ -68,12 +62,6 @@ struct HomeView: View {
                         panel(.sessions)
                             .frame(height: rowHeight)
                     }
-                    GridRow {
-                        panel(.gitLabReviews)
-                            .frame(height: rowHeight)
-                        panel(.gitLabAuthored)
-                            .frame(height: rowHeight)
-                    }
                 }
                 .padding(Layout.edgePadding)
                 .frame(minWidth: geometry.size.width)
@@ -86,7 +74,6 @@ struct HomeView: View {
         switch panel {
         case .jiraTickets: return "JIRA"
         case .sessions: return nil
-        case .gitLabReviews, .gitLabAuthored: return "GitLab"
         }
     }
 
@@ -104,10 +91,6 @@ struct HomeView: View {
                 JiraPanelView()
             case .sessions:
                 HomeSessionsPanelView()
-            case .gitLabReviews:
-                MergeRequestsPanelView(kind: .reviewsRequested)
-            case .gitLabAuthored:
-                MergeRequestsPanelView(kind: .authored)
             }
         }
         .frame(

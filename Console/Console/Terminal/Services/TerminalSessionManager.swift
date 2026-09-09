@@ -32,11 +32,15 @@ final class TerminalSessionManager {
         self.coordinator = newCoordinator
         newTerminal.processDelegate = newCoordinator
 
+        let storedFolder = UserDefaults.standard.string(forKey: AppSettings.defaultTerminalFolderKey)
+            ?? AppSettings.defaultTerminalFolderDefault
+
         newTerminal.startProcess(
             executable: "/bin/zsh",
             args: ["--login"],
             environment: nil,
-            execName: "zsh"
+            execName: "zsh",
+            currentDirectory: AppSettings.resolvedTerminalStartDirectory(from: storedFolder)
         )
 
         self.terminalView = newTerminal
