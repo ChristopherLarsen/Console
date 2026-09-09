@@ -30,6 +30,12 @@ final class SidebarHotkeyNavigationTests: XCTestCase {
             workingDirectory: String,
             terminalView: LocalProcessTerminalView
         ) throws {}
+
+        func startExitShell(
+            workingDirectory: String,
+            environment: [String: String],
+            terminalView: LocalProcessTerminalView
+        ) {}
     }
 
     private func makeStore() -> SessionStore {

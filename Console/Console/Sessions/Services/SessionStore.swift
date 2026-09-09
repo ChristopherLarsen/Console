@@ -570,13 +570,25 @@ final class SessionStore {
         }
     }
 
-    func handleProcessTerminated(sessionID: UUID) {
+    func handleProcessTerminated(sessionID: UUID, startExitShell: Bool = true) {
         if closeOnExitIDs.remove(sessionID) != nil {
             notifyLifecycle(sessionID: sessionID, event: .processTerminated)
             closeSession(id: sessionID)
             return
         }
         applyEvent(.processTerminated, to: sessionID)
+        // A retained pane must never sit as a dead terminal: when the Claude
+        // child exits, hand the same terminal view to a login shell so the
+        // user gets a command-line prompt. Scrollback is preserved by
+        // SwiftTerm; the session stays Exited until the user closes it.
+        guard startExitShell,
+              let session = session(withID: sessionID),
+              session.terminalView.process?.running != true else { return }
+        launcher.startExitShell(
+            workingDirectory: session.workingDirectory.path,
+            environment: childEnvironment(bridgeEnvironment: [:]),
+            terminalView: session.terminalView
+        )
     }
 
     /// Stops every running session. Used on actual app termination only —
@@ -589,7 +601,8 @@ final class SessionStore {
                 kill(pid, SIGKILL)
             }
             if session.activity != .exited {
-                handleProcessTerminated(sessionID: session.id)
+                // App termination: no exit shell, nothing would ever use it.
+                handleProcessTerminated(sessionID: session.id, startExitShell: false)
             }
         }
     }

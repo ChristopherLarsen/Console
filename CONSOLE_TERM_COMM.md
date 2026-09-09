@@ -46,7 +46,12 @@ Official references:
   `Folder`, `Folder 2`, …); Customize offers optional name/workspace overrides,
   and first-use picks the workspace folder with `NSOpenPanel`.
 - Claude is launched as the PTY child directly (the resolved `claude`
-  executable). A shell is never started and `claude` never typed into it.
+  executable). A shell is never started for the launch and `claude` is never
+  typed into one. When the Claude child exits, Console starts a login shell
+  (`/bin/zsh --login`, the same environment layering as the drawer) inside the
+  session's existing terminal view so the pane returns to a command-line
+  prompt; scrollback is retained and the row stays Exited until the user
+  closes it. App termination never spawns this exit shell.
 - Each creation generates two UUIDs: a Console session UUID and a Claude
   session UUID. Launch arguments always include `--session-id <claudeUUID>`.
   When plugin assembly succeeds they also include `--plugin-dir <bundled plugin>`

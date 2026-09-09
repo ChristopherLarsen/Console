@@ -51,6 +51,12 @@ final class SessionWorkspaceChooserTests: XCTestCase {
                 throw errorToThrow
             }
         }
+
+        func startExitShell(
+            workingDirectory: String,
+            environment: [String: String],
+            terminalView: LocalProcessTerminalView
+        ) {}
     }
 
     private struct SyntheticLaunchError: LocalizedError {

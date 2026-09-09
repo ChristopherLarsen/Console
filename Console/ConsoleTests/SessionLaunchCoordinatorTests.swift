@@ -59,6 +59,12 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
                 throw errorToThrow
             }
         }
+
+        func startExitShell(
+            workingDirectory: String,
+            environment: [String: String],
+            terminalView: LocalProcessTerminalView
+        ) {}
     }
 
     private final class FakeAssembler: ConsoleClaudePluginAssembling {

@@ -23,6 +23,9 @@ final class SessionStoreTests: XCTestCase {
         var lastArguments: [String]?
         var lastEnvironment: [String: String]?
         var errorToThrow: Error?
+        var exitShellStartCount = 0
+        var lastExitShellWorkingDirectory: String?
+        var lastExitShellEnvironment: [String: String]?
 
         func makeTerminalView() -> LocalProcessTerminalView {
             let view = ConsoleTerminalView()
@@ -44,6 +47,16 @@ final class SessionStoreTests: XCTestCase {
             if let errorToThrow {
                 throw errorToThrow
             }
+        }
+
+        func startExitShell(
+            workingDirectory: String,
+            environment: [String: String],
+            terminalView: LocalProcessTerminalView
+        ) {
+            exitShellStartCount += 1
+            lastExitShellWorkingDirectory = workingDirectory
+            lastExitShellEnvironment = environment
         }
     }
 
@@ -271,6 +284,51 @@ final class SessionStoreTests: XCTestCase {
 
         XCTAssertEqual(store.sessions.count, 1, "natural process exit keeps the exited row")
         XCTAssertEqual(store.session(withID: id)?.activity, .exited)
+    }
+
+    func testNaturalProcessExitStartsExitShellPrompt() throws {
+        let (store, launcher) = makeStore()
+        let dir = tmpDirectory("Prompt")
+        let id = try store.createSession(name: "Live", workingDirectory: dir)
+        store.handleProcessTerminated(sessionID: id)
+
+        XCTAssertEqual(launcher.exitShellStartCount, 1, "a retained pane returns to a shell prompt after Claude exits")
+        XCTAssertEqual(launcher.lastExitShellWorkingDirectory, dir.path)
+        let environment = try XCTUnwrap(launcher.lastExitShellEnvironment)
+        XCTAssertEqual(environment["TERM"], "xterm-256color")
+        XCTAssertFalse(
+            environment.keys.contains { $0.hasPrefix("CONSOLE_TERM_BRIDGE_") },
+            "the exit shell carries no bridge identity"
+        )
+    }
+
+    func testTerminateThenProcessExitDoesNotStartExitShell() throws {
+        let (store, launcher) = makeStore()
+        let id = try store.createSession(name: "Live", workingDirectory: tmpDirectory("L"))
+
+        store.terminateSession(id: id)
+        store.handleProcessTerminated(sessionID: id)
+
+        XCTAssertEqual(launcher.exitShellStartCount, 0, "user-terminated sessions close instead of respawning a shell")
+    }
+
+    func testExitShellRestartWhenPromptShellExits() throws {
+        let (store, launcher) = makeStore()
+        let id = try store.createSession(name: "Live", workingDirectory: tmpDirectory("L"))
+        store.handleProcessTerminated(sessionID: id)
+        store.handleProcessTerminated(sessionID: id)
+
+        XCTAssertEqual(launcher.exitShellStartCount, 2, "an exited pane stays usable until explicitly closed")
+        XCTAssertEqual(store.sessions.count, 1)
+        XCTAssertEqual(store.session(withID: id)?.activity, .exited)
+    }
+
+    func testTerminateAllDoesNotStartExitShell() throws {
+        let (store, launcher) = makeStore()
+        _ = try store.createSession(name: "One", workingDirectory: tmpDirectory("One"))
+        store.terminateAll()
+
+        XCTAssertEqual(launcher.exitShellStartCount, 0, "app termination must not spawn shells")
     }
 
     func testRemoveRefusesNonExitedSessions() throws {

@@ -14,6 +14,14 @@ protocol SessionProcessLaunching: AnyObject {
         workingDirectory: String,
         terminalView: LocalProcessTerminalView
     ) throws
+
+    /// Starts a login shell in a session's terminal after the Claude child
+    /// has exited, so the pane returns to a command-line prompt.
+    func startExitShell(
+        workingDirectory: String,
+        environment: [String: String],
+        terminalView: LocalProcessTerminalView
+    )
 }
 
 /// Production launcher: starts the resolved `claude` executable directly as the
@@ -48,6 +56,24 @@ final class ClaudeSessionLauncher: SessionProcessLaunching {
         guard let pid = terminalView.process?.shellPid, pid > 0, terminalView.process?.running == true else {
             throw SessionCreationError.sessionLaunchFailed
         }
+    }
+
+    /// Same launch the drawer uses (`zsh --login`), started in the session's
+    /// existing terminal view. SwiftTerm keeps the buffer, so the retained
+    /// scrollback survives and the prompt appears below Claude's output.
+    func startExitShell(
+        workingDirectory: String,
+        environment: [String: String],
+        terminalView: LocalProcessTerminalView
+    ) {
+        let environmentEntries = environment.map { "\($0.key)=\($0.value)" }.sorted()
+        terminalView.startProcess(
+            executable: "/bin/zsh",
+            args: ["--login"],
+            environment: environmentEntries,
+            execName: "zsh",
+            currentDirectory: workingDirectory
+        )
     }
 }
 

@@ -664,6 +664,12 @@ private final class FakeDeveloperSessionLauncher: SessionProcessLaunching {
         workingDirectory: String,
         terminalView: LocalProcessTerminalView
     ) throws {}
+
+    func startExitShell(
+        workingDirectory: String,
+        environment: [String: String],
+        terminalView: LocalProcessTerminalView
+    ) {}
 }
 
 private final class RecordingDeveloperWorkspaceOpener: IOSWorkspaceOpening, @unchecked Sendable {

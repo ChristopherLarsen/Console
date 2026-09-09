@@ -47,6 +47,12 @@ final class SharedCheckoutWarningTests: XCTestCase {
         ) throws {
             launchCount += 1
         }
+
+        func startExitShell(
+            workingDirectory: String,
+            environment: [String: String],
+            terminalView: LocalProcessTerminalView
+        ) {}
     }
 
     private final class RecordingGitInspector: LocalGitInspecting, @unchecked Sendable {

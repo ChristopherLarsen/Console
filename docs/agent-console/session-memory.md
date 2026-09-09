@@ -2,34 +2,48 @@
 
 # Session Memory
 
-_Rewritten 2026-09-07 after bug-hunt campaign fix phase completed._
+_Rewritten 2026-09-09 after fixing the dead-terminal-after-Claude-exit behavior._
 
 ## Next Intended Move
 
-Campaign is done. Next: Christopher reviews the 13-merge
-series on `main` (`efaed4f..c7da875`). Optional: run broader targeted ConsoleTests slices
-to shake out cross-merge interactions (LocalCommandExecutor, MenuBarViewModel,
-ConsoleApp, RetryHelper auto-merged between branches — each merge build was
-green, but full-scheme unit run not repeated at final HEAD).
+Christopher should manually verify the exit-shell fix with real Claude: start a
+session, quit Claude (e.g. `/exit`), confirm the pane returns to a live zsh
+prompt with scrollback intact, and that removing the row closes the shell.
+Separately: the /vx-issue Codex skill (installed 2026-09-08) is waiting for the
+first real GitHub issue to exercise push/deletion paths.
 
 ## Working Findings
 
-- 183 verified bugs fixed; all merged; build green. Full campaign docs were
-  deleted 2026-09-07 at Christopher's request (verified-bugs.md content is
-  summarized in that session; the durable record is the merge series itself).
-- Verification reports were deleted after fix+merge (Christopher's policy);
-  whole campaign tree removed after completion.
-- Sub-agent pattern that worked: one worktree + branch per cluster, ≤5
-  parallel, agents read campaign docs from main checkout (untracked dir not
-  in worktrees), orchestrator merges sequentially + deletes reports + cleans
-  worktrees/branches.
-- H12-F02 enforcement means curated `do shell script` catalog commands now
-  prompt for confirmation — intended.
+- Sessions PTY bug fixed: Claude was the PTY child with no shell behind it, so
+  quitting Claude left a dead pane. Now `SessionStore.handleProcessTerminated`
+  (retained sessions only) calls the new `SessionProcessLaunching.startExitShell`
+  (`/bin/zsh --login` in the same view, drawer-equivalent env, no bridge vars,
+  cwd = session working directory). SwiftTerm preserves the buffer, so
+  scrollback survives and the prompt appears below Claude's output. Row stays
+  Exited; closing/removing the row kills the shell. `terminateAll` passes
+  `startExitShell: false`. Respawning on later shell exits is intentional
+  (pane stays usable until explicitly closed).
+- New unit tests in `SessionStoreTests`: exit shell on natural exit, none after
+  user terminate, restart on shell exit, none on terminateAll. Fake launchers
+  in six test files gained the `startExitShell` no-op/recorder.
+- Spec ground truth updated in the same change set: `CONSOLE_TERM_COMM.md` §1
+  and `docs/agent-console/overview.md` Sessions row.
+- SessionStoreTests builds via `ConsoleTerminalView()` with a dead
+  `LocalProcess` — the `process?.running != true` guard makes the respawn path
+  testable without real processes.
+- Uncommitted-before-this-session leftovers (not mine, untouched):
+  `SessionsView.swift` empty-state tweak (button removed, icon `terminal`,
+  chevron top-aligned) and the 2026-09-08 session-memory rewrite.
+- Personal vx-issue skill at `~/.codex/skills/vx-issue` (+ symlink in
+  `~/.agents/skills`); targets ChristopherLarsen/Console (ADMIN), pushes
+  verified fixes to main, deletes the fixed issue; parent cleans worktrees.
+- Prior campaign: 183 bugs fixed in `efaed4f..c7da875`, all merges green.
 
 ## Dead Ends
 
-- Full UITest suite still forbidden; 2 E2E command-flow tests +
-  SpeechPipelineUITests positive control fail identically on pristine HEAD
-  (host issue: synthesized clicks never actuate, app.windows unreliable).
-- Worktree cleanup gotcha: `git worktree remove` needs the dir to still exist;
-  use `--force` after copying untracked artifacts out first.
+- Full UITest suite remains forbidden. Earlier evidence: two E2E command-flow
+  tests and SpeechPipelineUITests positive control fail identically on pristine
+  HEAD (synthesized clicks never actuate; app.windows unreliable).
+- This gh version rejects `--slurp` with `--jq`; the issue command uses Python
+  to select from paginated JSON.
+- Remove owned worktrees only after their task stops; never force removal.
