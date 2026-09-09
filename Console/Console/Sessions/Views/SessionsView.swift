@@ -130,7 +130,8 @@ struct SessionsView: View {
             Image(systemName: "sidebar.trailing")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.top, 10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -174,11 +175,6 @@ struct SessionsView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("Sessions.EmptyState")
-            Button("New Claude Session") {
-                showingIntentPicker = true
-            }
-            .controlSize(.small)
-            .accessibilityIdentifier("EmptyStateNewSessionButton")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -221,7 +217,7 @@ struct SessionsView: View {
             .id(session.id)
         } else {
             VStack(spacing: 8) {
-                Image(systemName: "sparkles.rectangle.stack")
+                Image(systemName: "terminal")
                     .font(.system(size: 36))
                     .foregroundStyle(.tertiary)
                 Text("Start a Claude session to begin")
