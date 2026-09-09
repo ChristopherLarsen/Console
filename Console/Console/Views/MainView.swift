@@ -25,7 +25,10 @@ struct MainView: View {
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(selection: $sidebarSelection)
+            SidebarView(
+                selection: $sidebarSelection,
+                isTerminalExpanded: drawerExpandedBinding
+            )
                 .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 240)
         } detail: {
             detailColumn
@@ -189,26 +192,27 @@ struct MainView: View {
                 Self.terminalMinExpandedHeight,
                 geometry.size.height - Self.terminalCenterMinHeight
             )
-            let panelHeight = isDrawerVisuallyExpanded
-                ? min(max(terminalPanelHeight, Self.terminalMinExpandedHeight), maxTerminalHeight)
-                : TerminalPanelView.barHeight
+            let panelHeight = min(
+                max(terminalPanelHeight, Self.terminalMinExpandedHeight),
+                maxTerminalHeight
+            )
 
             VStack(spacing: 0) {
                 centerContent
                     .frame(minWidth: 400, minHeight: Self.terminalCenterMinHeight)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+                // A retracted drawer occupies no space at all; the shell and
+                // its SwiftTerm view survive unmounting inside the manager.
                 if isDrawerVisuallyExpanded {
                     terminalResizeHandle(maxHeight: maxTerminalHeight)
                         .transition(.opacity)
-                }
 
-                TerminalPanelView(
-                    sessionManager: terminalSessionManager,
-                    isExpanded: drawerExpandedBinding
-                )
-                .frame(height: panelHeight)
-                .frame(maxWidth: .infinity)
+                    TerminalPanelView(sessionManager: terminalSessionManager)
+                        .frame(height: panelHeight)
+                        .frame(maxWidth: .infinity)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
             }
             .animation(TerminalPanelView.collapseAnimation, value: isDrawerVisuallyExpanded)
             .onAppear {

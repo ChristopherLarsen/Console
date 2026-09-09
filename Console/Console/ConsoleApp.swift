@@ -301,6 +301,21 @@ struct ConsoleApp: App {
         }
 
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-uiTestExpandTerminal") {
+            // Force the global zsh drawer expanded (standard domain, so the
+            // sidebar toggle can still retract it during the test).
+            UserDefaults.standard.set(true, forKey: ConsoleNavigation.terminalExpandedKey)
+        }
+        if ProcessInfo.processInfo.arguments.contains("-uiTestAutoToggleTerminal") {
+            // Perform the sidebar row's toggle after launch: synthesized
+            // clicks on custom sidebar rows never actuate on this host.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                withAnimation(TerminalPanelView.collapseAnimation) {
+                    let key = ConsoleNavigation.terminalExpandedKey
+                    UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: key), forKey: key)
+                }
+            }
+        }
         if ProcessInfo.processInfo.arguments.contains("-uiTestSelectSessions")
             || ProcessInfo.processInfo.arguments.contains("-uiTestSessionsPreview") {
             UserDefaults.standard.set(SidebarSelection.sessions.rawValue, forKey: ConsoleNavigation.sidebarKey)
