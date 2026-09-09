@@ -2,51 +2,48 @@
 
 # Session Memory
 
-_Rewritten 2026-09-09 after the headerless Terminal drawer work (merged `5467bef`)._
+_Rewritten 2026-09-09 after the Home MR panels / Settings iOS removal + Default Terminal Folder work (merged `a2b8d9f`)._
 
 ## Next Intended Move
 
-Christopher may want a keyboard shortcut / menu-bar command for the drawer
-toggle later (not requested; sidebar item only). No open queue. Next session:
-pick up whatever Christopher files (GitHub issues via `/vx-issue` per previous
-session's plan).
+No open queue. `main` is 1 commit ahead of `origin/main` (not pushed —
+Christopher did not ask). Next session: pick up whatever Christopher files
+(GitHub issues via `/vx-issue` per earlier plan).
 
 ## Working Findings
 
-- Task done: removed the Terminal drawer header ("Terminal" + chevron bar,
-  `ToggleTerminalCollapse`), added a "Main Terminal" sidebar row pinned above
-  Settings (below the separator) that toggles the drawer. A retracted drawer
-  now unmounts entirely — zero reserved space (was a 36pt pinned bar).
-  Shell + SwiftTerm view survive unmounting inside `TerminalSessionManager`
-  (preheat also still works). Merged to `main` via worktree
-  `terminal-drawer-headerless` (removed afterwards).
-- `TerminalPanelView` is now pure content (`MainTerminalDrawer` AX identifier
-  via `.accessibilityElement(children: .contain)` — the identifier does NOT
-  surface without that modifier when wrapping an NSViewRepresentable).
-- MainView renders the drawer + resize handle inside `if isDrawerVisuallyExpanded`;
-  `TerminalPanelView.barHeight` is gone (SessionsView only uses `collapseAnimation`).
-- Focus Session still works: `drawerExpandedBinding` guards toggles during
-  focus mode; `isDrawerVisuallyExpanded` unmounts/renounts around it.
-- UI test for the toggle: synthesized clicks on custom sidebar rows NEVER
-  actuate on this host (tap/click/coordinate all fail; `isHittable=false`).
-  Test uses DEBUG launch hooks in ConsoleApp: `-uiTestExpandTerminal` (forces
-  drawer expanded via standard domain) and `-uiTestAutoToggleTerminal`
-  (performs the row's toggle 4s after launch). Launch-arg domain override
-  (`-isTerminalExpanded 1`) does NOT work for toggle tests: the argument
-  domain shadows in-app standard-domain writes forever.
-- Verified: full `ConsoleTests` scheme green; targeted `NavigationUITests.testMainTerminalSidebarItemTogglesDrawer`
-  and `SessionsUITests.testFocusSessionHidesListAndRestoresIt` green; clean
-  Debug build.
-- Fresh flake observed: app under test intermittently SIGTRAPs at launch in a
-  WebKit SwiftUI representable (`PlatformViewRepresentableAdaptor.makeViewProvider`,
-  `_WebKit_SwiftUI` frames) — hit 3× in ~10 UI-test launches, none on manual
-  launches, none attributable to this change. If UI tests fail with
-  "application is not running / does not have a process ID", suspect this.
+- Task done (worktree `panels-terminal-settings`, merged fast-forward to
+  `main` as `a2b8d9f`, worktree + branch removed):
+  1. Home is now TWO panels (My Tickets + Sessions) in one GridRow;
+     `HomePanel.gitLabReviews/.gitLabAuthored` cases deleted. GitLab sidebar
+     destination, `MergeRequestsPanelView` (now unused but kept), and the
+     Settings GitLab URL fields are untouched.
+  2. Settings: removed `IOSProjectSettingsSection()` and `IOSBuildJobView()`
+     rows. IOSWorkflow subsystem files kept (TicketWorkflow + Develop menu
+     still use them; `IOSBuildJobViewTests` still compile).
+  3. New Settings "Terminal" section: Default Terminal Folder
+     (`AppSettings.defaultTerminalFolderKey`, default `~`). `TerminalSessionManager.getOrCreateTerminalView`
+     now passes `currentDirectory: AppSettings.resolvedTerminalStartDirectory(from:)`
+     (tilde-expanded; empty/missing/file path falls back to `NSHomeDirectory()`).
+     Applies only to NEW shells (the persistent drawer shell is reused).
+- Unit tests: new `TerminalStartDirectoryTests` (7 cases) green; full
+  `ConsoleTests` scheme green.
+- UI tests: `HomeSessionsUITests.testDefaultLaunchShowsHomePanelsWithEmptySessionsState`
+  green (GitLab panel assertions removed); `SettingsUITests/testLaunchAtLogin`
+  + `testThemeSelection` green. Deleted `NavigationUITests.testHomePanelThreeIsNotPlaceholder`
+  and `testHomePanelFourIsNotPlaceholder` (panels gone).
+- Clean Debug build green.
+- Re-confirmed pre-existing red on PRISTINE main: `NavigationUITests
+  .testJiraSidebarAndSettingsURLField` and `.testMergeRequestsSidebarAndSettingsURLField`
+  fail with "Main window should appear" (`app.windows.firstMatch` dead on
+  this host) — do not blame changes for these.
+- WebKit launch SIGTRAP flake (see previous entry) can still hit UI tests:
+  "application is not running / does not have a process ID" → retry once.
 
 ## Dead Ends
 
-- Synthesized sidebar clicks: dead (see above). Drive UI from menu bar,
-  launch hooks, or plain in-content buttons only.
-- `app.windows.firstMatch` still fails on this host (`testSidebarHasPrimaryItems`,
-  `testLaunchStartsOnHome` — re-confirmed red on pristine `main` 2026-09-09).
+- `app.windows.firstMatch` still fails on this host (both NavigationUITests
+  failures above re-confirmed on pristine `main` 2026-09-09).
+- Synthesized sidebar clicks: dead — drive UI from menu bar, launch hooks, or
+  in-content buttons only.
 - Full UITest suite remains forbidden.
