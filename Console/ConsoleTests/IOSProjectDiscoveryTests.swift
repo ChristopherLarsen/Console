@@ -90,82 +90,35 @@ final class IOSProjectDiscoveryTests: XCTestCase {
         XCTAssertEqual(parsed.first?.name, "iPad Pro (12.9-inch, 6th generation)")
     }
 
-    // MARK: - Candidate search
+    // MARK: - Manual selection
 
-    func testOneProjectIsThePreferredCandidate() throws {
+    func testManualSelectionAcceptsProjectBundleDirectly() throws {
         let project = try plantProject(named: "Solo.xcodeproj")
-        let found = IOSProjectFileSearch.find(in: tmpRoot)
-        XCTAssertEqual(found.map(\.path), [project.path])
-        XCTAssertEqual(IOSProjectFileSearch.preferredCandidate(from: found)?.path, project.path)
+        let outcome = IOSProjectManualSelection.resolve(url: URL(fileURLWithPath: project.path))
+        XCTAssertEqual(outcome, .selected(project))
     }
 
-    func testMultipleProjectsDoNotGuess() throws {
-        _ = try plantProject(named: "Foo.xcodeproj")
-        _ = try plantProject(named: "Bar.xcodeproj")
-        let found = IOSProjectFileSearch.find(in: tmpRoot)
-        XCTAssertEqual(found.count, 2)
-        XCTAssertNil(IOSProjectFileSearch.preferredCandidate(from: found))
-        let repair = IOSProfileRepair.resolve(
-            saved: .empty(workspaceID: UUID()),
-            candidates: found,
-            listing: .skipped,
-            destinations: .skipped
-        )
-        XCTAssertNil(repair.profile.projectPath)
-        XCTAssertEqual(repair.issues, [.needsProjectSelection])
-        XCTAssertFalse(repair.didChangeProfile)
+    func testManualSelectionAcceptsFolderWithExactlyOneProject() throws {
+        let project = try plantProject(named: "Subfolder/App.xcodeproj")
+        let folder = tmpRoot.appendingPathComponent("Subfolder")
+        let outcome = IOSProjectManualSelection.resolve(url: folder)
+        XCTAssertEqual(outcome, .selected(project))
     }
 
-    func testWorkspacePlusPodsPrefersTheWorkspace() throws {
-        let workspace = try plantProject(named: "App.xcworkspace")
-        _ = try plantProject(named: "App.xcodeproj")
-        _ = try plantProject(named: "Pods/Pods.xcodeproj")
-        let found = IOSProjectFileSearch.find(in: tmpRoot)
-        XCTAssertEqual(Set(found.map(\.filename)), ["App.xcworkspace", "App.xcodeproj"])
-        XCTAssertFalse(found.contains(where: { $0.filename == "Pods.xcodeproj" }))
-        XCTAssertEqual(IOSProjectFileSearch.preferredCandidate(from: found)?.path, workspace.path)
+    func testManualSelectionRejectsFolderWithSeveralProjects() throws {
+        _ = try plantProject(named: "Subfolder/Foo.xcodeproj")
+        _ = try plantProject(named: "Subfolder/Bar.xcodeproj")
+        let outcome = IOSProjectManualSelection.resolve(url: tmpRoot.appendingPathComponent("Subfolder"))
+        guard case .invalid = outcome else {
+            return XCTFail("Expected invalid, got \(outcome)")
+        }
     }
 
-    func testWorkspaceWithExtraProjectIsNotAutoSelected() throws {
-        _ = try plantProject(named: "App.xcworkspace")
-        _ = try plantProject(named: "App.xcodeproj")
-        _ = try plantProject(named: "Other.xcodeproj")
-        let found = IOSProjectFileSearch.find(in: tmpRoot)
-        XCTAssertNil(IOSProjectFileSearch.preferredCandidate(from: found))
-        let repair = IOSProfileRepair.resolve(
-            saved: .empty(workspaceID: UUID()),
-            candidates: found,
-            listing: .skipped,
-            destinations: .skipped
-        )
-        XCTAssertNil(repair.profile.projectPath)
-        XCTAssertEqual(repair.issues, [.needsProjectSelection])
-        XCTAssertFalse(repair.didChangeProfile)
-    }
-
-    func testWorkspaceWithoutMatchingAdjacentProjectIsNotAutoSelected() throws {
-        _ = try plantProject(named: "App.xcworkspace")
-        _ = try plantProject(named: "Other.xcodeproj")
-        let found = IOSProjectFileSearch.find(in: tmpRoot)
-        XCTAssertNil(IOSProjectFileSearch.preferredCandidate(from: found))
-    }
-
-    func testSpacedProjectPathIsDiscovered() throws {
-        let folder = tmpRoot.appendingPathComponent("My App", isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let projectURL = folder.appendingPathComponent("My App.xcodeproj", isDirectory: true)
-        try FileManager.default.createDirectory(at: projectURL, withIntermediateDirectories: true)
-        let found = IOSProjectFileSearch.find(in: tmpRoot)
-        XCTAssertEqual(found.count, 1)
-        XCTAssertTrue(found[0].path.contains("My App.xcodeproj"))
-        XCTAssertTrue(found[0].path.contains("My App"))
-    }
-
-    func testBuildOutputAndDependenciesAreExcluded() throws {
-        _ = try plantProject(named: "DerivedData/Ghost.xcodeproj")
-        _ = try plantProject(named: "build/Ghost.xcodeproj")
-        _ = try plantProject(named: "Carthage/Checkouts/Lib.xcodeproj")
-        XCTAssertTrue(IOSProjectFileSearch.find(in: tmpRoot).isEmpty)
+    func testManualSelectionRejectsFolderWithoutProjects() throws {
+        let outcome = IOSProjectManualSelection.resolve(url: tmpRoot)
+        guard case .invalid = outcome else {
+            return XCTFail("Expected invalid, got \(outcome)")
+        }
     }
 
     // MARK: - Repair policy
@@ -187,7 +140,6 @@ final class IOSProjectDiscoveryTests: XCTestCase {
         )
         let repair = IOSProfileRepair.resolve(
             saved: saved,
-            candidates: [IOSProjectCandidate(path: "/tmp/App.xcodeproj")!],
             listing: .succeeded(listing),
             destinations: .skipped,
             fileExists: { _ in true }
@@ -213,7 +165,6 @@ final class IOSProjectDiscoveryTests: XCTestCase {
         )
         let repair = IOSProfileRepair.resolve(
             saved: saved,
-            candidates: [IOSProjectCandidate(path: "/tmp/App.xcodeproj")!],
             listing: .skipped,
             destinations: .succeeded([present]),
             fileExists: { _ in true }
@@ -234,7 +185,6 @@ final class IOSProjectDiscoveryTests: XCTestCase {
         )
         let repair = IOSProfileRepair.resolve(
             saved: saved,
-            candidates: [],
             listing: .failed,
             destinations: .failed,
             fileExists: { _ in true }
@@ -255,7 +205,6 @@ final class IOSProjectDiscoveryTests: XCTestCase {
         )
         let repair = IOSProfileRepair.resolve(
             saved: saved,
-            candidates: [IOSProjectCandidate(path: "/tmp/App.xcodeproj")!],
             listing: .succeeded(listing),
             destinations: .skipped,
             fileExists: { _ in true }
@@ -330,7 +279,7 @@ final class IOSProjectDiscoveryTests: XCTestCase {
             scheme: "App"
         )
 
-        let result = await discovery.refresh(saved: saved, workspaceFolder: tmpRoot)
+        let result = await discovery.refresh(saved: saved)
 
         XCTAssertNil(result.errorMessage)
         XCTAssertEqual(result.listing?.schemes, ["App", "AppTests"])
@@ -354,7 +303,7 @@ final class IOSProjectDiscoveryTests: XCTestCase {
             simulatorUDID: "LIVE-UDID"
         )
 
-        let result = await discovery.refresh(saved: saved, workspaceFolder: tmpRoot)
+        let result = await discovery.refresh(saved: saved)
 
         XCTAssertEqual(result.repair.profile, saved)
         XCTAssertFalse(result.repair.didChangeProfile)
@@ -374,7 +323,7 @@ final class IOSProjectDiscoveryTests: XCTestCase {
         failingRunner.listJSON = Self.projectListJSON
         failingRunner.destinationError = ProcessRunError.timedOut
         let failedResult = await IOSProjectDiscovery(processRunner: failingRunner)
-            .refresh(saved: saved, workspaceFolder: tmpRoot)
+            .refresh(saved: saved)
         if case .failed = failedResult.destinationLookup {} else {
             XCTFail("expected failed destination lookup, got \(failedResult.destinationLookup)")
         }
@@ -387,7 +336,7 @@ final class IOSProjectDiscoveryTests: XCTestCase {
         emptyRunner.listJSON = Self.projectListJSON
         emptyRunner.destinationJSON = #"{"destinations":[]}"#
         let emptyResult = await IOSProjectDiscovery(processRunner: emptyRunner)
-            .refresh(saved: saved, workspaceFolder: tmpRoot)
+            .refresh(saved: saved)
         if case .succeeded(let devices) = emptyResult.destinationLookup {
             XCTAssertTrue(devices.isEmpty)
         } else {

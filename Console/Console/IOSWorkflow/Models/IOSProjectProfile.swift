@@ -116,14 +116,12 @@ nonisolated enum IOSLookup<Value: Equatable>: Equatable {
 }
 
 nonisolated enum IOSDiscoveryPhase: Equatable, Sendable {
-    case searchingProjects
     case listingSchemes
     case listingTestPlans
     case listingDestinations
 }
 
 nonisolated struct IOSDiscoveryRefreshResult: Equatable, Sendable {
-    var candidates: [IOSProjectCandidate]
     var listing: IOSProjectListing?
     var destinations: [IOSSimulatorDestination]
     var repair: IOSProfileRepair.Outcome
@@ -136,7 +134,7 @@ nonisolated struct IOSDiscoveryRefreshResult: Equatable, Sendable {
 
 nonisolated enum IOSProfileRepair {
     enum Issue: Equatable, Sendable {
-        case needsProjectSelection
+        case projectNotSelected
         case savedProjectMissing(String)
         case savedSchemeMissing(String)
         case savedConfigurationMissing(String)
@@ -145,8 +143,8 @@ nonisolated enum IOSProfileRepair {
 
         var message: String {
             switch self {
-            case .needsProjectSelection:
-                return "Several Xcode projects were found. Choose one instead of guessing."
+            case .projectNotSelected:
+                return "No Xcode project selected. Choose one for this workspace."
             case .savedProjectMissing(let path):
                 let name = URL(fileURLWithPath: path).lastPathComponent
                 return "Saved project “\(name)” is missing. Choose another project."
@@ -171,9 +169,9 @@ nonisolated enum IOSProfileRepair {
     /// Merges discovery into a saved profile without clearing valid fields.
     /// Auto-fills only empty fields when the choice is unambiguous. Failed
     /// lookups never treat missing lists as a reason to wipe saved values.
+    /// The project itself is never chosen automatically — the user selects it.
     static func resolve(
         saved: IOSProjectProfile,
-        candidates: [IOSProjectCandidate],
         listing: IOSLookup<IOSProjectListing>,
         destinations: IOSLookup<[IOSSimulatorDestination]>,
         fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
@@ -181,16 +179,13 @@ nonisolated enum IOSProfileRepair {
         let original = saved.normalized()
         var profile = original
         var issues: [Issue] = []
-        let usable = IOSProjectFileSearch.usableCandidates(from: candidates)
 
         if let path = profile.projectPath {
             if !fileExists(path) {
                 issues.append(.savedProjectMissing(path))
             }
-        } else if let preferred = IOSProjectFileSearch.preferredCandidate(from: usable) {
-            profile.projectPath = preferred.path
-        } else if usable.count > 1 {
-            issues.append(.needsProjectSelection)
+        } else {
+            issues.append(.projectNotSelected)
         }
 
         switch listing {

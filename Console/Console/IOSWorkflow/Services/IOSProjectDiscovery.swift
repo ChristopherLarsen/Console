@@ -7,7 +7,6 @@ nonisolated enum IOSProjectDiscoveryError: LocalizedError, Equatable {
     case commandFailed(description: String, exitCode: Int32, stderr: String)
     case invalidJSON(String)
     case outputTruncated
-    case folderUnavailable(String)
 
     var errorDescription: String? {
         switch self {
@@ -26,132 +25,59 @@ nonisolated enum IOSProjectDiscoveryError: LocalizedError, Equatable {
             return "xcodebuild returned a project listing that could not be parsed."
         case .outputTruncated:
             return "xcodebuild output was truncated before it could be parsed."
-        case .folderUnavailable:
-            return "The workspace folder is unavailable."
         }
     }
 }
 
-/// Bounded filesystem walk for `.xcodeproj` / `.xcworkspace` bundles.
-nonisolated enum IOSProjectFileSearch {
-    nonisolated static let defaultMaxDepth = 5
-    nonisolated static let defaultMaxCandidates = 40
+/// Validates the project the user picked in the open panel. Accepts the
+/// `.xcodeproj` / `.xcworkspace` bundle itself, or a folder that contains
+/// exactly one such bundle. Never walks deeper than direct children.
+nonisolated enum IOSProjectManualSelection {
+    enum Outcome: Equatable {
+        case selected(IOSProjectCandidate)
+        case invalid(String)
 
-    nonisolated static let excludedDirectoryNames: Set<String> = [
-        "Pods",
-        "Carthage",
-        "DerivedData",
-        "build",
-        ".build",
-        "node_modules",
-        "vendor",
-        ".swiftpm",
-        "SourcePackages",
-        "Checkouts",
-        "xcuserdata",
-        ".git",
-        ".svn",
-        "Index.noindex",
-        "CompilationCache.noindex"
-    ]
-
-    static func find(
-        in root: URL,
-        fileManager: FileManager = .default,
-        maxDepth: Int = defaultMaxDepth,
-        maxCandidates: Int = defaultMaxCandidates
-    ) -> [IOSProjectCandidate] {
-        let rootURL = root.standardizedFileURL
-        guard isAccessibleDirectory(atPath: rootURL.path, fileManager: fileManager) else { return [] }
-
-        var results: [IOSProjectCandidate] = []
-        let options: FileManager.DirectoryEnumerationOptions = [.skipsHiddenFiles, .skipsPackageDescendants]
-        guard let enumerator = fileManager.enumerator(
-            at: rootURL,
-            includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey, .isSymbolicLinkKey],
-            options: options
-        ) else { return [] }
-
-        let rootPath = rootURL.path
-        while let url = enumerator.nextObject() as? URL {
-            if results.count >= maxCandidates { break }
-
-            let standardized = url.standardizedFileURL
-            let relative = relativePath(of: standardized.path, toRoot: rootPath)
-            let depth = relative.split(separator: "/").count
-            if depth > maxDepth {
-                enumerator.skipDescendants()
-                continue
-            }
-
-            let name = standardized.lastPathComponent
-            if excludedDirectoryNames.contains(name) {
-                enumerator.skipDescendants()
-                continue
-            }
-
-            if let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey]), values.isSymbolicLink == true {
-                enumerator.skipDescendants()
-                continue
-            }
-
-            if name.hasSuffix(".xcodeproj") || name.hasSuffix(".xcworkspace") {
-                if let candidate = IOSProjectCandidate(path: standardized.path),
-                   !isDependencyProject(candidate) {
-                    results.append(candidate)
-                }
-                enumerator.skipDescendants()
-            }
+        var message: String? {
+            if case .invalid(let text) = self { return text }
+            return nil
         }
-
-        return results.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
     }
 
-    static func usableCandidates(from candidates: [IOSProjectCandidate]) -> [IOSProjectCandidate] {
-        candidates.filter { !isDependencyProject($0) }
-    }
+    nonisolated static let notAProjectMessage =
+        "Choose an Xcode project (.xcodeproj) or workspace (.xcworkspace)."
 
-    /// Auto-select only when the choice is unambiguous: a single usable
-    /// candidate, or a unique `.xcworkspace` paired with its one project
-    /// beside it (CocoaPods). Any extra usable project keeps the choice with
-    /// the user instead of guessing.
-    static func preferredCandidate(from candidates: [IOSProjectCandidate]) -> IOSProjectCandidate? {
-        let usable = usableCandidates(from: candidates)
-        if usable.count == 1 { return usable[0] }
-        let workspaces = usable.filter { $0.kind == .workspace }
-        let projects = usable.filter { $0.kind == .project }
-        guard workspaces.count == 1, projects.count == 1 else { return nil }
-        let workspace = workspaces[0]
-        let project = projects[0]
-        guard workspace.parentDirectoryPath == project.parentDirectoryPath,
-              workspace.displayName == project.displayName else { return nil }
-        return workspace
-    }
-
-    static func isDependencyProject(_ candidate: IOSProjectCandidate) -> Bool {
-        let parts = candidate.path.split(separator: "/").map(String.init)
-        if parts.contains(where: { excludedDirectoryNames.contains($0) }) {
-            return true
+    static func resolve(
+        url: URL,
+        fileManager: FileManager = .default
+    ) -> Outcome {
+        let path = url.standardizedFileURL.path
+        if let candidate = IOSProjectCandidate(path: path) {
+            guard fileManager.fileExists(atPath: candidate.path) else {
+                return .invalid(notAProjectMessage)
+            }
+            return .selected(candidate)
         }
-        return candidate.filename == "Pods.xcodeproj" || candidate.filename == "Pods.xcworkspace"
-    }
-
-    private static func isAccessibleDirectory(atPath path: String, fileManager: FileManager) -> Bool {
-        guard !path.isEmpty else { return false }
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            return false
+            return .invalid(notAProjectMessage)
         }
-        return fileManager.isReadableFile(atPath: path)
-    }
-
-    private static func relativePath(of path: String, toRoot rootPath: String) -> String {
-        if path == rootPath { return "" }
-        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
-        if path.hasPrefix(prefix) {
-            return String(path.dropFirst(prefix.count))
+        let children: [String]
+        do {
+            children = try fileManager.contentsOfDirectory(atPath: path)
+        } catch {
+            return .invalid(notAProjectMessage)
         }
-        return path
+        let candidates = children
+            .compactMap { IOSProjectCandidate(path: URL(fileURLWithPath: path).appendingPathComponent($0).path) }
+            .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        switch candidates.count {
+        case 1:
+            return .selected(candidates[0])
+        case 0:
+            return .invalid(notAProjectMessage)
+        default:
+            return .invalid("That folder contains several Xcode projects. Choose one directly.")
+        }
     }
 }
 
@@ -343,9 +269,9 @@ nonisolated enum IOSXcodebuildOutputParser {
     }
 }
 
-/// Discovers Xcode projects inside a workspace folder and reads schemes,
-/// test plans, and Simulator destinations through structured `xcodebuild`
-/// argv. Never builds, never parses a shell string.
+/// Reads schemes, test plans, and Simulator destinations for the
+/// user-selected project through structured `xcodebuild` argv. Never builds,
+/// never parses a shell string, never searches the filesystem for projects.
 nonisolated struct IOSProjectDiscovery {
     nonisolated static let xcodebuildPath = "/usr/bin/xcodebuild"
     nonisolated static let listTimeout: TimeInterval = 20
@@ -362,10 +288,6 @@ nonisolated struct IOSProjectDiscovery {
     ) {
         self.processRunner = processRunner
         self.xcodebuildPath = xcodebuildPath
-    }
-
-    func findCandidates(in folder: URL) -> [IOSProjectCandidate] {
-        IOSProjectFileSearch.find(in: folder)
     }
 
     func list(_ candidate: IOSProjectCandidate) async throws -> IOSProjectListing {
@@ -427,63 +349,32 @@ nonisolated struct IOSProjectDiscovery {
         }
     }
 
-    /// Filesystem search plus bounded xcodebuild reads. A failed xcodebuild
-    /// call returns the saved profile unchanged aside from unambiguous empty
-    /// field auto-fill that does not require xcodebuild.
+    /// Bounded xcodebuild reads for the user-selected project. No filesystem
+    /// search: the project path comes from the profile the user picked in
+    /// Settings. A failed xcodebuild call returns the saved profile unchanged
+    /// aside from unambiguous empty field auto-fill that does not require
+    /// xcodebuild.
     func refresh(
         saved: IOSProjectProfile,
-        workspaceFolder: URL,
         progress: ((IOSDiscoveryPhase) -> Void)? = nil
     ) async -> IOSDiscoveryRefreshResult {
-        progress?(.searchingProjects)
-        let folder = workspaceFolder.standardizedFileURL
-        var isDirectory: ObjCBool = false
-        let fileManager = FileManager.default
-        let folderExists = fileManager.fileExists(atPath: folder.path, isDirectory: &isDirectory)
-            && isDirectory.boolValue
-            && fileManager.isReadableFile(atPath: folder.path)
-        guard folderExists else {
-            return IOSDiscoveryRefreshResult(
-                candidates: [],
-                listing: nil,
-                destinations: [],
-                repair: IOSProfileRepair.resolve(
-                    saved: saved,
-                    candidates: [],
-                    listing: .failed,
-                    destinations: .failed
-                ),
-                errorMessage: IOSProjectDiscoveryError.folderUnavailable(folder.path).localizedDescription,
-                listingLookup: .failed,
-                destinationLookup: .failed
-            )
-        }
-
-        let candidates = findCandidates(in: folder)
-        let projectRepair = IOSProfileRepair.resolve(
-            saved: saved,
-            candidates: candidates,
-            listing: .skipped,
-            destinations: .skipped
-        )
-        let working = projectRepair.profile
         var listingLookup: IOSLookup<IOSProjectListing> = .skipped
         var destinationLookup: IOSLookup<[IOSSimulatorDestination]> = .skipped
         var errorMessage: String?
         var listing: IOSProjectListing?
 
         if Task.isCancelled {
-            return cancelledResult(saved: saved, candidates: candidates)
+            return cancelledResult(saved: saved)
         }
 
-        if let candidate = candidateToQuery(path: working.projectPath, candidates: candidates) {
+        if let candidate = candidateToQuery(path: saved.projectPath) {
             progress?(.listingSchemes)
             do {
                 var listed = try await list(candidate)
                 listingLookup = .succeeded(listed)
                 listing = listed
 
-                let schemeForLookup = schemeForFollowup(saved: working, listing: listed)
+                let schemeForLookup = schemeForFollowup(saved: saved, listing: listed)
                 if let schemeForLookup {
                     progress?(.listingTestPlans)
                     let plans = await listTestPlans(candidate: candidate, scheme: schemeForLookup)
@@ -497,9 +388,9 @@ nonisolated struct IOSProjectDiscovery {
                     destinationLookup = await listDestinations(candidate: candidate, scheme: schemeForLookup)
                 }
             } catch is CancellationError {
-                return cancelledResult(saved: saved, candidates: candidates)
+                return cancelledResult(saved: saved)
             } catch let error as IOSProjectDiscoveryError where error == .cancelled {
-                return cancelledResult(saved: saved, candidates: candidates)
+                return cancelledResult(saved: saved)
             } catch {
                 listingLookup = .failed
                 destinationLookup = .failed
@@ -509,12 +400,11 @@ nonisolated struct IOSProjectDiscovery {
         }
 
         if Task.isCancelled {
-            return cancelledResult(saved: saved, candidates: candidates)
+            return cancelledResult(saved: saved)
         }
 
         let repair = IOSProfileRepair.resolve(
             saved: saved,
-            candidates: candidates,
             listing: listingLookup,
             destinations: destinationLookup
         )
@@ -525,7 +415,6 @@ nonisolated struct IOSProjectDiscovery {
             destinations = []
         }
         return IOSDiscoveryRefreshResult(
-            candidates: candidates,
             listing: listing,
             destinations: destinations,
             repair: repair,
@@ -536,16 +425,13 @@ nonisolated struct IOSProjectDiscovery {
     }
 
     private func cancelledResult(
-        saved: IOSProjectProfile,
-        candidates: [IOSProjectCandidate]
+        saved: IOSProjectProfile
     ) -> IOSDiscoveryRefreshResult {
         IOSDiscoveryRefreshResult(
-            candidates: candidates,
             listing: nil,
             destinations: [],
             repair: IOSProfileRepair.resolve(
                 saved: saved,
-                candidates: candidates,
                 listing: .failed,
                 destinations: .failed
             ),
@@ -555,16 +441,11 @@ nonisolated struct IOSProjectDiscovery {
         )
     }
 
-    private func candidateToQuery(
-        path: String?,
-        candidates: [IOSProjectCandidate]
-    ) -> IOSProjectCandidate? {
-        guard let path else { return nil }
-        if let match = candidates.first(where: { $0.path == path }) {
-            return match
-        }
-        guard FileManager.default.fileExists(atPath: path) else { return nil }
-        return IOSProjectCandidate(path: path)
+    private func candidateToQuery(path: String?) -> IOSProjectCandidate? {
+        guard let path,
+              FileManager.default.fileExists(atPath: path),
+              let candidate = IOSProjectCandidate(path: path) else { return nil }
+        return candidate
     }
 
     private func schemeForFollowup(saved: IOSProjectProfile, listing: IOSProjectListing) -> String? {

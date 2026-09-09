@@ -142,7 +142,6 @@ final class IOSProjectProfileStoreTests: XCTestCase {
         let original = try XCTUnwrap(defaults.data(forKey: IOSProjectProfileStore.storageKey))
 
         let result = IOSDiscoveryRefreshResult(
-            candidates: [],
             listing: nil,
             destinations: [],
             repair: IOSProfileRepair.Outcome(profile: .empty(workspaceID: workspaceID), issues: [], didChangeProfile: false),
@@ -164,7 +163,6 @@ final class IOSProjectProfileStoreTests: XCTestCase {
         )
         store.applyRefresh(
             IOSDiscoveryRefreshResult(
-                candidates: [IOSProjectCandidate(path: "/tmp/App.xcodeproj")!],
                 listing: nil,
                 destinations: [],
                 repair: IOSProfileRepair.Outcome(profile: filled, issues: [], didChangeProfile: true),
@@ -244,10 +242,9 @@ final class IOSProjectSettingsModelTests: XCTestCase {
 
         XCTAssertEqual(store.profile(for: workspace.id), saved)
         XCTAssertNotNil(model.errorMessage)
-        XCTAssertEqual(model.candidates.count, 1)
     }
 
-    func testUniqueProjectIsFilledWhenProfileIsEmpty() async throws {
+    func testEmptyProfileIsNeverAutoFilledAndFlagsProjectNotSelected() async throws {
         let projectURL = tmpRoot.appendingPathComponent("App.xcodeproj", isDirectory: true)
         try FileManager.default.createDirectory(at: projectURL, withIntermediateDirectories: true)
         let workspace = SessionWorkspace(name: "App", directoryPath: tmpRoot.path)
@@ -265,11 +262,10 @@ final class IOSProjectSettingsModelTests: XCTestCase {
         let model = IOSProjectSettingsModel(discovery: IOSProjectDiscovery(processRunner: runner))
         await model.refreshAndWait(workspace: workspace, store: store)
 
-        let loaded = try XCTUnwrap(store.profile(for: workspace.id))
-        XCTAssertEqual(loaded.projectPath, projectURL.standardizedFileURL.path)
-        XCTAssertEqual(loaded.scheme, "App")
-        XCTAssertEqual(loaded.configuration, "Debug")
-        XCTAssertNil(model.errorMessage)
+        XCTAssertNil(store.profile(for: workspace.id)?.projectPath, "the project is never chosen automatically")
+        XCTAssertEqual(model.issues, [.projectNotSelected])
+        XCTAssertNil(model.listing)
+        XCTAssertFalse(model.destinationsLookupSucceeded)
     }
 
     func testRefreshClearsStaleOptionsWhileSearching() async throws {
@@ -277,24 +273,22 @@ final class IOSProjectSettingsModelTests: XCTestCase {
         try FileManager.default.createDirectory(at: projectURL, withIntermediateDirectories: true)
         let workspace = SessionWorkspace(name: "App", directoryPath: tmpRoot.path)
         let store = IOSProjectProfileStore(defaults: defaults)
+        store.save(IOSProjectProfile(workspaceID: workspace.id, projectPath: projectURL.path, scheme: "App"))
         let runner = ScriptedSettingsRunner(listJSON: Self.singleOptionListJSON)
         runner.listDelaysFromSecondCall = 0.6
         let model = IOSProjectSettingsModel(discovery: IOSProjectDiscovery(processRunner: runner))
 
         await model.refreshAndWait(workspace: workspace, store: store)
-        XCTAssertEqual(model.candidates.count, 1)
         XCTAssertTrue(model.destinationsLookupSucceeded)
 
         let task = Task { await model.refreshAndWait(workspace: workspace, store: store) }
         try await Task.sleep(nanoseconds: 150_000_000)
         XCTAssertTrue(model.isDiscovering)
-        XCTAssertTrue(model.candidates.isEmpty)
         XCTAssertNil(model.listing)
         XCTAssertTrue(model.destinations.isEmpty)
         XCTAssertFalse(model.destinationsLookupSucceeded)
 
         await task.value
-        XCTAssertEqual(model.candidates.count, 1)
         XCTAssertEqual(store.profile(for: workspace.id)?.projectPath, projectURL.standardizedFileURL.path)
     }
 
@@ -303,6 +297,7 @@ final class IOSProjectSettingsModelTests: XCTestCase {
         try FileManager.default.createDirectory(at: projectURL, withIntermediateDirectories: true)
         let workspace = SessionWorkspace(name: "App", directoryPath: tmpRoot.path)
         let store = IOSProjectProfileStore(defaults: defaults)
+        store.save(IOSProjectProfile(workspaceID: workspace.id, projectPath: projectURL.path, scheme: "App"))
         let runner = ScriptedSettingsRunner(listJSON: Self.singleOptionListJSON)
         runner.listDelaysFromSecondCall = 0.6
         let model = IOSProjectSettingsModel(discovery: IOSProjectDiscovery(processRunner: runner))

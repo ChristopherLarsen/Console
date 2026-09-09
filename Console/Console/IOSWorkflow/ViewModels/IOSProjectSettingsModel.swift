@@ -1,13 +1,12 @@
 import Foundation
 
-/// Settings-side discovery session: progress, candidates, and repair issues
-/// for the selected workspace. Persistence stays in `IOSProjectProfileStore`.
+/// Settings-side discovery session: progress and repair issues for the
+/// user-selected workspace project. Persistence stays in `IOSProjectProfileStore`.
 @MainActor
 @Observable
 final class IOSProjectSettingsModel {
     enum Phase: Equatable {
         case idle
-        case searchingProjects
         case listingSchemes
         case listingTestPlans
         case listingDestinations
@@ -16,7 +15,6 @@ final class IOSProjectSettingsModel {
     }
 
     private(set) var phase: Phase = .idle
-    private(set) var candidates: [IOSProjectCandidate] = []
     private(set) var listing: IOSProjectListing?
     private(set) var destinations: [IOSSimulatorDestination] = []
     /// True only when the last completed destination lookup succeeded, so the
@@ -31,7 +29,7 @@ final class IOSProjectSettingsModel {
 
     var isDiscovering: Bool {
         switch phase {
-        case .searchingProjects, .listingSchemes, .listingTestPlans, .listingDestinations:
+        case .listingSchemes, .listingTestPlans, .listingDestinations:
             return true
         case .idle, .failed, .ready:
             return false
@@ -40,7 +38,6 @@ final class IOSProjectSettingsModel {
 
     var progressMessage: String? {
         switch phase {
-        case .searchingProjects: return "Searching for Xcode projects…"
         case .listingSchemes: return "Reading schemes…"
         case .listingTestPlans: return "Reading test plans…"
         case .listingDestinations: return "Finding Simulators…"
@@ -127,17 +124,25 @@ final class IOSProjectSettingsModel {
         store: IOSProjectProfileStore,
         generation: Int
     ) async {
-        phase = .searchingProjects
-        candidates = []
+        let saved = store.profileOrEmpty(for: workspace.id)
+        guard saved.projectPath != nil else {
+            // Nothing selected yet — nothing to query until the user picks
+            // a project in Settings.
+            listing = nil
+            destinations = []
+            destinationsLookupSucceeded = false
+            issues = [.projectNotSelected]
+            phase = .ready
+            return
+        }
+        phase = .listingSchemes
         listing = nil
         destinations = []
         destinationsLookupSucceeded = false
         issues = []
-        let saved = store.profileOrEmpty(for: workspace.id)
         let expectedGeneration = generation
         let result = await discovery.refresh(
-            saved: saved,
-            workspaceFolder: workspace.directoryURL
+            saved: saved
         ) { [weak self] discoveryPhase in
             Task { @MainActor in
                 guard let self, self.generation == expectedGeneration else { return }
@@ -146,7 +151,6 @@ final class IOSProjectSettingsModel {
         }
         guard self.generation == expectedGeneration, !Task.isCancelled else { return }
 
-        candidates = result.candidates
         listing = result.listing
         destinations = result.destinations
         if case .succeeded = result.destinationLookup {
@@ -157,7 +161,6 @@ final class IOSProjectSettingsModel {
         let current = store.profileOrEmpty(for: workspace.id)
         let repair = IOSProfileRepair.resolve(
             saved: current,
-            candidates: result.candidates,
             listing: result.listingLookup,
             destinations: result.destinationLookup
         )
@@ -174,7 +177,6 @@ final class IOSProjectSettingsModel {
 
     private static func phase(from discovery: IOSDiscoveryPhase) -> Phase {
         switch discovery {
-        case .searchingProjects: return .searchingProjects
         case .listingSchemes: return .listingSchemes
         case .listingTestPlans: return .listingTestPlans
         case .listingDestinations: return .listingDestinations

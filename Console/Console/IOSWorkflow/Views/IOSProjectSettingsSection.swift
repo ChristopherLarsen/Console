@@ -1,13 +1,16 @@
 import SwiftUI
+import AppKit
 
 /// Settings → iOS Project: per-workspace Xcode project, scheme, configuration,
-/// optional test plan, and Simulator. Discovery is asynchronous; a failed
-/// refresh never clears a previously saved profile.
+/// optional test plan, and Simulator. The user picks the Xcode project or
+/// workspace in an open panel; scheme/config/Simulator discovery is
+/// asynchronous and a failed refresh never clears a previously saved profile.
 struct IOSProjectSettingsSection: View {
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
     @Environment(IOSProjectProfileStore.self) private var profileStore
     @State private var model = IOSProjectSettingsModel()
     @State private var selectedWorkspaceID: UUID?
+    @State private var chooserMessage: String?
 
     var body: some View {
         Section {
@@ -17,7 +20,7 @@ struct IOSProjectSettingsSection: View {
             } else {
                 workspacePicker
                 if let workspace {
-                    projectPicker(for: workspace)
+                    projectRow(for: workspace)
                     schemePicker(for: workspace)
                     configurationPicker(for: workspace)
                     testPlanPicker(for: workspace)
@@ -59,24 +62,64 @@ struct IOSProjectSettingsSection: View {
         .accessibilityIdentifier("Settings.IOS.WorkspacePicker")
     }
 
-    private func projectPicker(for workspace: SessionWorkspace) -> some View {
+    private func projectRow(for workspace: SessionWorkspace) -> some View {
         let profile = profileStore.profileOrEmpty(for: workspace.id)
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Picker("Xcode Project", selection: projectBinding(for: workspace)) {
-                    Text("Choose…").tag(String?.none)
-                    ForEach(projectPickerPaths(profile: profile), id: \.self) { path in
-                        Text(projectLabel(path: path, profile: profile)).tag(Optional(path))
-                    }
-                }
-                .accessibilityIdentifier("Settings.IOS.ProjectPicker")
-
-                Button("Refresh") {
-                    model.refresh(workspace: workspace, store: profileStore)
-                }
-                .disabled(model.isDiscovering)
-                .accessibilityIdentifier("Settings.IOS.RefreshButton")
+        return HStack {
+            Button("Choose…") {
+                chooseProject(for: workspace)
             }
+            .accessibilityIdentifier("Settings.IOS.ChooseProjectButton")
+
+            Text(currentProjectLabel(profile: profile))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .accessibilityIdentifier("Settings.IOS.ProjectLabel")
+
+            Spacer()
+
+            Button("Refresh") {
+                model.refresh(workspace: workspace, store: profileStore)
+            }
+            .disabled(model.isDiscovering)
+            .accessibilityIdentifier("Settings.IOS.RefreshButton")
+        }
+    }
+
+    private func currentProjectLabel(profile: IOSProjectProfile) -> String {
+        if let path = profile.projectPath {
+            return URL(fileURLWithPath: path).lastPathComponent
+        }
+        return "No project selected"
+    }
+
+    /// Open panel: the user picks the active Xcode project or workspace
+    /// bundle directly, or a folder that contains exactly one. No automatic
+    /// filesystem search — the choice is always the user's.
+    private func chooseProject(for workspace: SessionWorkspace) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.resolvesAliases = true
+        panel.canCreateDirectories = false
+        panel.prompt = "Choose"
+        panel.message = "Select an Xcode project (.xcodeproj) or workspace (.xcworkspace), or a folder containing exactly one."
+        panel.directoryURL = workspace.directoryURL
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        applySelection(IOSProjectManualSelection.resolve(url: url), workspace: workspace)
+    }
+
+    private func applySelection(
+        _ outcome: IOSProjectManualSelection.Outcome,
+        workspace: SessionWorkspace
+    ) {
+        switch outcome {
+        case .selected(let candidate):
+            chooserMessage = nil
+            model.selectProject(candidate.path, workspace: workspace, store: profileStore)
+        case .invalid(let message):
+            chooserMessage = message
         }
     }
 
@@ -137,6 +180,13 @@ struct IOSProjectSettingsSection: View {
             .accessibilityIdentifier("Settings.IOS.Progress")
         }
 
+        if let chooserMessage {
+            Text(chooserMessage)
+                .font(.subheadline)
+                .foregroundStyle(.orange)
+                .accessibilityIdentifier("Settings.IOS.ChooserMessage")
+        }
+
         if let errorMessage = model.errorMessage {
             Text(errorMessage)
                 .font(.subheadline)
@@ -155,26 +205,6 @@ struct IOSProjectSettingsSection: View {
     private func refreshSelected() {
         guard let workspace else { return }
         model.refresh(workspace: workspace, store: profileStore)
-    }
-
-    private func projectPickerPaths(profile: IOSProjectProfile) -> [String] {
-        var paths = model.candidates.map(\.path)
-        if let saved = profile.projectPath, !paths.contains(saved) {
-            paths.insert(saved, at: 0)
-        }
-        return paths
-    }
-
-    private func projectLabel(path: String, profile: IOSProjectProfile) -> String {
-        let name = URL(fileURLWithPath: path).lastPathComponent
-        if let candidate = model.candidates.first(where: { $0.path == path }) {
-            return "\(candidate.displayName) (\(candidate.filename))"
-        }
-        if profile.projectPath == path,
-           model.issues.contains(where: { if case .savedProjectMissing = $0 { return true }; return false }) {
-            return "\(name) (missing)"
-        }
-        return name
     }
 
     private func schemeOptions(for workspace: SessionWorkspace) -> [String] {
@@ -227,13 +257,6 @@ struct IOSProjectSettingsSection: View {
             return "\(name) (missing)"
         }
         return name
-    }
-
-    private func projectBinding(for workspace: SessionWorkspace) -> Binding<String?> {
-        Binding(
-            get: { profileStore.profile(for: workspace.id)?.projectPath },
-            set: { model.selectProject($0, workspace: workspace, store: profileStore) }
-        )
     }
 
     private func schemeBinding(for workspace: SessionWorkspace) -> Binding<String?> {
