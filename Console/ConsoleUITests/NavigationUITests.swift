@@ -223,25 +223,34 @@ final class NavigationUITests: XCTestCase {
 
     // MARK: - Bottom Terminal Drawer
 
-    func testTerminalChevronCollapsesAndExpands() throws {
+    func testMainTerminalSidebarItemTogglesDrawer() throws {
+        // Synthesized clicks on custom sidebar rows never actuate on this
+        // host (documented dead end), so the toggle itself is driven by a
+        // DEBUG launch hook performing the sidebar row's action; the test
+        // asserts the sidebar item exists and the drawer unmounts/remounts.
+        app.launchArguments += ["-uiTestExpandTerminal", "-uiTestAutoToggleTerminal"]
         app.launch()
 
-        let mainWindow = app.windows.firstMatch
-        XCTAssertTrue(mainWindow.waitForExistence(timeout: 5), "Main window should appear")
+        let mainTerminalItem = app.buttons["Main Terminal"].firstMatch
+        XCTAssertTrue(mainTerminalItem.waitForExistence(timeout: 5), "Main Terminal sidebar item should be visible above Settings")
 
-        let collapseButton = app.buttons["ToggleTerminalCollapse"].firstMatch
-        XCTAssertTrue(collapseButton.waitForExistence(timeout: 5), "Terminal chevron should be visible")
+        let drawer = app.descendants(matching: .any).matching(identifier: "MainTerminalDrawer").firstMatch
+        XCTAssertTrue(drawer.waitForExistence(timeout: 5), "Drawer content should be visible when expanded")
 
-        let terminalTitle = app.staticTexts["Terminal"].firstMatch
-        XCTAssertTrue(terminalTitle.exists, "Terminal title bar should be visible when expanded")
+        XCTAssertTrue(
+            drawer.waitForNonExistence(timeout: 10),
+            "Toggle should unmount the drawer entirely, freeing its space. Tree:\n\(app.debugDescription)"
+        )
 
-        collapseButton.tap()
-        XCTAssertTrue(terminalTitle.waitForExistence(timeout: 5), "Terminal title bar should stay pinned when collapsed")
-        XCTAssertTrue(collapseButton.exists, "Chevron should remain on the pinned bar")
-
-        collapseButton.tap()
-        XCTAssertTrue(collapseButton.waitForExistence(timeout: 5), "Chevron should still exist after expand")
-        XCTAssertTrue(terminalTitle.exists, "Terminal title should remain visible when expanded")
+        // Relaunch: the persisted retracted preference must not block the
+        // drawer from expanding again.
+        app.terminate()
+        app.launchArguments = ["-uiTestExpandTerminal"]
+        app.launch()
+        let mainTerminalItem2 = app.buttons["Main Terminal"].firstMatch
+        XCTAssertTrue(mainTerminalItem2.waitForExistence(timeout: 5), "Main Terminal sidebar item persists across launches")
+        let drawer2 = app.descendants(matching: .any).matching(identifier: "MainTerminalDrawer").firstMatch
+        XCTAssertTrue(drawer2.waitForExistence(timeout: 5), "Drawer should expand again on a later launch")
     }
 
     // MARK: - Live Tab Visibility

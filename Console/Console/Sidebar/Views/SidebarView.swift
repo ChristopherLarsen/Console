@@ -3,6 +3,9 @@ import SwiftUI
 /// Left sidebar with ConsoleBuddy card and primary navigation.
 struct SidebarView: View {
     @Binding var selection: SidebarSelection
+    /// Toggle for the global bottom zsh Terminal drawer (MainView owns the
+    /// expansion preference and the Focus Mode guard).
+    @Binding var isTerminalExpanded: Bool
     @Environment(ThemeManager.self) private var themeManager
 
     var body: some View {
@@ -110,6 +113,17 @@ struct SidebarView: View {
                 SidebarSeparator()
 
                 SidebarRow(
+                    label: "Main Terminal",
+                    icon: "rectangle.bottomthird.inset.filled",
+                    isSelected: false
+                ) {
+                    withAnimation(TerminalPanelView.collapseAnimation) {
+                        isTerminalExpanded.toggle()
+                    }
+                }
+                .help(isTerminalExpanded ? "Retract Terminal" : "Expand Terminal")
+
+                SidebarRow(
                     label: SidebarSelection.settings.label,
                     icon: SidebarSelection.settings.icon,
                     isSelected: selection == .settings
@@ -126,7 +140,8 @@ struct SidebarView: View {
 
 #Preview {
     @Previewable @State var selection: SidebarSelection = .home
-    SidebarView(selection: $selection)
+    @Previewable @State var isTerminalExpanded = true
+    SidebarView(selection: $selection, isTerminalExpanded: $isTerminalExpanded)
         .environment(ThemeManager())
         .frame(width: 220, height: 500)
 }
