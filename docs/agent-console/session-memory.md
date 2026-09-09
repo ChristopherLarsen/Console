@@ -2,43 +2,51 @@
 
 # Session Memory
 
-_Rewritten 2026-09-09 after replacing the iOS settings project search with a manual picker._
+_Rewritten 2026-09-09 after the headerless Terminal drawer work (merged `5467bef`)._
 
 ## Next Intended Move
 
-Christopher should manually verify Settings → iOS Project: "Choose…" opens a
-panel; select a `.xcodeproj`/`.xcworkspace` (or a folder containing exactly
-one) → scheme/config/test-plan/Simulator discovery fills from that project.
-Also still open from earlier sessions: manual verification of the JIRA sidebar
-crash fix (main @ 6160eeb) and the exit-shell fix (now committed as 45d451a —
-previously believed uncommitted), and the LATENT GitLab crash (below).
+Christopher may want a keyboard shortcut / menu-bar command for the drawer
+toggle later (not requested; sidebar item only). No open queue. Next session:
+pick up whatever Christopher files (GitHub issues via `/vx-issue` per previous
+session's plan).
 
 ## Working Findings
 
-- iOS project search removed (main @ 8a4cc57, worktree merged + cleaned).
-  Old behavior: bounded filesystem walk (`IOSProjectFileSearch`) auto-found
-  and auto-selected projects per workspace; reported broken. New behavior:
-  Settings → iOS Project has a Choose… button → NSOpenPanel; user picks the
-  `.xcodeproj`/`.xcworkspace` directly, or a folder containing exactly one
-  (`IOSProjectManualSelection.resolve`, direct children only — never a deep
-  walk). Repair policy: empty profile → `.projectNotSelected`; project is
-  NEVER auto-selected. `IOSDiscoveryRefreshResult` lost `candidates`;
-  `discovery.refresh(saved:)` lost `workspaceFolder`; `.searchingProjects`
-  phase removed. Scheme/config/test-plan/Simulator discovery via bounded
-  xcodebuild argv unchanged. 34 targeted IOS* tests pass; Debug build clean.
-- main advanced mid-task (JIRA sidebar merge 6160eeb); rebased the branch
-  before ff-merge. Worktree was at ../Console-wt-iospicker — removed.
-- LATENT GitLab crash remains: `MergeRequestsPanelView` + GitLab sidebar share
-  WebPages; selecting GitLab from Home likely crashes like JIRA did
-  (one-WebView-per-WebPage, see CONSOLE_PANEL_1_JIRA.md). Same one-hop
-  `isWebViewMounted` deferral would fix it.
-- JIRA sidebar crash repro method: Debug build, launch binary, osascript
-  System Events sidebar buttons (button 4 = JIRA, 1 = Home) — see docs history.
+- Task done: removed the Terminal drawer header ("Terminal" + chevron bar,
+  `ToggleTerminalCollapse`), added a "Main Terminal" sidebar row pinned above
+  Settings (below the separator) that toggles the drawer. A retracted drawer
+  now unmounts entirely — zero reserved space (was a 36pt pinned bar).
+  Shell + SwiftTerm view survive unmounting inside `TerminalSessionManager`
+  (preheat also still works). Merged to `main` via worktree
+  `terminal-drawer-headerless` (removed afterwards).
+- `TerminalPanelView` is now pure content (`MainTerminalDrawer` AX identifier
+  via `.accessibilityElement(children: .contain)` — the identifier does NOT
+  surface without that modifier when wrapping an NSViewRepresentable).
+- MainView renders the drawer + resize handle inside `if isDrawerVisuallyExpanded`;
+  `TerminalPanelView.barHeight` is gone (SessionsView only uses `collapseAnimation`).
+- Focus Session still works: `drawerExpandedBinding` guards toggles during
+  focus mode; `isDrawerVisuallyExpanded` unmounts/renounts around it.
+- UI test for the toggle: synthesized clicks on custom sidebar rows NEVER
+  actuate on this host (tap/click/coordinate all fail; `isHittable=false`).
+  Test uses DEBUG launch hooks in ConsoleApp: `-uiTestExpandTerminal` (forces
+  drawer expanded via standard domain) and `-uiTestAutoToggleTerminal`
+  (performs the row's toggle 4s after launch). Launch-arg domain override
+  (`-isTerminalExpanded 1`) does NOT work for toggle tests: the argument
+  domain shadows in-app standard-domain writes forever.
+- Verified: full `ConsoleTests` scheme green; targeted `NavigationUITests.testMainTerminalSidebarItemTogglesDrawer`
+  and `SessionsUITests.testFocusSessionHidesListAndRestoresIt` green; clean
+  Debug build.
+- Fresh flake observed: app under test intermittently SIGTRAPs at launch in a
+  WebKit SwiftUI representable (`PlatformViewRepresentableAdaptor.makeViewProvider`,
+  `_WebKit_SwiftUI` frames) — hit 3× in ~10 UI-test launches, none on manual
+  launches, none attributable to this change. If UI tests fail with
+  "application is not running / does not have a process ID", suspect this.
 
 ## Dead Ends
 
-- Full UITest suite remains forbidden (targeted `-only-testing:` only).
-- No UI tests cover the iOS settings surface (`Settings.IOS.*` identifiers
-  unreferenced in ConsoleUITests) — unit tests are the only guard there.
-- Synthesized XCUI clicks on custom sidebar rows unreliable on this host;
-  System Events clicks work. `entire contents of window 1` misses sidebar.
+- Synthesized sidebar clicks: dead (see above). Drive UI from menu bar,
+  launch hooks, or plain in-content buttons only.
+- `app.windows.firstMatch` still fails on this host (`testSidebarHasPrimaryItems`,
+  `testLaunchStartsOnHome` — re-confirmed red on pristine `main` 2026-09-09).
+- Full UITest suite remains forbidden.
