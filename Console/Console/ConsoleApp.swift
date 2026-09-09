@@ -314,7 +314,9 @@ struct ConsoleApp: App {
         if ProcessInfo.processInfo.arguments.contains("-uiTestSelectTriggers") {
             // Synthesized clicks on custom sidebar rows race window settling
             // under automation; wake-word UI tests navigate via this flag.
-            UserDefaults.standard.set(SidebarSelection.triggers.rawValue, forKey: ConsoleNavigation.sidebarKey)
+            // Triggers lives inside the consolidated Commands hub now.
+            UserDefaults.standard.set(SidebarSelection.commands.rawValue, forKey: ConsoleNavigation.sidebarKey)
+            UserDefaults.standard.set(CommandsHubTab.triggers.rawValue, forKey: ConsoleNavigation.commandsHubTabKey)
         }
         if ProcessInfo.processInfo.arguments.contains("-uiTestNextSyntheticSources") {
             nextButtonModel.installSyntheticUITestSources()

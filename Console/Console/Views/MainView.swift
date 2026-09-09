@@ -100,7 +100,7 @@ struct MainView: View {
             case .settings:
                 sidebarSelection = .settings
             case .triggers:
-                sidebarSelection = .triggers
+                sidebarSelection = .commands
             case .myCommands:
                 sidebarSelection = .commands
             case .live:
@@ -273,10 +273,8 @@ struct MainView: View {
             TicketWorkRootView(handlers: ticketWorkflowCoordinator.actionHandlers)
         case .mergeRequests:
             MergeRequestsView()
-        case .triggers:
-            TriggersView()
         case .commands:
-            CommandListView()
+            CommandsHubView()
         case .aiProvider:
             AIProviderView()
         case .sessions:

@@ -80,14 +80,6 @@ struct SidebarView: View {
                         }
 
                         SidebarRow(
-                            label: SidebarSelection.triggers.label,
-                            icon: SidebarSelection.triggers.icon,
-                            isSelected: selection == .triggers
-                        ) {
-                            selection = .triggers
-                        }
-
-                        SidebarRow(
                             label: SidebarSelection.commands.label,
                             icon: SidebarSelection.commands.icon,
                             isSelected: selection == .commands

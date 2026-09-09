@@ -4,6 +4,8 @@ import Foundation
 enum ConsoleNavigation {
     static let sidebarKey = "sidebarSelection"
     static let tabKey = "tabSelection"
+    /// Which section of the consolidated Commands hub is visible.
+    static let commandsHubTabKey = "commandsHubTab"
     /// Expansion preference for the global bottom zsh Terminal drawer.
     /// Unrelated to the Sessions destination, which owns Claude PTYs.
     static let terminalExpandedKey = "isTerminalExpanded"
@@ -11,7 +13,11 @@ enum ConsoleNavigation {
     /// Conservative migration from the pre-Sessions era: a stored sidebar
     /// `"terminal"` was never a real page, so map it to Home and expand the
     /// global bottom Terminal drawer. The drawer preference is preserved.
+    /// The removed Triggers sidebar item maps to the consolidated Commands hub.
     static func migrateLegacyTerminalNavigation() {
+        if UserDefaults.standard.string(forKey: sidebarKey) == "triggers" {
+            UserDefaults.standard.set(SidebarSelection.commands.rawValue, forKey: sidebarKey)
+        }
         if UserDefaults.standard.string(forKey: sidebarKey) == "terminal" {
             UserDefaults.standard.set(SidebarSelection.home.rawValue, forKey: sidebarKey)
             setTerminalExpanded(true)
@@ -23,8 +29,6 @@ enum ConsoleNavigation {
         UserDefaults.standard.set(selection.rawValue, forKey: sidebarKey)
         // Keep legacy tabSelection in sync for callers that still observe it.
         switch selection {
-        case .triggers:
-            UserDefaults.standard.set(TabSelection.triggers.rawValue, forKey: tabKey)
         case .commands:
             UserDefaults.standard.set(TabSelection.myCommands.rawValue, forKey: tabKey)
         case .settings:
@@ -35,13 +39,20 @@ enum ConsoleNavigation {
         UserDefaults.standard.synchronize()
     }
 
+    /// Show the consolidated Commands hub on the given section
+    /// (used by menu bar / voice actions for Triggers and Commands).
+    static func showCommands(hubTab: CommandsHubTab) {
+        UserDefaults.standard.set(hubTab.rawValue, forKey: commandsHubTabKey)
+        show(.commands)
+    }
+
     /// Show Triggers or Commands (legacy helper used by menu bar / voice actions).
     static func showTerminal(tab: TabSelection = .triggers) {
         switch tab {
         case .triggers:
-            show(.triggers)
+            showCommands(hubTab: .triggers)
         case .myCommands:
-            show(.commands)
+            showCommands(hubTab: .commands)
         case .live:
             expandTerminal()
         case .settings:
@@ -82,11 +93,11 @@ enum ConsoleNavigation {
 
     // MARK: - Sidebar hotkeys (⌃1…⌃9, ⌃0)
 
-    /// Sidebar destinations addressed by ⌃1…⌃9 plus ⌃0, in visible sidebar
-    /// order. Settings deliberately has no number.
+    /// Sidebar destinations addressed by ⌃1…⌃9 (plus ⌃0 when a tenth exists),
+    /// in visible sidebar order. Settings deliberately has no number.
     static let sidebarHotkeyDestinations: [SidebarSelection] = [
         .home, .next, .brief, .jira, .ticketWork,
-        .sessions, .mergeRequests, .triggers, .commands,
+        .sessions, .mergeRequests, .commands,
         .aiProvider
     ]
 

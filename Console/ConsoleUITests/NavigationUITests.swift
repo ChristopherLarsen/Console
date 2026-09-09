@@ -24,7 +24,7 @@ final class NavigationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Home"].firstMatch.waitForExistence(timeout: 5), "Home sidebar item should be visible")
         XCTAssertTrue(app.buttons["JIRA"].firstMatch.exists, "JIRA sidebar item should be visible")
         XCTAssertTrue(app.buttons["GitLab"].firstMatch.exists, "GitLab sidebar item should be visible")
-        XCTAssertTrue(app.buttons["Triggers"].firstMatch.exists, "Triggers sidebar item should be visible")
+        XCTAssertFalse(app.buttons["Triggers"].exists, "Triggers sidebar item was consolidated into Commands")
         XCTAssertTrue(app.buttons["Commands"].firstMatch.exists, "Commands sidebar item should be visible")
         XCTAssertTrue(app.buttons["Sessions"].firstMatch.exists, "Sessions sidebar item should be visible")
         XCTAssertTrue(app.buttons["Settings"].firstMatch.exists, "Settings sidebar item should be visible")
@@ -188,19 +188,20 @@ final class NavigationUITests: XCTestCase {
         XCTAssertFalse(settingsSegment.exists, "Settings should not appear as a segmented tab")
     }
 
-    func testTriggersAndCommandsSidebarNavigation() throws {
+    func testCommandsSidebarShowsConsolidatedHub() throws {
         app.launch()
 
         let mainWindow = app.windows.firstMatch
         XCTAssertTrue(mainWindow.waitForExistence(timeout: 5), "Main window should appear")
 
-        let triggersItem = app.buttons["Triggers"].firstMatch
-        XCTAssertTrue(triggersItem.waitForExistence(timeout: 5))
-        triggersItem.tap()
-
         let commandsItem = app.buttons["Commands"].firstMatch
-        XCTAssertTrue(commandsItem.exists)
+        XCTAssertTrue(commandsItem.waitForExistence(timeout: 5))
         commandsItem.tap()
+
+        // Consolidated hub: the segmented Triggers/Commands picker renders
+        // above the command list.
+        let triggersSegment = app.descendants(matching: .any).matching(identifier: "CommandsHubSegmented").firstMatch
+        XCTAssertTrue(triggersSegment.waitForExistence(timeout: 5), "Commands hub segmented control should be visible")
     }
 
     // MARK: - Sessions Destination
