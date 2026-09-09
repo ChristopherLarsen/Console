@@ -12,63 +12,113 @@ struct MergeRequestsView: View {
     @AppStorage(AppSettings.webViewGitLabMyMergeRequestsURLKey) private var webViewGitLabMyMRsURL: String = ""
     @AppStorage(AppSettings.webViewMergeRequestsURLLegacyKey) private var legacyWebViewMergeRequestsURL: String = ""
 
-    /// Starts on the list a pending Next-card deep link targets, so the link
-    /// lands on the visible page.
-    @State private var selectedKind: CodeHostListKind =
-        MergeRequestDeepLink.shared.consumeKindHint() ?? .authored
-
-    var body: some View {
-        Group {
-            if let url = configuredURL(for: selectedKind) {
-                VStack(spacing: 0) {
-                    listSelector
-                    MergeRequestsBrowserView(
-                        page: sessionStore.page(for: selectedKind),
-                        webViewAccessibilityIdentifier: "MergeRequestsWebView"
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                .onAppear {
-                    loadSelectedList(url: url)
-                    consumePendingDeepLink()
-                }
-                .onChange(of: selectedKind) { _, newKind in
-                    if let updated = configuredURL(for: newKind) {
-                        sessionStore.loadIfNeeded(newKind, url: updated, force: false)
-                    }
-                    consumePendingDeepLink()
-                }
-                .onChange(of: webViewGitLabReviewsURL) { _, _ in reloadIfConfigured() }
-                .onChange(of: webViewGitLabMyMRsURL) { _, _ in reloadIfConfigured() }
-                .onChange(of: legacyWebViewMergeRequestsURL) { _, _ in reloadIfConfigured() }
-            } else {
-                emptyState
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
+    /// A WebPage may be attached to only one live WebView at a time on
+    /// macOS 26; the WebView is dismantled and remounted one runloop hop
+    /// apart when the active tab changes.
+    @State private var isWebViewMounted = false
 
     private var sessionStore: CodeHostWebSessionStore {
         CodeHostWebSessionStore.shared
     }
 
-    // MARK: - Selector
+    private var tabStore: BrowserTabStore {
+        sessionStore.tabStore
+    }
 
-    private var listSelector: some View {
-        Picker("Merge request list", selection: $selectedKind) {
-            Text(CodeHostListKind.reviewsRequested.displayTitle).tag(CodeHostListKind.reviewsRequested)
-            Text(CodeHostListKind.authored.displayTitle).tag(CodeHostListKind.authored)
+    /// The retained list kind backing the active tab, or nil for a free tab.
+    private var activeKind: CodeHostListKind? {
+        guard let index = tabStore.tabs.firstIndex(where: { $0.id == tabStore.activeTabID }) else {
+            return nil
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .controlSize(.small)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .overlay(alignment: .bottom) {
-            Divider()
+        return Self.kind(forPinnedIndex: index)
+    }
+
+    private var hasAnyConfiguredURL: Bool {
+        CodeHostListKind.allCases.contains { configuredURL(for: $0) != nil }
+    }
+
+    var body: some View {
+        Group {
+            if hasAnyConfiguredURL {
+                VStack(spacing: 0) {
+                    BrowserTabBar(store: tabStore)
+
+                    if isWebViewMounted {
+                        MergeRequestsBrowserView(
+                            page: tabStore.activePage,
+                            webViewAccessibilityIdentifier: "MergeRequestsWebView"
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        Color.clear
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+                .onAppear {
+                    mountWebViewAfterSettling()
+                    selectPinnedTabIfHinted()
+                    loadActiveList()
+                    consumePendingDeepLink()
+                }
+                .onChange(of: tabStore.activeTabID) { _, _ in
+                    remountWebViewForTabSwitch()
+                    loadActiveList()
+                    consumePendingDeepLink()
+                }
+                .onChange(of: webViewGitLabReviewsURL) { _, _ in reloadList(.reviewsRequested) }
+                .onChange(of: webViewGitLabMyMRsURL) { _, _ in reloadList(.authored) }
+                .onChange(of: legacyWebViewMergeRequestsURL) { _, _ in reloadList(.reviewsRequested) }
+            } else if let kind = activeKind {
+                emptyState(for: kind)
+            } else {
+                emptyState(for: .reviewsRequested)
+            }
         }
-        .accessibilityIdentifier("MergeRequestsListSelector")
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Tabs
+
+    /// Pinned tab order: 0 = reviews, 1 = authored.
+    private static func kind(forPinnedIndex index: Int) -> CodeHostListKind? {
+        switch index {
+        case 0: return .reviewsRequested
+        case 1: return .authored
+        default: return nil
+        }
+    }
+
+    private func pinnedIndex(for kind: CodeHostListKind) -> Int {
+        kind == .reviewsRequested ? 0 : 1
+    }
+
+    /// Selects the pinned tab a pending kind-only deep link targets so a
+    /// Next-card handoff lands on the visible list.
+    private func selectPinnedTabIfHinted() {
+        guard let kind = MergeRequestDeepLink.shared.consumeKindHint() else { return }
+        tabStore.select(tabStore.tabs[pinnedIndex(for: kind)].id)
+    }
+
+    /// Loads the merge request a Next-card tap queued for the active list,
+    /// after the ordinary list bookkeeping so it wins.
+    private func consumePendingDeepLink() {
+        guard let kind = activeKind,
+              let url = MergeRequestDeepLink.shared.consume(matching: kind) else { return }
+        sessionStore.page(for: kind).load(URLRequest(url: url))
+    }
+
+    // MARK: - Mounting
+
+    private func mountWebViewAfterSettling() {
+        guard !isWebViewMounted else { return }
+        DispatchQueue.main.async {
+            isWebViewMounted = true
+        }
+    }
+
+    private func remountWebViewForTabSwitch() {
+        isWebViewMounted = false
+        mountWebViewAfterSettling()
     }
 
     // MARK: - Configuration
@@ -82,29 +132,25 @@ struct MergeRequestsView: View {
         )
     }
 
-    private func loadSelectedList(url: URL) {
-        sessionStore.loadIfNeeded(selectedKind, url: url, force: false)
+    /// Loads the active pinned list's configured URL unless that page already
+    /// had it requested. Free tabs are never redirected here.
+    private func loadActiveList() {
+        guard let kind = activeKind, let url = configuredURL(for: kind) else { return }
+        sessionStore.loadIfNeeded(kind, url: url, force: false)
     }
 
-    /// Loads the merge request a Next-card tap queued for this list, after
-    /// the ordinary list bookkeeping so it wins.
-    private func consumePendingDeepLink() {
-        guard let url = MergeRequestDeepLink.shared.consume(matching: selectedKind) else { return }
-        sessionStore.page(for: selectedKind).load(URLRequest(url: url))
+    private func reloadList(_ kind: CodeHostListKind) {
+        guard let url = configuredURL(for: kind) else { return }
+        sessionStore.loadIfNeeded(kind, url: url, force: true)
     }
 
-    private func reloadIfConfigured() {
-        guard let url = configuredURL(for: selectedKind) else { return }
-        sessionStore.loadIfNeeded(selectedKind, url: url, force: true)
-    }
-
-    private var emptyState: some View {
+    private func emptyState(for kind: CodeHostListKind) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "arrow.triangle.merge")
                 .font(.system(size: 40))
                 .foregroundStyle(.secondary)
 
-            Text("Set Web View GitLab \(selectedKind.settingsNoun) URL in Settings")
+            Text("Set Web View GitLab \(kind.settingsNoun) URL in Settings")
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

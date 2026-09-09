@@ -66,7 +66,7 @@ to add files.
 
 1. **Two web-session ownerships are separate**: `TerminalSessionManager` (zsh drawer)
    vs `SessionStore` (Claude PTYs). Never share processes between them.
-2. **One JIRA WebPage**, two GitLab WebPages — shared data store, never cookie extraction.
+2. **One pinned JIRA WebPage, two pinned GitLab WebPages** — shared data store, never cookie extraction. The JIRA and GitLab sidebar destinations additionally own browser-style tabs (`BrowserTabStore`, `Console/Console/Views/Components/BrowserTabStore.swift`): each dynamic tab is another `WebPage` on the SAME persistent store, capped at 8 tabs per destination, strictly memory-only (tab URLs never persist, log, or leave the process). The pinned first tab of each destination wraps the page other surfaces depend on (Home cards + JIRA extraction / Home MR lists).
 3. **Sessions are memory-only.** Quit → zero sessions. No persistence of prompts,
    transcripts, ticket content, or summaries.
 4. **API keys only in the Keychain** (`KeychainManager` / `AIKeychain`).

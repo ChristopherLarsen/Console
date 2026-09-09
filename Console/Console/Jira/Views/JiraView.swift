@@ -9,6 +9,16 @@ final class JiraWebSession {
     let page = WebPage()
     /// Survives Home unmount so cards and last extraction remain when returning.
     let panelController = JiraPanelController()
+    /// Browser-style tabs for the full JIRA destination. The pinned first tab
+    /// wraps `page`; Home cards and extraction always track that page.
+    /// New tabs start at the configured JIRA URL. Memory-only.
+    lazy var tabStore = BrowserTabStore(
+        pinnedTabs: [(page: page, title: "My Tickets")],
+        newTabURLProvider: {
+            UserDefaults.standard.string(forKey: "webViewJiraURL")
+                .flatMap(JiraView.normalizedURL(from:))
+        }
+    )
     /// Normalized URL string last loaded into `page`, if any.
     var lastLoadedURLString: String?
     /// True while the retained page intentionally shows a card or deep-link
@@ -85,7 +95,6 @@ struct JiraView: View {
     @Environment(TicketWorkflowCoordinator.self) private var ticketWorkflowCoordinator
     @Environment(TicketWorkflowStore.self) private var ticketWorkflowStore
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
-    @State private var page = JiraWebSession.shared.page
     @State private var isIssueTracked = false
     /// A WebPage may be presented in only one WebView at a time on macOS 26.
     /// Mounting this WebView in the same transaction that dismantles the Home
@@ -94,10 +103,19 @@ struct JiraView: View {
     /// before this one attaches.
     @State private var isWebViewMounted = false
 
+    /// The page the tab strip currently presents. Home cards and DOM
+    /// extraction always use `JiraWebSession.shared.page` (the pinned first
+    /// tab) regardless of this value.
+    private var page: WebPage {
+        JiraWebSession.shared.tabStore.activePage
+    }
+
     var body: some View {
         Group {
             if let url = Self.normalizedURL(from: webViewJiraURL) {
                 VStack(spacing: 0) {
+                    BrowserTabBar(store: JiraWebSession.shared.tabStore)
+
                     navigationControls
 
                     if page.isLoading {
@@ -119,6 +137,7 @@ struct JiraView: View {
                 .onAppear {
                     mountWebViewAfterSettling()
                     if let pending = JiraDeepLink.shared.consume() {
+                        JiraWebSession.shared.tabStore.select(JiraWebSession.shared.tabStore.tabs[0].id)
                         JiraWebSession.shared.navigate(to: pending)
                         refreshTrackedState()
                         return
@@ -130,6 +149,9 @@ struct JiraView: View {
                     guard let updated = Self.normalizedURL(from: newValue) else { return }
                     loadIfNeeded(url: updated, force: true)
                     refreshTrackedState()
+                }
+                .onChange(of: JiraWebSession.shared.tabStore.activeTabID) { _, _ in
+                    remountWebViewForTabSwitch()
                 }
                 .onChange(of: page.url) { _, _ in
                     refreshTrackedState()
@@ -275,6 +297,16 @@ struct JiraView: View {
         }
     }
 
+    /// A WebPage may be attached to only one live WebView at a time, so the
+    /// WebView is dismantled and remounted one runloop hop apart when the
+    /// active tab changes.
+    private func remountWebViewForTabSwitch() {
+        isWebViewMounted = false
+        mountWebViewAfterSettling()
+    }
+
+    /// Always targets the pinned main page: re-appearing at the destination
+    /// must never yank a free tab back to the configured list.
     private func loadIfNeeded(url: URL, force: Bool) {
         let session = JiraWebSession.shared
         if JiraWebSession.shouldKeepRetainedPage(
@@ -287,7 +319,7 @@ struct JiraView: View {
         }
         session.lastLoadedURLString = url.absoluteString
         session.isShowingNavigatedPage = false
-        page.load(URLRequest(url: url))
+        session.page.load(URLRequest(url: url))
     }
 
     /// Trims whitespace and prepends `https://` when the scheme is missing.

@@ -19,6 +19,21 @@ final class CodeHostWebSessionStore {
     let reviewsPage: WebPage
     let authoredPage: WebPage
 
+    /// Browser-style tabs for the GitLab sidebar destination. The two pinned
+    /// tabs wrap the retained list pages (index 0 = reviews, 1 = authored);
+    /// dynamic tabs start at the configured reviews URL. Memory-only.
+    lazy var tabStore = BrowserTabStore(
+        pinnedTabs: [
+            (page: reviewsPage, title: CodeHostListKind.reviewsRequested.displayTitle),
+            (page: authoredPage, title: CodeHostListKind.authored.displayTitle)
+        ],
+        newTabURLProvider: {
+            ListURLNormalization.url(
+                from: CodeHostConfiguration.effectiveURLString(for: .reviewsRequested)
+            )
+        }
+    )
+
     /// Normalized URL string last requested per page, so re-appearing views do
     /// not reload a page that already shows the configured list.
     private var lastLoadedURLStrings: [CodeHostListKind: String] = [:]
