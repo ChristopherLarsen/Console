@@ -21,13 +21,24 @@ enum SessionCreationError: LocalizedError, Equatable {
 
 /// App-owned observable store for all Console Claude sessions.
 ///
-/// Sessions are memory-only: nothing here persists across launches.
+/// Processes are memory-only; eligible launch metadata survives app termination.
 @MainActor
 @Observable
 final class SessionStore {
     private(set) var sessions: [ConsoleSession] = []
     private(set) var selectedSessionID: UUID?
     private(set) var awaitingForceStopSessionID: UUID?
+    private(set) var pendingRestorations: [SessionRestorationRecord] = []
+    private(set) var isRestoringSessions = false
+    private(set) var restorationMessage: String?
+    private(set) var restorationPersistenceError: String?
+    @ObservationIgnored private let restorationStore: SessionRestorationStore?
+    @ObservationIgnored private var savedSnapshot = SessionRestorationSnapshot()
+    @ObservationIgnored private var isTerminating = false
+    @ObservationIgnored private var restorationLoadFailed = false
+    @ObservationIgnored private var startingRestorations: [UUID: SessionRestorationRecord] = [:]
+
+    var canRestoreSessions: Bool { !pendingRestorations.isEmpty && !isRestoringSessions && !isTerminating }
     /// Sessions the user terminated; closed (removed) as soon as their
     /// process exits instead of lingering as dead terminals.
     @ObservationIgnored private var closeOnExitIDs: Set<UUID> = []
@@ -60,11 +71,22 @@ final class SessionStore {
     init(
         launcher: any SessionProcessLaunching,
         locator: ClaudeExecutableLocator,
-        pluginAssembler: any ConsoleClaudePluginAssembling = ConsoleClaudePluginAssembler()
+        pluginAssembler: any ConsoleClaudePluginAssembling = ConsoleClaudePluginAssembler(),
+        restorationStore: SessionRestorationStore? = nil
     ) {
         self.launcher = launcher
         self.locator = locator
         self.pluginAssembler = pluginAssembler
+        self.restorationStore = restorationStore
+        if let restorationStore {
+            do {
+                savedSnapshot = try restorationStore.load()
+                pendingRestorations = savedSnapshot.sessions
+            } catch {
+                restorationLoadFailed = true
+                restorationPersistenceError = "Saved sessions could not be read: \(error.localizedDescription)"
+            }
+        }
         ephemeralRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("console-sessions-\(UUID().uuidString)", isDirectory: true)
         router = SessionEventRouter(
@@ -82,7 +104,11 @@ final class SessionStore {
     }
 
     convenience init() {
-        self.init(launcher: ClaudeSessionLauncher())
+        self.init(launcher: ClaudeSessionLauncher(), locator: ClaudeExecutableLocator(),
+                  restorationStore: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+                    && !ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("-uiTest") })
+                    && ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] != "1"
+                    ? .standard : nil)
     }
 
     /// Starts bridge instrumentation. Failure is non-fatal by design.
@@ -242,6 +268,10 @@ final class SessionStore {
     /// terminal-send bytes.
     @discardableResult
     func createSession(request: SessionCreationRequest) throws -> UUID {
+        try createSession(request: request, resuming: nil)
+    }
+
+    private func createSession(request: SessionCreationRequest, resuming record: SessionRestorationRecord?) throws -> UUID {
         guard let claudePath = locator.locate() else {
             throw SessionCreationError.claudeNotFound
         }
@@ -249,7 +279,7 @@ final class SessionStore {
         startBridgeIfNeeded()
 
         let consoleID = UUID()
-        let claudeID = UUID()
+        let claudeID = record?.claudeSessionID ?? UUID()
         let displayName = Self.uniquedName(request.name.trimmingCharacters(in: .whitespacesAndNewlines), existingNames: activeNames)
 
         let terminalView = launcher.makeTerminalView()
@@ -273,7 +303,8 @@ final class SessionStore {
             token = sessionToken
             arguments = Self.launchArguments(
                 claudeSessionID: claudeID,
-                pluginDirectory: pluginRoot.path
+                pluginDirectory: pluginRoot.path,
+                resume: record != nil
             )
             environment = childEnvironment(
                 bridgeEnvironment: [
@@ -290,7 +321,8 @@ final class SessionStore {
             token = nil
             arguments = Self.launchArguments(
                 claudeSessionID: claudeID,
-                pluginDirectory: nil
+                pluginDirectory: nil,
+                resume: record != nil
             )
             environment = childEnvironment(bridgeEnvironment: [:])
             bridgeStatus = .unavailable
@@ -317,7 +349,8 @@ final class SessionStore {
         if let token {
             sessionTokens[consoleID] = token
         }
-        select(sessionID: consoleID)
+        selectedSessionID = consoleID
+        if let record { startingRestorations[consoleID] = record }
 
         do {
             try launcher.launch(
@@ -330,9 +363,12 @@ final class SessionStore {
         } catch {
             sessions.removeAll { $0.id == consoleID }
             sessionTokens.removeValue(forKey: consoleID)
+            startingRestorations.removeValue(forKey: consoleID)
             selectedSessionID = previousSelection
             throw error
         }
+        if let record { pendingRestorations.removeAll { $0.id == record.id } }
+        persistRestorationSnapshot()
         return consoleID
     }
 
@@ -362,9 +398,9 @@ final class SessionStore {
     /// names. The local Console display name is omitted — it must not reach
     /// the child CLI. Uninstrumented launches pass identity only so a missing
     /// plugin cannot block Claude.
-    static func launchArguments(claudeSessionID: UUID, pluginDirectory: String?) -> [String] {
+    static func launchArguments(claudeSessionID: UUID, pluginDirectory: String?, resume: Bool = false) -> [String] {
         var arguments = [
-            "--session-id", claudeSessionID.uuidString,
+            resume ? "--resume" : "--session-id", claudeSessionID.uuidString,
             "--dangerously-skip-permissions",
         ]
         if let pluginDirectory {
@@ -428,6 +464,7 @@ final class SessionStore {
 
     func select(sessionID: UUID) {
         selectedSessionID = sessionID
+        persistRestorationSnapshot()
     }
 
     func renameSession(id: UUID, name: String) {
@@ -438,6 +475,7 @@ final class SessionStore {
             trimmedName,
             existingNames: sessions.filter { $0.id != id }.map(\.name)
         )
+        persistRestorationSnapshot()
     }
 
     /// The toolbar follows the Sessions list's stable store order.
@@ -459,6 +497,7 @@ final class SessionStore {
     /// Used by the ⌃0 / out-of-range session hotkeys.
     func clearSelection() {
         selectedSessionID = nil
+        persistRestorationSnapshot()
     }
 
     /// Graceful stop (SIGTERM). The UI's Terminate flow (`terminateSession`)
@@ -504,6 +543,8 @@ final class SessionStore {
             return
         }
         closeOnExitIDs.insert(id)
+        startingRestorations.removeValue(forKey: id)
+        persistRestorationSnapshot()
         stopSession(id: id)
     }
 
@@ -583,7 +624,10 @@ final class SessionStore {
     /// handle, and scrollback are released with it. A process that is still
     /// alive is killed first, so removing a row marked exited by a bridge
     /// event cannot orphan its PTY child.
-    private func closeSession(id: UUID) {
+    private func closeSession(id: UUID, preservingRestoration: Bool = false) {
+        if !preservingRestoration, let session = session(withID: id) {
+            pendingRestorations.removeAll { $0.id == session.claudeSessionID }
+        }
         if let session = session(withID: id),
            let pid = session.terminalView.process?.shellPid,
            pid > 0, kill(pid, 0) == 0 {
@@ -593,12 +637,20 @@ final class SessionStore {
         sessionTokens.removeValue(forKey: id)
         router.forget(sessionID: id)
         closeOnExitIDs.remove(id)
+        startingRestorations.removeValue(forKey: id)
         if selectedSessionID == id {
             selectedSessionID = sessions.first?.id
         }
+        persistRestorationSnapshot()
     }
 
     func handleProcessTerminated(sessionID: UUID, startExitShell: Bool = true) {
+        if !isTerminating, let record = startingRestorations.removeValue(forKey: sessionID) {
+            if !pendingRestorations.contains(where: { $0.id == record.id }) {
+                pendingRestorations.append(record)
+            }
+            restorationMessage = "\(record.name) could not resume. Check its terminal for details, then retry Restore Sessions."
+        }
         if closeOnExitIDs.remove(sessionID) != nil {
             notifyLifecycle(sessionID: sessionID, event: .processTerminated)
             closeSession(id: sessionID)
@@ -623,6 +675,8 @@ final class SessionStore {
     /// hiding the window leaves everything running. Sessions marked exited
     /// by a bridge event but still owning a live process are killed too.
     func terminateAll() {
+        persistRestorationSnapshot()
+        isTerminating = true
         for session in sessions {
             let pid = session.terminalView.process?.shellPid ?? 0
             if pid > 0, kill(pid, 0) == 0 {
@@ -728,6 +782,12 @@ final class SessionStore {
 
     private func applyEvent(_ event: SessionLifecycleEvent, to sessionID: UUID) {
         guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
+        if case .sessionStarted = event {
+            startingRestorations.removeValue(forKey: sessionID)
+        }
+        if case .sessionEnded = event {
+            startingRestorations.removeValue(forKey: sessionID)
+        }
 
         if case .artifactLinked(let artifact) = event {
             appendArtifact(artifact, toSessionAt: index)
@@ -750,6 +810,85 @@ final class SessionStore {
         }
 
         notifyLifecycle(sessionID: sessionID, event: event)
+        persistRestorationSnapshot()
+    }
+
+    // MARK: - Restoration
+
+    func restoreSessions() async {
+        guard canRestoreSessions else { return }
+        isRestoringSessions = true
+        restorationMessage = nil
+        let selection = savedSnapshot.selectedClaudeSessionID
+        let records = pendingRestorations
+        let restorationOrder = savedSnapshot.sessions.map(\.id)
+        var failures: [String] = []
+        defer {
+            isRestoringSessions = false
+            persistRestorationSnapshot()
+        }
+        for record in records {
+            await Task.yield()
+            guard !isTerminating, !Task.isCancelled else { return }
+            // Retrying a failed resume replaces its exited pane, never a live session.
+            for session in sessions.filter({ $0.claudeSessionID == record.id && $0.activity == .exited }) {
+                closeSession(id: session.id, preservingRestoration: true)
+            }
+            if sessions.contains(where: { $0.claudeSessionID == record.id }) {
+                pendingRestorations.removeAll { $0.id == record.id }
+                continue
+            }
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: record.workingDirectory.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
+                failures.append("\(record.name): folder unavailable (\(record.workingDirectory.path)).")
+                continue
+            }
+            do {
+                _ = try createSession(request: .init(purpose: record.purpose, name: record.name,
+                                                     workingDirectory: record.workingDirectory), resuming: record)
+            } catch {
+                failures.append("\(record.name): \(error.localizedDescription)")
+            }
+        }
+        // A previously failed early entry must regain its position on retry.
+        let restoredIDs = Set(restorationOrder)
+        let restored = sessions.filter { restoredIDs.contains($0.claudeSessionID) }
+        sessions = sessions.filter { !restoredIDs.contains($0.claudeSessionID) }
+            + restorationOrder.compactMap { id in restored.first { $0.claudeSessionID == id } }
+        if let selected = sessions.first(where: { $0.claudeSessionID == selection }) {
+            selectedSessionID = selected.id
+        }
+        if !failures.isEmpty { restorationMessage = failures.joined(separator: "\n") }
+    }
+
+    private func persistRestorationSnapshot() {
+        guard !isTerminating, !restorationLoadFailed, let restorationStore else { return }
+        var records = pendingRestorations
+        for session in sessions where session.activity != .exited && !closeOnExitIDs.contains(session.id) {
+            let record = SessionRestorationRecord(claudeSessionID: session.claudeSessionID,
+                name: session.name, workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general)
+            records.removeAll { $0.id == record.id }
+            records.append(record)
+        }
+        // Retain the original order even when only some entries have been restored.
+        let byID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+        let oldIDs = Set(savedSnapshot.sessions.map(\.id))
+        records = savedSnapshot.sessions.compactMap { byID[$0.id] } + records.filter { !oldIDs.contains($0.id) }
+        let selected = selectedSession?.claudeSessionID
+        let pendingSelection = savedSnapshot.selectedClaudeSessionID.flatMap { id in
+            pendingRestorations.contains(where: { $0.id == id }) ? id : nil
+        }
+        let snapshot = SessionRestorationSnapshot(sessions: records,
+            selectedClaudeSessionID: isRestoringSessions ? savedSnapshot.selectedClaudeSessionID : pendingSelection ?? selected)
+        guard snapshot != savedSnapshot else { return }
+        do {
+            try restorationStore.save(snapshot)
+            savedSnapshot = snapshot
+            restorationPersistenceError = nil
+        } catch {
+            restorationPersistenceError = "Sessions could not be saved: \(error.localizedDescription)"
+        }
     }
 
     private func appendArtifact(_ artifact: SessionArtifact, toSessionAt index: Int) {

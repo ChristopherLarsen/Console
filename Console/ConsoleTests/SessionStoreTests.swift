@@ -23,6 +23,7 @@ final class SessionStoreTests: XCTestCase {
         var lastArguments: [String]?
         var lastEnvironment: [String: String]?
         var errorToThrow: Error?
+        var failingClaudeID: UUID?
         var exitShellStartCount = 0
         var lastExitShellWorkingDirectory: String?
         var lastExitShellEnvironment: [String: String]?
@@ -44,6 +45,9 @@ final class SessionStoreTests: XCTestCase {
             lastExecutable = executable
             lastArguments = arguments
             lastEnvironment = environment
+            if let failingClaudeID, arguments.contains(failingClaudeID.uuidString) {
+                throw SyntheticLaunchError()
+            }
             if let errorToThrow {
                 throw errorToThrow
             }
@@ -78,13 +82,15 @@ final class SessionStoreTests: XCTestCase {
     }
 
     private func makeStore(
-        assembler: (any ConsoleClaudePluginAssembling)? = nil
+        assembler: (any ConsoleClaudePluginAssembling)? = nil,
+        restorationStore: SessionRestorationStore? = nil
     ) -> (SessionStore, FakeLauncher) {
         let launcher = FakeLauncher()
         let store = SessionStore(
             launcher: launcher,
             locator: ClaudeExecutableLocator(defaults: defaults),
-            pluginAssembler: assembler ?? ConsoleClaudePluginAssembler()
+            pluginAssembler: assembler ?? ConsoleClaudePluginAssembler(),
+            restorationStore: restorationStore
         )
         return (store, launcher)
     }
@@ -98,6 +104,153 @@ final class SessionStoreTests: XCTestCase {
     }
 
     // MARK: - Creation
+
+    func testRestoreResumesConversationAndPreservesSelectionAcrossQuit() async throws {
+        let directory = tmpDirectory("restore")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let (original, _) = makeStore(restorationStore: disk)
+        let first = try original.createSession(name: "First", workingDirectory: directory)
+        _ = try original.createSession(name: "Second", workingDirectory: directory)
+        original.select(sessionID: first)
+        original.renameSession(id: first, name: "Renamed")
+        let identity = try XCTUnwrap(original.session(withID: first)?.claudeSessionID)
+        original.terminateAll()
+        XCTAssertEqual(try disk.load().sessions.count, 2)
+
+        let (restored, launcher) = makeStore(restorationStore: disk)
+        XCTAssertTrue(restored.canRestoreSessions)
+        await restored.restoreSessions()
+        XCTAssertEqual(restored.sessions.map(\.name), ["Renamed", "Second"])
+        XCTAssertEqual(restored.selectedSession?.claudeSessionID, identity)
+        XCTAssertEqual(restored.selectedSession?.workingDirectory, directory)
+        XCTAssertTrue(try XCTUnwrap(launcher.lastArguments).contains("--resume"))
+        XCTAssertFalse(try XCTUnwrap(launcher.lastArguments).contains("--session-id"))
+        XCTAssertFalse(restored.canRestoreSessions)
+        await restored.restoreSessions()
+        XCTAssertEqual(launcher.launchCount, 2)
+        restored.terminateAll()
+    }
+
+    func testExitedAndExplicitlyTerminatedSessionsAreExcluded() throws {
+        let directory = tmpDirectory("eligibility")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let (store, _) = makeStore(restorationStore: disk)
+        let exited = try store.createSession(name: "Exited", workingDirectory: directory)
+        let terminated = try store.createSession(name: "Terminated", workingDirectory: directory)
+        _ = try store.createSession(name: "Keep", workingDirectory: directory)
+        store.handleProcessTerminated(sessionID: exited, startExitShell: false)
+        store.terminateSession(id: terminated)
+        XCTAssertEqual(try disk.load().sessions.map(\.name), ["Keep"])
+        store.terminateAll()
+        XCTAssertEqual(try disk.load().sessions.map(\.name), ["Keep"])
+    }
+
+    func testQuitWithoutRestoringPreservesPendingWorkspaceAndNewSessions() throws {
+        let directory = tmpDirectory("pending")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Saved",
+            workingDirectory: directory, purpose: .general)
+        let snapshot = SessionRestorationSnapshot(sessions: [record], selectedClaudeSessionID: record.id)
+        try disk.save(snapshot)
+        let (empty, _) = makeStore(restorationStore: disk)
+        empty.terminateAll()
+        XCTAssertEqual(try disk.load(), snapshot)
+        let (next, _) = makeStore(restorationStore: disk)
+        _ = try next.createSession(name: "New", workingDirectory: directory)
+        next.terminateAll()
+        XCTAssertEqual(try disk.load().sessions.map(\.name), ["Saved", "New"])
+    }
+
+    func testPartialRestoreRetriesOnlyFailures() async throws {
+        let directory = tmpDirectory("partial")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let first = SessionRestorationRecord(claudeSessionID: UUID(), name: "First", workingDirectory: directory, purpose: .general)
+        let second = SessionRestorationRecord(claudeSessionID: UUID(), name: "Second", workingDirectory: directory, purpose: .general)
+        try disk.save(.init(sessions: [first, second], selectedClaudeSessionID: second.id))
+        let (store, launcher) = makeStore(restorationStore: disk)
+        launcher.failingClaudeID = second.id
+        await store.restoreSessions()
+        XCTAssertEqual(store.sessions.count, 1)
+        XCTAssertEqual(store.pendingRestorations.map(\.id), [second.id])
+        XCTAssertNotNil(store.restorationMessage)
+        XCTAssertEqual(try disk.load().sessions.map(\.id), [first.id, second.id])
+        launcher.failingClaudeID = nil
+        await store.restoreSessions()
+        XCTAssertEqual(store.sessions.map(\.claudeSessionID), [first.id, second.id])
+        XCTAssertEqual(store.selectedSession?.claudeSessionID, second.id)
+        XCTAssertEqual(launcher.launchCount, 3)
+        XCTAssertFalse(store.canRestoreSessions)
+        store.terminateAll()
+    }
+
+    func testMissingFolderRemainsPendingWithoutLaunching() async throws {
+        let directory = tmpDirectory("missing")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Missing",
+            workingDirectory: directory.appendingPathComponent("gone"), purpose: .general)
+        try disk.save(.init(sessions: [record]))
+        let (store, launcher) = makeStore(restorationStore: disk)
+        await store.restoreSessions()
+        XCTAssertEqual(launcher.launchCount, 0)
+        XCTAssertTrue(store.canRestoreSessions)
+        XCTAssertTrue(try XCTUnwrap(store.restorationMessage).contains("folder unavailable"))
+        XCTAssertEqual(try disk.load().sessions, [record])
+    }
+
+    func testResumeProcessFailureReturnsEntryToPending() async throws {
+        let directory = tmpDirectory("resume-failure")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Saved", workingDirectory: directory, purpose: .general)
+        try disk.save(.init(sessions: [record]))
+        let (store, _) = makeStore(restorationStore: disk)
+        await store.restoreSessions()
+        let id = try XCTUnwrap(store.sessions.first?.id)
+        store.handleProcessTerminated(sessionID: id, startExitShell: false)
+        XCTAssertTrue(store.canRestoreSessions)
+        XCTAssertEqual(try disk.load().sessions, [record])
+        await store.restoreSessions()
+        XCTAssertEqual(store.sessions.count, 1)
+        XCTAssertNotEqual(store.sessions.first?.id, id)
+        store.terminateAll()
+    }
+
+    func testSuccessfullyResumedSessionIsExcludedAfterNaturalExit() async throws {
+        let directory = tmpDirectory("resume-exit")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Saved", workingDirectory: directory, purpose: .general)
+        try disk.save(.init(sessions: [record]))
+        let (store, _) = makeStore(restorationStore: disk)
+        await store.restoreSessions()
+        let id = try XCTUnwrap(store.sessions.first?.id)
+        store.debugReceiveEnvelope(BridgeEnvelope(sessionID: id.uuidString,
+            token: try XCTUnwrap(store.debugSessionToken(id)), eventID: UUID().uuidString,
+            kind: .lifecycle, lifecycleEvent: .sessionStarted))
+        store.handleProcessTerminated(sessionID: id, startExitShell: false)
+        XCTAssertFalse(store.canRestoreSessions)
+        XCTAssertTrue(try disk.load().sessions.isEmpty)
+    }
+
+    func testRemovingFailedResumeDiscardsItsPendingRestoration() async throws {
+        let directory = tmpDirectory("discard-resume")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Saved", workingDirectory: directory, purpose: .general)
+        try disk.save(.init(sessions: [record]))
+        let (store, _) = makeStore(restorationStore: disk)
+        await store.restoreSessions()
+        let id = try XCTUnwrap(store.sessions.first?.id)
+        store.handleProcessTerminated(sessionID: id, startExitShell: false)
+        store.removeSession(id: id)
+        XCTAssertFalse(store.canRestoreSessions)
+        XCTAssertTrue(try disk.load().sessions.isEmpty)
+    }
 
     func testAttentionQueueIncludesCompletionAndInputInListOrder() throws {
         let (store, _) = makeStore()

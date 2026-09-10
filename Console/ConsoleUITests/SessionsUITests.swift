@@ -71,6 +71,11 @@ final class SessionsUITests: XCTestCase {
             emptyState.waitForExistence(timeout: 8),
             "fresh install must show zero sessions. Tree:\n\(app.debugDescription)"
         )
+        let restore = app.buttons["Sessions.RestoreButton"]
+        XCTAssertTrue(restore.waitForExistence(timeout: 5))
+        XCTAssertEqual(restore.label, "Restore Sessions")
+        XCTAssertFalse(restore.isEnabled)
+        XCTAssertGreaterThan(restore.frame.midY, emptyState.frame.midY)
     }
 
     // MARK: - Intent launcher

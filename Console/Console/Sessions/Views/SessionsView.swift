@@ -18,7 +18,11 @@ struct SessionsView: View {
     var body: some View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
-                detailArea
+                VStack(spacing: 0) {
+                    detailArea
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    restorationFooter
+                }
                     .frame(minWidth: SessionWorkspaceLayout.detailMinWidth)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -109,6 +113,31 @@ struct SessionsView: View {
             }
             store.focusSelectedTerminal()
         }
+    }
+
+    private var restorationFooter: some View {
+        VStack(spacing: 6) {
+            if let message = store.restorationPersistenceError ?? store.restorationMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(3)
+                    .help(message)
+            }
+            Button("Restore Sessions") {
+                Task { await store.restoreSessions() }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(store.canRestoreSessions ? Color.black : Color(nsColor: .lightGray))
+            .disabled(!store.canRestoreSessions)
+            .accessibilityIdentifier("Sessions.RestoreButton")
+            .help(store.isRestoringSessions ? "Restoring sessions…" : "Resume sessions from before Console quit")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var listColumn: some View {

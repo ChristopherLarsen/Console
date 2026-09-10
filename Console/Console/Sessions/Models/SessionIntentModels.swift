@@ -128,8 +128,7 @@ struct SessionCreationRequest {
     }
 }
 
-/// A user-configured local folder sessions can open in. This is the only
-/// launch-related state that persists.
+/// A user-configured local folder sessions can open in.
 struct SessionWorkspace: Identifiable, Codable, Equatable {
     let id: UUID
     var name: String
