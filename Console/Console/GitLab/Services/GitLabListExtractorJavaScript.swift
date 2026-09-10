@@ -28,6 +28,8 @@ enum GitLabListExtractorJavaScript {
       '.gl-empty-state'
     ];
     const TITLE_SELECTORS = [
+      'a[data-testid="issuable-title-link"]',
+      'a.issue-title-text',
       '[data-testid="merge-request-title-text"]',
       '.merge-request-title-text',
       '[data-testid="merge-request-title"]',
@@ -147,12 +149,28 @@ enum GitLabListExtractorJavaScript {
       return JSON.stringify({ outcome: 'authenticationRequired', items: [] });
     }
 
-    const listContainer = firstVisible([document], LIST_SELECTORS);
-    const hasListContainer = Boolean(listContainer);
     const isListRoute = /\/(?:dashboard\/merge_requests|-\/merge_requests)\/?$/.test(window.location.pathname);
+    const legacyContainer = firstVisible([document], LIST_SELECTORS);
+    // Issuable lists are shared with issues. Only recognize them on an MR
+    // list route, and only read anchors inside explicitly marked MR rows.
+    const modernRoot = isListRoute
+      ? firstVisible([document], ['.issuable-list-container']) : null;
+    const modernContainer = modernRoot
+      ? firstVisible([modernRoot], ['.content-list.issuable-list']) : null;
+    const listContainer = legacyContainer || modernContainer;
+    const hasListContainer = Boolean(listContainer);
+    function unsupported(reason) {
+      // Structural diagnostics only; no page text, URLs or extracted values.
+      return JSON.stringify({ outcome: 'unsupported', reason: reason, items: [] });
+    }
 
     const anchors = [];
-    for (const anchor of (listContainer || document).querySelectorAll('a[href]')) {
+    for (const anchor of (listContainer || modernRoot || document).querySelectorAll('a[href]')) {
+      if (!isVisible(anchor)) { continue; }
+      if (!legacyContainer && modernRoot) {
+        const row = anchor.closest('.merge-request, [data-testid="merge-request"]');
+        if (!row || !modernContainer || !modernContainer.contains(row)) { continue; }
+      }
       if (!anchor.pathname) { continue; }
       const match = anchor.pathname.match(MR_PATH_PATTERN);
       if (!match) { continue; }
@@ -171,18 +189,18 @@ enum GitLabListExtractorJavaScript {
     if (rowsInOrder.size > 0 && !hasListContainer) {
       // MR links on a page without a merge-request list container (dashboard
       // widget, wiki) are not a merge-request list.
-      return JSON.stringify({ outcome: 'unsupported', items: [] });
+      return unsupported(isListRoute ? 'unrecognizedLayout' : 'wrongPage');
     }
 
     if (rowsInOrder.size === 0) {
-      const emptyState = firstVisible([document], EMPTY_SELECTORS);
+      const emptyState = firstVisible([modernRoot || document], EMPTY_SELECTORS);
       const saysNoMergeRequests = /\bno (?:open |closed |merged |matching )?merge requests?\b/i.test(compactText(emptyState) || '');
       if ((hasListContainer || isListRoute) && saysNoMergeRequests) {
         return JSON.stringify({ outcome: 'empty', items: [] });
       }
       // A bare list container may still be hydrating; without positive
       // empty-state evidence it is never a decisive empty list.
-      return JSON.stringify({ outcome: 'unsupported', items: [] });
+      return unsupported(hasListContainer || modernRoot ? 'listNotReady' : (isListRoute ? 'unrecognizedLayout' : 'wrongPage'));
     }
 
     const items = [];
@@ -190,9 +208,12 @@ enum GitLabListExtractorJavaScript {
     for (const [rowElement, rowAnchors] of rowsInOrder) {
       sawRowElement = true;
       if (!isVisible(rowElement)) { continue; }
-      let chosenAnchor = null;
+      const titleElement = firstVisible([rowElement], TITLE_SELECTORS);
+      const titleAnchor = titleElement && (titleElement.closest('a[href]') || titleElement.querySelector('a[href]'));
+      let chosenAnchor = rowAnchors.includes(titleAnchor) ? titleAnchor : null;
       let iid = null;
       for (const candidate of rowAnchors) {
+        if (titleAnchor && chosenAnchor === titleAnchor) { break; }
         const match = candidate.pathname.match(MR_PATH_PATTERN);
         if (!match) { continue; }
         const candidateText = compactText(candidate);
@@ -203,7 +224,7 @@ enum GitLabListExtractorJavaScript {
       iid = chosenAnchor.pathname.match(MR_PATH_PATTERN)[1];
 
       const roots = [rowElement];
-      let title = compactText(firstVisible(roots, TITLE_SELECTORS));
+      let title = compactText(titleElement);
       if (!title) {
         const fallback = compactText(chosenAnchor);
         if (fallback && !/^!?\d+$/.test(fallback)) { title = fallback; }
@@ -212,6 +233,7 @@ enum GitLabListExtractorJavaScript {
 
       const isDraft = Boolean(firstVisible(roots, [
         '.draft-status',
+        '[data-testid="issuable-draft-status-badge"]',
         '[data-testid="draft-badge"]'
       ])) || DRAFT_TITLE_PATTERN.test(title);
 
@@ -231,7 +253,7 @@ enum GitLabListExtractorJavaScript {
 
     if (sawRowElement && items.length === 0) {
       // MR anchors existed but no row could be read; never report a false zero.
-      return JSON.stringify({ outcome: 'unsupported', items: [] });
+      return unsupported('unreadableRows');
     }
     return JSON.stringify({ outcome: 'items', items: items });
     """#
@@ -244,6 +266,7 @@ enum GitLabListExtractorJavaScript {
       (
         document.querySelector('a[href*="/-/merge_requests/"]') ||
         document.querySelector('ul[data-testid="merge-request-list"], ul.merge_requests-list, #merge_requests_list, ul.mr-list, .merge-request-list') ||
+        document.querySelector('.issuable-list-container .content-list.issuable-list') ||
         document.querySelector('.empty-state, [data-testid="empty-state"], .gl-empty-state') ||
         document.querySelector('form#new_user, input[name="user[login]"], form[action*="users/sign_in"]')
       );
