@@ -440,6 +440,21 @@ final class SessionStore {
         )
     }
 
+    /// The toolbar follows the Sessions list's stable store order.
+    var sessionsNeedingAttention: [ConsoleSession] {
+        sessions.filter {
+            let state = displayedSessionState(activity: $0.activity, attention: $0.attention)
+            return HomeSessionsPresentation.needsYou(state) || state == .done
+        }
+    }
+
+    /// Viewing acknowledges a completion, never an outstanding input request.
+    func acknowledgeCompletion(sessionID: UUID) {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }),
+              sessions[index].attention == .unreadCompletion else { return }
+        sessions[index].attention = .none
+    }
+
     /// Drops the selection so the Sessions destination shows its empty pane.
     /// Used by the ⌃0 / out-of-range session hotkeys.
     func clearSelection() {

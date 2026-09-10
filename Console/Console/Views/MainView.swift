@@ -35,6 +35,34 @@ struct MainView: View {
         }
         .frame(minWidth: 800, maxWidth: .infinity, minHeight: 500, maxHeight: .infinity)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .toolbar {
+            if let first = sessionStore.sessionsNeedingAttention.first {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        sessionStore.select(sessionID: first.id)
+                        sidebarSelection = .sessions
+                        sessionStore.acknowledgeCompletion(sessionID: first.id)
+                        sessionStore.focusSelectedTerminal()
+                    } label: {
+                        Text(sessionStore.sessionsNeedingAttention.count.formatted())
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(.white)
+                            .minimumScaleFactor(0.5)
+                            .lineLimit(1)
+                            .padding(4)
+                            .frame(width: 26, height: 26)
+                            .background(.black, in: Circle())
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open first session needing attention")
+                    .accessibilityLabel("Sessions needing attention")
+                    .accessibilityValue("\(sessionStore.sessionsNeedingAttention.count)")
+                    .accessibilityIdentifier("Sessions.AttentionButton")
+                }
+            }
+        }
         .environment(themeManager)
         .tint(Color.accentColor)
         .preferredColorScheme(themeManager.colorScheme)

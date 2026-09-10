@@ -99,6 +99,50 @@ final class SessionStoreTests: XCTestCase {
 
     // MARK: - Creation
 
+    func testAttentionQueueIncludesCompletionAndInputInListOrder() throws {
+        let (store, _) = makeStore()
+        XCTAssertTrue(store.sessionsNeedingAttention.isEmpty)
+        let done = try store.createSession(name: "Done", workingDirectory: tmpDirectory("Done"))
+        let question = try store.createSession(name: "Question", workingDirectory: tmpDirectory("Question"))
+        let working = try store.createSession(name: "Working", workingDirectory: tmpDirectory("Working"))
+
+        func send(_ event: BridgeProtocol.LifecycleEventKind, to id: UUID) throws {
+            store.debugReceiveEnvelope(BridgeEnvelope(
+                sessionID: id.uuidString,
+                token: try XCTUnwrap(store.debugSessionToken(id)),
+                eventID: UUID().uuidString,
+                kind: .lifecycle,
+                lifecycleEvent: event
+            ))
+        }
+
+        try send(.turnCompleted, to: done)
+        store.debugReceiveEnvelope(BridgeEnvelope(
+            sessionID: question.uuidString,
+            token: try XCTUnwrap(store.debugSessionToken(question)),
+            eventID: UUID().uuidString,
+            kind: .attention,
+            attentionCategory: .question
+        ))
+        try send(.promptSubmitted, to: working)
+        XCTAssertEqual(store.sessionsNeedingAttention.map(\.id), [done, question])
+
+        store.select(sessionID: done)
+        store.acknowledgeCompletion(sessionID: done)
+        XCTAssertEqual(store.selectedSessionID, done)
+        XCTAssertEqual(store.sessionsNeedingAttention.map(\.id), [question])
+        store.acknowledgeCompletion(sessionID: question)
+        XCTAssertEqual(store.sessionsNeedingAttention.map(\.id), [question])
+
+        // A later completion must notify again after the earlier one was read.
+        try send(.promptSubmitted, to: done)
+        try send(.turnCompleted, to: done)
+        XCTAssertEqual(store.sessionsNeedingAttention.map(\.id), [done, question])
+        try send(.sessionEnded, to: done)
+        store.noteUserInput(sessionID: question)
+        XCTAssertTrue(store.sessionsNeedingAttention.isEmpty)
+    }
+
     func testCreateSessionGeneratesDistinctIDsAndLaunchesClaude() throws {
         let (store, launcher) = makeStore()
         let dir = tmpDirectory("Alpha")

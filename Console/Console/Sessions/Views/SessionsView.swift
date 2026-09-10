@@ -32,6 +32,9 @@ struct SessionsView: View {
             .animation(TerminalPanelView.collapseAnimation, value: layout.isFocusMode)
             .onAppear {
                 layout.relayout(availableWidth: geometry.size.width)
+                if let id = store.selectedSessionID {
+                    store.acknowledgeCompletion(sessionID: id)
+                }
             }
             .onChange(of: geometry.size.width) { _, newWidth in
                 layout.relayout(availableWidth: newWidth)
@@ -98,6 +101,9 @@ struct SessionsView: View {
             }
         }
         .onChange(of: store.selectedSessionID) { _, newID in
+            if let newID {
+                store.acknowledgeCompletion(sessionID: newID)
+            }
             if newID == nil, layout.isFocusMode {
                 layout.toggleFocusSession()
             }
