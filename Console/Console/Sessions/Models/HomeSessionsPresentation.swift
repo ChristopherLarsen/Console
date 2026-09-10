@@ -1,6 +1,6 @@
 import Foundation
 
-/// Pure presentation rules for the Home Sessions radar (CONSOLE_PANEL_2_SESSIONS.md).
+/// Pure presentation rules for the Home Sessions radar.
 /// Sort, "needs you" counting, and subtitle rules live here so they can be
 /// unit-tested without launching the app.
 enum HomeSessionsPresentation {

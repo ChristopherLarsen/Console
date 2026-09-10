@@ -125,8 +125,7 @@ enum DisplayedSessionState: String, Sendable, Equatable {
         }
     }
 
-    /// Lower sorts earlier in the displayed-state priority list from
-    /// CONSOLE_TERM_COMM.md §2.
+    /// Lower sorts earlier in the displayed-state priority list.
     var priorityRank: Int {
         switch self {
         case .needsApproval, .needsInput: return 0

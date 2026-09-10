@@ -2,7 +2,7 @@ import Foundation
 
 /// Resolves the `claude` executable for session launches.
 ///
-/// Order (CONSOLE_TERM_COMM.md §4):
+/// Resolution order:
 /// 1. Valid executable path stored in Console Settings.
 /// 2. Common Claude installation paths.
 /// 3. `command -v claude` through the user's login shell.

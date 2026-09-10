@@ -6,8 +6,7 @@ import Foundation
 /// whole Claude-access feature is built around.
 ///
 /// Company JIRA content is DOM-only inside Console's WebViews and must never
-/// reach any LLM, MCP server, or external service
-/// (docs/agent-console/security-boundaries.md §1/§2). Only the personal
+/// reach any LLM, MCP server, or external service. Only the personal
 /// instance boundary may be routed through the managed headless Claude
 /// transport, and only with synthetic or personal-site data.
 enum JiraDataBoundary: String, Codable, Equatable, Sendable, CaseIterable {
