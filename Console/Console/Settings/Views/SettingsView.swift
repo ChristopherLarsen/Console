@@ -58,6 +58,7 @@ struct SettingsView: View {
             Form {
                 generalSection
                 claudeSection
+                ManagedClaudeAccessSection()
                 terminalSection
                 urlsSection
                 popupsSection

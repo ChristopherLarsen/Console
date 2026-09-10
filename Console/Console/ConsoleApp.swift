@@ -86,6 +86,7 @@ struct ConsoleApp: App {
     @State private var iosProfileStore: IOSProjectProfileStore
     @State private var iosBuildCoordinator: IOSBuildCoordinator
     @State private var launchCoordinator: SessionLaunchCoordinator
+    @State private var managedClaudeService = ManagedClaudeService()
     @State private var sessionWorkspaceLayout = SessionWorkspaceLayoutController()
     @State private var developerActions: DeveloperActionRunner
     private var syntheticTranscriptSource: SyntheticTranscriptSource?
@@ -262,6 +263,7 @@ struct ConsoleApp: App {
             let activeNextModel = nextButtonModel
             let activeBuildCoordinator = iosBuildCoordinator
             let activeCommandExecutor = localCommandExecutor
+            let activeManagedClaudeService = managedClaudeService
             // Cancel any in-flight update check or clone when the app terminates.
             NotificationCenter.default.addObserver(
                 forName: NSApplication.willTerminateNotification,
@@ -280,6 +282,10 @@ struct ConsoleApp: App {
                     // window never reaches this path.
                     activeSessionStore.terminateAll()
                     activeSessionStore.stopBridge()
+                    // Managed headless Claude children must not outlive the
+                    // app either. There is no eternal process; this covers an
+                    // in-flight call only.
+                    activeManagedClaudeService.cleanupForAppQuit()
                 }
             }
         }
@@ -432,6 +438,7 @@ struct ConsoleApp: App {
             .environment(iosProfileStore)
             .environment(iosBuildCoordinator)
             .environment(launchCoordinator)
+            .environment(managedClaudeService)
             .environment(sessionWorkspaceLayout)
             .environment(developerActions)
             #if DEBUG
