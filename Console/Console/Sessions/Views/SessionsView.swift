@@ -10,6 +10,8 @@ struct SessionsView: View {
     @Environment(SessionWorkspaceLayoutController.self) private var layout
     @State private var showingIntentPicker = false
     @State private var pendingStopConfirmationID: UUID?
+    @State private var pendingRenameID: UUID?
+    @State private var renameText = ""
     @State private var listResizeStartWidth: CGFloat = SessionWorkspaceLayout.listIdealWidth
     @State private var isResizingList = false
 
@@ -78,6 +80,23 @@ struct SessionsView: View {
                 Text("The graceful termination timed out. Force Stop kills the process immediately; the session then closes.")
             }
         )
+        .alert("Rename Session", isPresented: Binding(
+            get: { pendingRenameID != nil },
+            set: { if !$0 { pendingRenameID = nil } }
+        )) {
+            TextField("Session name", text: $renameText)
+                .accessibilityIdentifier("Sessions.RenameField")
+            Button("Rename") {
+                if let id = pendingRenameID {
+                    store.renameSession(id: id, name: renameText)
+                }
+                pendingRenameID = nil
+            }
+            .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) {
+                pendingRenameID = nil
+            }
+        }
         .onChange(of: store.selectedSessionID) { _, newID in
             if newID == nil, layout.isFocusMode {
                 layout.toggleFocusSession()
@@ -188,7 +207,11 @@ struct SessionsView: View {
                         isSelected: session.id == store.selectedSessionID,
                         onSelect: { store.select(sessionID: session.id) },
                         onTerminate: { requestTerminate(session) },
-                        onRemove: { store.removeSession(id: session.id) }
+                        onRemove: { store.removeSession(id: session.id) },
+                        onRename: {
+                            renameText = session.name
+                            pendingRenameID = session.id
+                        }
                     )
                 }
             }

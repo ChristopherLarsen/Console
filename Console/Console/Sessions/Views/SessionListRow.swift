@@ -10,6 +10,7 @@ struct SessionListRow: View {
     let onSelect: () -> Void
     let onTerminate: () -> Void
     let onRemove: () -> Void
+    let onRename: () -> Void
 
     var body: some View {
         HStack(spacing: 6) {
@@ -84,6 +85,7 @@ struct SessionListRow: View {
         }
         .contextMenu {
             Button("Select", action: onSelect)
+            Button("Rename…", action: onRename)
             if session.activity != .exited {
                 Button("Terminate…", action: onTerminate)
             } else {

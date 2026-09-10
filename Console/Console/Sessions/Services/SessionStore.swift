@@ -430,6 +430,16 @@ final class SessionStore {
         selectedSessionID = sessionID
     }
 
+    func renameSession(id: UUID, name: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty,
+              let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        sessions[index].name = Self.uniquedName(
+            trimmedName,
+            existingNames: sessions.filter { $0.id != id }.map(\.name)
+        )
+    }
+
     /// Drops the selection so the Sessions destination shows its empty pane.
     /// Used by the ⌃0 / out-of-range session hotkeys.
     func clearSelection() {
