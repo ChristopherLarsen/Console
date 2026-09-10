@@ -181,6 +181,14 @@ struct JiraView: View {
             .help("Forward")
 
             Button {
+                navigateHome()
+            } label: {
+                Image(systemName: "house")
+            }
+            .help("Home")
+            .accessibilityIdentifier("Jira.HomeButton")
+
+            Button {
                 if page.isLoading {
                     page.stopLoading()
                 } else {
@@ -217,6 +225,18 @@ struct JiraView: View {
             Divider()
         }
         .accessibilityIdentifier("JiraWebViewControls")
+    }
+
+    /// Home navigates the active tab to the configured JIRA list URL. The
+    /// pinned page goes through the session so the retained-page bookkeeping
+    /// clears (`isShowingNavigatedPage`); dynamic tabs load directly.
+    private func navigateHome() {
+        guard let home = Self.normalizedURL(from: webViewJiraURL) else { return }
+        if page === JiraWebSession.shared.page {
+            JiraWebSession.shared.load(url: home)
+        } else {
+            page.load(URLRequest(url: home))
+        }
     }
 
     /// Memory-only context parsed from the URL the retained WebView is

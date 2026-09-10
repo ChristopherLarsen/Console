@@ -2,10 +2,14 @@ import SwiftUI
 import WebKit
 
 /// Navigation bar around a shared hosted page: back/forward/reload controls,
-/// Start Session when the page displays a merge request, plus Show Cards when
-/// the panel has extracted content to present.
+/// Home when the destination supplies a base URL action, Start Session when
+/// the page displays a merge request, plus Show Cards when the panel has
+/// extracted content to present.
 struct MergeRequestsNavigationBar: View {
     let page: WebPage
+    /// Navigates the current tab to its configured base URL. Omitted when
+    /// the destination has no home to offer.
+    var homeAction: (() -> Void)?
     var showCardsAction: (() -> Void)?
     var showCardsAvailable: Bool = true
 
@@ -39,6 +43,16 @@ struct MergeRequestsNavigationBar: View {
             }
             .disabled(page.backForwardList.forwardList.isEmpty)
             .help("Forward")
+
+            if let homeAction {
+                Button {
+                    homeAction()
+                } label: {
+                    Image(systemName: "house")
+                }
+                .help("Home")
+                .accessibilityIdentifier("MergeRequests.HomeButton")
+            }
 
             Button {
                 if page.isLoading {
@@ -94,6 +108,7 @@ struct MergeRequestsNavigationBar: View {
 /// navigation history.
 struct MergeRequestsBrowserView: View {
     let page: WebPage
+    var homeAction: (() -> Void)?
     var showCardsAction: (() -> Void)?
     var showCardsAvailable: Bool = true
     /// Applied to the WebView itself so UI tests can find it reliably.
@@ -103,6 +118,7 @@ struct MergeRequestsBrowserView: View {
         VStack(spacing: 0) {
             MergeRequestsNavigationBar(
                 page: page,
+                homeAction: homeAction,
                 showCardsAction: showCardsAction,
                 showCardsAvailable: showCardsAvailable
             )

@@ -46,6 +46,7 @@ struct MergeRequestsView: View {
                     if isWebViewMounted {
                         MergeRequestsBrowserView(
                             page: tabStore.activePage,
+                            homeAction: { navigateHome() },
                             webViewAccessibilityIdentifier: "MergeRequestsWebView"
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -108,6 +109,23 @@ struct MergeRequestsView: View {
         guard let kind = activeKind,
               let url = MergeRequestDeepLink.shared.consume(matching: kind) else { return }
         sessionStore.page(for: kind).load(URLRequest(url: url))
+    }
+
+    // MARK: - Navigation
+
+    /// Home navigates the active tab to its configured base URL: the To
+    /// Review tab to the reviews list, My MRs to the authored list, and a
+    /// free dynamic tab to the reviews URL (its open default). Pinned tabs
+    /// load through the session store so its requested-URL bookkeeping stays
+    /// truthful; free tabs load directly.
+    private func navigateHome() {
+        let kind = activeKind ?? .reviewsRequested
+        guard let url = configuredURL(for: kind) else { return }
+        if activeKind != nil {
+            sessionStore.loadIfNeeded(kind, url: url, force: true)
+        } else {
+            tabStore.activePage.load(URLRequest(url: url))
+        }
     }
 
     // MARK: - Mounting
