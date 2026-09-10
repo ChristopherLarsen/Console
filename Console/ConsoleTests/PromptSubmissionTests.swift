@@ -52,4 +52,33 @@ final class PromptSubmissionTests: XCTestCase {
         // CR
         XCTAssertEqual(PromptSubmissionEngine.returnBytes, [0x0D])
     }
+
+    // MARK: - Slash command bytes
+
+    func testSlashCommandBytesArePlainTextPlusCarriageReturn() {
+        let bytes = PromptSubmissionEngine.slashCommandBytes("/color purple")
+        XCTAssertEqual(bytes, Array("/color purple".utf8) + [0x0D])
+    }
+
+    func testSlashCommandBytesForColorReset() {
+        XCTAssertEqual(
+            PromptSubmissionEngine.slashCommandBytes("/color default"),
+            Array("/color default".utf8) + PromptSubmissionEngine.returnBytes
+        )
+    }
+
+    // MARK: - Session color palette
+
+    func testSessionColorPaletteMatchesClaudeCodeArguments() {
+        XCTAssertEqual(
+            SessionColorOption.all.map(\.argument),
+            ["red", "blue", "green", "yellow", "purple", "orange", "pink", "cyan", "default"],
+            "arguments must match Claude Code's /color command values"
+        )
+        XCTAssertEqual(
+            SessionColorOption.all.map(\.name),
+            ["Red", "Blue", "Green", "Yellow", "Purple", "Orange", "Pink", "Cyan", "Default"]
+        )
+        XCTAssertEqual(SessionColorOption.all.count, Set(SessionColorOption.all.map(\.id)).count)
+    }
 }

@@ -689,7 +689,7 @@ final class SessionStore {
         }
     }
 
-    // MARK: - Terminal input API (CONSOLE_TERM_COMM.md §7)
+    // MARK: - Terminal input API
 
     /// Submits a prompt into the session's PTY using SwiftTerm's main-thread
     /// input API. Multiline prompts use bracketed-paste bytes followed by Return.
@@ -715,6 +715,27 @@ final class SessionStore {
         debugTerminalSendBytes.append((sessionID, String(decoding: bytes, as: UTF8.self)))
         #endif
         terminalView.send(data: bytes[...])
+    }
+
+    // MARK: - Session color command
+
+    /// Sends Claude Code's `/color <argument>` slash command into the
+    /// session's PTY. A local slash command changes only the prompt bar
+    /// color, so the session's activity and attention are deliberately left
+    /// untouched — submitting a color must never mark the session Working.
+    /// Assumes an empty Claude prompt; rejected once the session has exited,
+    /// including while it sits at its fallback login shell.
+    @discardableResult
+    func sendColorCommand(_ argument: String, to sessionID: UUID) -> SubmissionResult {
+        guard let session = session(withID: sessionID) else {
+            return .rejected(.sessionNotFound)
+        }
+        guard session.activity != .exited else {
+            return .rejected(.sessionNotAcceptingInput)
+        }
+        let bytes = PromptSubmissionEngine.slashCommandBytes("/color \(argument)")
+        sendToTerminal(bytes, sessionID: sessionID, terminalView: session.terminalView)
+        return .submitted
     }
 
     #if DEBUG

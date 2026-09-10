@@ -6,6 +6,7 @@ import SwiftTerm
 struct SessionTerminalPane: View {
     let session: ConsoleSession
     let displayedState: DisplayedSessionState
+    let onColor: (String) -> Void
     let onTerminate: () -> Void
 
     var body: some View {
@@ -54,6 +55,8 @@ struct SessionTerminalPane: View {
 
             Spacer()
 
+            colorMenu
+
             Button(action: onTerminate) {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .medium))
@@ -66,6 +69,74 @@ struct SessionTerminalPane: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// Palette for Claude Code's `/color` command. Disabled after Claude
+    /// exits — including while the pane sits at its fallback login shell —
+    /// because there is no Claude prompt left to accept the command.
+    private var colorMenu: some View {
+        Menu {
+            ForEach(SessionColorOption.all) { option in
+                Button {
+                    onColor(option.argument)
+                } label: {
+                    HStack(spacing: 6) {
+                        SessionColorSwatch(option: option)
+                        Text(option.name)
+                    }
+                }
+                .accessibilityIdentifier("Sessions.Color.\(option.argument)")
+            }
+        } label: {
+            Image(systemName: "paintpalette")
+                .font(.system(size: 12, weight: .medium))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(session.activity == .exited)
+        .help("Set Claude session color — use with an empty prompt.")
+        .accessibilityLabel("Set Claude Session Color")
+        .accessibilityIdentifier("SessionColorMenu")
+    }
+}
+
+/// One entry in the session color menu. `argument` is the exact value
+/// forwarded to Claude Code's `/color` slash command; `swatch` is nil for
+/// the reset entry, which renders as a hollow circle.
+struct SessionColorOption: Identifiable, Equatable {
+    let name: String
+    let argument: String
+    let swatch: SwiftUI.Color?
+
+    var id: String { argument }
+
+    static let palette: [SessionColorOption] = [
+        SessionColorOption(name: "Red", argument: "red", swatch: .red),
+        SessionColorOption(name: "Blue", argument: "blue", swatch: .blue),
+        SessionColorOption(name: "Green", argument: "green", swatch: .green),
+        SessionColorOption(name: "Yellow", argument: "yellow", swatch: .yellow),
+        SessionColorOption(name: "Purple", argument: "purple", swatch: .purple),
+        SessionColorOption(name: "Orange", argument: "orange", swatch: .orange),
+        SessionColorOption(name: "Pink", argument: "pink", swatch: .pink),
+        SessionColorOption(name: "Cyan", argument: "cyan", swatch: .cyan),
+    ]
+    static let reset = SessionColorOption(name: "Default", argument: "default", swatch: nil)
+    static let all = palette + [reset]
+}
+
+private struct SessionColorSwatch: View {
+    let option: SessionColorOption
+
+    var body: some View {
+        if let swatch = option.swatch {
+            Circle()
+                .fill(swatch)
+                .frame(width: 10, height: 10)
+        } else {
+            Circle()
+                .strokeBorder(SwiftUI.Color.secondary, lineWidth: 1)
+                .frame(width: 10, height: 10)
+        }
     }
 }
 

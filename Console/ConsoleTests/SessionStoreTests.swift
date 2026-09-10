@@ -589,6 +589,68 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertTrue(store.debugTerminalSendBytes.isEmpty)
     }
 
+    // MARK: - Session color command
+
+    func testColorCommandSendsExactBytesToRequestedSessionOnly() throws {
+        let (store, _) = makeStore()
+        let first = try store.createSession(name: "First", workingDirectory: tmpDirectory("First"))
+        let second = try store.createSession(name: "Second", workingDirectory: tmpDirectory("Second"))
+
+        XCTAssertEqual(store.sendColorCommand("purple", to: first), .submitted)
+
+        XCTAssertEqual(store.debugTerminalSendBytes.count, 1)
+        let send = try XCTUnwrap(store.debugTerminalSendBytes.first)
+        XCTAssertEqual(send.sessionID, first, "color command must target the requested session only")
+        XCTAssertNotEqual(send.sessionID, second)
+        XCTAssertEqual(send.utf8, "/color purple\r")
+    }
+
+    func testColorCommandResetSendsDefaultArgument() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Reset", workingDirectory: tmpDirectory("Reset"))
+
+        XCTAssertEqual(store.sendColorCommand("default", to: id), .submitted)
+        XCTAssertEqual(store.debugTerminalSendBytes.first?.utf8, "/color default\r")
+    }
+
+    func testColorCommandRejectedAfterExit() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Doomed", workingDirectory: tmpDirectory("Doomed"))
+        store.handleProcessTerminated(sessionID: id)
+        XCTAssertEqual(store.session(withID: id)?.activity, .exited)
+
+        XCTAssertEqual(store.sendColorCommand("purple", to: id), .rejected(.sessionNotAcceptingInput))
+        XCTAssertTrue(store.debugTerminalSendBytes.isEmpty, "no bytes may reach an exited session")
+    }
+
+    func testColorCommandRejectedForUnknownSession() throws {
+        let (store, _) = makeStore()
+        XCTAssertEqual(store.sendColorCommand("purple", to: UUID()), .rejected(.sessionNotFound))
+        XCTAssertTrue(store.debugTerminalSendBytes.isEmpty)
+    }
+
+    func testColorCommandLeavesActivityAndAttentionUnchanged() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Live", workingDirectory: tmpDirectory("Live"))
+        store.debugReceiveEnvelope(BridgeEnvelope(
+            sessionID: id.uuidString,
+            token: try XCTUnwrap(store.debugSessionToken(id)),
+            eventID: UUID().uuidString,
+            kind: .lifecycle,
+            lifecycleEvent: .sessionStarted
+        ))
+        XCTAssertEqual(store.session(withID: id)?.activity, .idle)
+
+        XCTAssertEqual(store.sendColorCommand("purple", to: id), .submitted)
+        XCTAssertEqual(
+            store.session(withID: id)?.activity,
+            .idle,
+            "a local /color command must not mark the session Working"
+        )
+        XCTAssertEqual(store.session(withID: id)?.attention, SessionAttention.none)
+        XCTAssertEqual(store.displayedState(for: id), .idle)
+    }
+
     // MARK: - Optional instrumentation vs process creation
 
     func testPluginAssemblyFailureLaunchesUninstrumentedSession() throws {

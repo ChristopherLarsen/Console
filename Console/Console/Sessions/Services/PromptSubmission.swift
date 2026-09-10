@@ -12,7 +12,7 @@ enum SubmissionRejection: Equatable, Sendable {
     case processUnavailable
 }
 
-/// Pure helpers for the terminal input API (CONSOLE_TERM_COMM.md §7).
+/// Pure helpers for the terminal input API.
 enum PromptSubmissionEngine {
     static let bracketedPasteStart: [UInt8] = [0x1B, 0x5B, 0x32, 0x30, 0x30, 0x7E] // ESC[200~
     static let bracketedPasteEnd: [UInt8] = [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E]   // ESC[201~
@@ -45,5 +45,12 @@ enum PromptSubmissionEngine {
         }
         bytes.append(contentsOf: returnBytes)
         return bytes
+    }
+
+    /// Byte sequence for a local slash command such as `/color purple`:
+    /// plain UTF-8 plus a trailing carriage return. Slash commands are
+    /// always single-line.
+    static func slashCommandBytes(_ command: String) -> [UInt8] {
+        Array(command.utf8) + returnBytes
     }
 }

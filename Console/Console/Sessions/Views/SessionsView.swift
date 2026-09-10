@@ -264,6 +264,10 @@ struct SessionsView: View {
                     activity: session.activity,
                     attention: session.attention
                 ),
+                onColor: { argument in
+                    store.sendColorCommand(argument, to: session.id)
+                    store.focusSelectedTerminal()
+                },
                 onTerminate: { requestTerminate(session) }
             )
             .id(session.id)
