@@ -379,6 +379,12 @@ struct HomeView: View {
         model.refreshJiraHandler = { [sources] in
             sources.refreshJira()
         }
+        // Entry-time staleness pass for the Review column goes through the
+        // scan scheduler so its in-flight guard and retained-page-away
+        // protections apply.
+        sources.refreshReviewsHandler = { [reviewScanScheduler] in
+            reviewScanScheduler?.scanNow()
+        }
     }
 }
 
