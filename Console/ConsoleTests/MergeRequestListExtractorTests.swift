@@ -209,6 +209,89 @@ final class MergeRequestListExtractorTests: XCTestCase {
 
     // MARK: - Real-JS extraction outcomes
 
+    private var modernPopulatedListHTML: String {
+        """
+        <html><body>
+        <a href="/p/-/merge_requests/99">Unrelated widget</a>
+        <div class="issuable-list-container">
+          <ul class="content-list issuable-list issues-list">
+            <li class="merge-request" data-testid="issuable-container">
+              <a href="/p/-/merge_requests/77">Cannot be merged automatically</a>
+              <span data-testid="issuable-draft-status-badge">Draft</span>
+              <a data-testid="issuable-title-link" class="issue-title-text" href="/p/-/merge_requests/7">Modern review title</a>
+            </li>
+            <li class="merge-request" style="display:none">
+              <a href="/p/-/merge_requests/8">Hidden template</a>
+            </li>
+            <li class="issue"><a href="/p/-/merge_requests/9">Unrelated issue reference</a></li>
+          </ul>
+        </div></body></html>
+        """
+    }
+
+    func testModernListUsesTitleLinkAndOnlyVisibleMRRows() async throws {
+        guard case .items(let items) = try await extract(from: modernPopulatedListHTML) else {
+            return XCTFail("Expected modern MR list")
+        }
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items.first?.iidText, "7")
+        XCTAssertEqual(items.first?.title, "Modern review title")
+        XCTAssertEqual(items.first?.isDraft, true)
+    }
+
+    func testModernContainerOnIssueOrWidgetRouteIsUnsupported() async throws {
+        for route in ["/dashboard/issues", "/dashboard", "/p/-/issues"] {
+            let page = makePage()
+            _ = try await loadHTML(modernPopulatedListHTML, into: page,
+                                   baseURL: URL(string: "https://gitlab.example.test" + route)!)
+            let raw = try await page.callJavaScript(GitLabListExtractorJavaScript.source)
+            let json = try XCTUnwrap(raw as? String)
+            XCTAssertEqual(try MergeRequestListExtractor.decode(json), .unsupportedPage)
+            XCTAssertTrue(json.contains("wrongPage"))
+        }
+    }
+
+    func testModernListHydrationThenRowsOnRetainedPage() async throws {
+        let page = makePage()
+        _ = try await loadHTML("""
+        <html><body><div class="issuable-list-container">
+        <ul class="content-list issuable-list issues-list"></ul>
+        </div></body></html>
+        """, into: page)
+        let initial = try await page.callJavaScript(GitLabListExtractorJavaScript.source)
+        let initialJSON = try XCTUnwrap(initial as? String)
+        XCTAssertEqual(try MergeRequestListExtractor.decode(initialJSON), .unsupportedPage)
+        XCTAssertTrue(initialJSON.contains("listNotReady"))
+        _ = try await page.callJavaScript("""
+        document.querySelector('ul').innerHTML = '<li class="merge-request"><a data-testid="issuable-title-link" href="/p/-/merge_requests/3">Hydrated review</a></li>';
+        """)
+        let settled = try await page.callJavaScript(GitLabListExtractorJavaScript.source)
+        guard case .items(let items) = try MergeRequestListExtractor.decode(XCTUnwrap(settled as? String)) else {
+            return XCTFail("Expected hydrated list")
+        }
+        XCTAssertEqual(items.first?.title, "Hydrated review")
+    }
+
+    func testModernEmptyStateIsScopedAwayFromWidgetLinks() async throws {
+        let result = try await extract(from: """
+        <html><body><a href="/p/-/merge_requests/99">Widget</a>
+        <div class="issuable-list-container">
+          <div class="gl-empty-state">There are no open merge requests</div>
+        </div></body></html>
+        """)
+        XCTAssertEqual(result, .empty)
+    }
+
+    func testModernIssueRowsDoNotBecomeReviewCards() async throws {
+        let result = try await extract(from: """
+        <html><body><div class="issuable-list-container">
+        <ul class="content-list issuable-list issues-list">
+          <li class="issue"><a href="/p/-/merge_requests/99">Related MR</a></li>
+        </ul></div></body></html>
+        """)
+        XCTAssertEqual(result, .unsupportedPage)
+    }
+
     func testUnrelatedEmptyPageIsNotAnEmptyReviewList() async throws {
         let page = makePage()
         _ = try await loadHTML(emptyListHTML, into: page, baseURL: URL(string: "https://gitlab.example.test/wiki")!)

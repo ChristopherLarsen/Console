@@ -17,7 +17,7 @@ enum MRReviewScanOutcome: Equatable, Sendable {
         case .signInRequired: return "Open GitLab to complete sign-in, then refresh."
         case .deferred: return "Background check deferred while browsing GitLab. Use Refresh to check the list."
         case .alreadyRefreshing: return "A GitLab check is already running."
-        case .unsupportedPage: return "Could not identify the review list. Open GitLab and check the configured URL."
+        case .unsupportedPage: return "Could not read the review list. The page may still be loading or use an unsupported layout. Open GitLab to check."
         case .failed: return "Could not read GitLab. Open GitLab or retry Refresh."
         case .timedOut: return "GitLab check timed out. Check your connection or sign-in, then refresh."
         case .cancelled: return "GitLab check cancelled. Refresh to retry."
