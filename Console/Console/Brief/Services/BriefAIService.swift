@@ -25,47 +25,41 @@ enum BriefAIError: LocalizedError {
 }
 
 /// Testable seam for Brief AI polish. Production uses `BriefAIService`;
-/// tests inject a suspended refiner so edits can happen mid-flight.
+/// tests inject a suspended refiner so in-flight operations can be tested.
 @MainActor
 protocol BriefRefining {
-    func refine(yesterdayLines: [String],
-                todayTasks: [String]) async throws -> BriefAIResponseParser.Parsed
+    func refine(yesterdayLines: [String]) async throws -> BriefAIResponseParser.Parsed
 }
 
 @MainActor
 struct ProviderBackedBriefRefiner: BriefRefining {
     let aiProviderManager: AIProviderManager
 
-    func refine(yesterdayLines: [String],
-                todayTasks: [String]) async throws -> BriefAIResponseParser.Parsed {
+    func refine(yesterdayLines: [String]) async throws -> BriefAIResponseParser.Parsed {
         try await BriefAIService.refine(
             yesterdayLines: yesterdayLines,
-            todayTasks: todayTasks,
             aiProviderManager: aiProviderManager
         )
     }
 }
 
 /// Explicit, user-triggered AI polish of a brief. Sends only content already
-/// derived locally (commit subjects and task lines); never JIRA/GitLab web
-/// content. Runs only when the user asks for it — never automatically.
+/// derived locally (commit subjects); never JIRA/GitLab web content. Runs
+/// only when the user asks for it — never automatically.
 enum BriefAIService {
     static let systemPrompt = """
-        You compress a developer's yesterday commit activity into a terse \
-        executive status report for a morning stand-up meeting.
+        You compress a developer's previous-workday commit activity into a \
+        terse executive status report for a morning stand-up meeting.
         Return EXACTLY this format and nothing else:
         Y1 | <most important thing done yesterday>
         Y2 | <second>
         Y3 | <third>
-        T1 | <top task for today, continuing unfinished threads>
-        T2 | <second task>
         Rules: plain text only; no markdown, bullets, or quotes; at most 70 \
         characters per line; keep concrete repo and ticket names; never \
         invent facts not present in the input.
         """
 
     static func refine(yesterdayLines: [String],
-                       todayTasks: [String],
                        aiProviderManager: AIProviderManager) async throws -> BriefAIResponseParser.Parsed {
         let provider = aiProviderManager.selectedProvider
         guard provider != .none else { throw BriefAIError.noProvider }
@@ -90,9 +84,6 @@ enum BriefAIService {
         let userMessage = """
             Yesterday's commits:
             \(yesterdayLines.joined(separator: "\n"))
-
-            Current today tasks:
-            \(todayTasks.isEmpty ? "(none)" : todayTasks.joined(separator: "\n"))
             """
 
         do {

@@ -4,13 +4,22 @@ import Foundation
 /// Sidebar status card with ConsoleBuddy image, last-request provider connection dot, and machine name.
 struct ConnectedBuddyView: View {
     @Environment(AIProviderManager.self) private var aiProviderManager: AIProviderManager?
+    /// The provider connection indicator only means something when the AI
+    /// provider feature is enabled in Settings.
+    @AppStorage(AppSettings.aiProviderEnabledKey) private var isAIProviderEnabled = false
 
     private var displayName: String {
         Host.current().localizedName ?? "This Mac"
     }
 
+    private var showsConnectionDot: Bool {
+        isAIProviderEnabled
+            && aiProviderManager?.selectedProvider != .none
+            && aiProviderManager?.lastRequest != nil
+    }
+
     private var connectionDotColor: Color? {
-        guard let manager = aiProviderManager, manager.selectedProvider != .none else { return nil }
+        guard showsConnectionDot, let manager = aiProviderManager else { return nil }
         switch manager.lastRequest {
         case .succeeded: return .green
         case .failed: return .red
@@ -19,7 +28,7 @@ struct ConnectedBuddyView: View {
     }
 
     private var accessibilityStatus: String {
-        guard let manager = aiProviderManager, manager.selectedProvider != .none else {
+        guard showsConnectionDot, let manager = aiProviderManager else {
             return displayName
         }
         switch manager.lastRequest {

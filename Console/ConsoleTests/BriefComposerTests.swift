@@ -190,52 +190,7 @@ final class BriefComposerTests: XCTestCase {
         XCTAssertEqual(BriefComposer.yesterdayLines(from: independent).count, 2)
     }
 
-    // MARK: - Date range
-
-    func testYesterdayRangeUsesPreviousCalendarDay() {
-        let calendar = newYorkCalendar()
-        let monday = date("2026-09-07T09:00:00-0400")
-        let interval = BriefDateRangeSelection.yesterday.interval(relativeTo: monday, calendar: calendar)
-        XCTAssertEqual(interval.start, calendar.startOfDay(for: date("2026-09-06T12:00:00-0400")))
-        XCTAssertEqual(interval.end, calendar.startOfDay(for: monday))
-        XCTAssertEqual(
-            BriefDateRangeSelection.inclusiveEnd(of: interval, calendar: calendar),
-            calendar.startOfDay(for: date("2026-09-06T12:00:00-0400"))
-        )
-    }
-
-    func testCustomRangeIncludesChosenDaysInSelectedTimeZone() {
-        let calendar = newYorkCalendar()
-        let monday = date("2026-09-07T09:00:00-0400")
-        let friday = date("2026-09-04T18:00:00-0400")
-        let sunday = date("2026-09-06T08:00:00-0400")
-        let selection = BriefDateRangeSelection(
-            preset: .custom,
-            customStart: friday,
-            customEnd: sunday
-        )
-        let interval = selection.interval(relativeTo: monday, calendar: calendar)
-        XCTAssertEqual(interval.start, calendar.startOfDay(for: friday))
-        XCTAssertEqual(interval.end, calendar.startOfDay(for: monday))
-
-        let inside = CommitActivity(
-            repositoryName: "Repo",
-            subject: "Friday work",
-            committedAt: date("2026-09-04T00:30:00-0400")
-        )
-        let before = CommitActivity(
-            repositoryName: "Repo",
-            subject: "Thursday work",
-            committedAt: date("2026-09-03T23:30:00-0400")
-        )
-        let after = CommitActivity(
-            repositoryName: "Repo",
-            subject: "Monday work",
-            committedAt: date("2026-09-07T00:00:00-0400")
-        )
-        let inRange = BriefComposer.occurring([before, inside, after], in: interval)
-        XCTAssertEqual(inRange.map(\.subject), ["Friday work"])
-    }
+    // MARK: - Day boundaries
 
     func testDayBoundariesRespectSelectedTimeZone() {
         let calendar = newYorkCalendar()
@@ -312,57 +267,114 @@ final class BriefComposerTests: XCTestCase {
     // MARK: - Composition
 
     func testComposeUsesQuietDayLineWithoutActivities() {
-        let brief = BriefComposer.compose(day: Date(), activities: [], carriedTasks: ["Ship it"])
+        let brief = BriefComposer.compose(day: Date(), activities: [])
         XCTAssertEqual(brief.yesterdayLines, [BriefComposer.quietDayLine])
         XCTAssertEqual(brief.source, .local)
-        XCTAssertFalse(brief.tasksManuallyEdited)
-    }
-
-    func testComposeCarriesTasksForwardClampedToLimit() {
-        let activities = [
-            CommitActivity(repositoryName: "Alpha", subject: "Did a thing", committedAt: Date())
-        ]
-        let carried = ["Task one", "Task two", "Overflowing task"]
-        let brief = BriefComposer.compose(day: Date(), activities: activities, carriedTasks: carried)
-
-        XCTAssertEqual(brief.todayTasks, ["Task one", "Task two"])
-        XCTAssertEqual(brief.yesterdayLines, ["Alpha — Did a thing"])
     }
 
     func testComposeRecordsRangeAndSourceRepositories() {
         let calendar = newYorkCalendar()
         let monday = calendar.startOfDay(for: date("2026-09-07T09:00:00-0400"))
-        let interval = BriefDateRangeSelection.yesterday.interval(relativeTo: monday, calendar: calendar)
+        let interval = DateInterval(
+            start: monday,
+            end: calendar.date(byAdding: .day, value: 1, to: monday)!
+        )
         let brief = BriefComposer.compose(
             day: monday,
             activities: [CommitActivity(repositoryName: "Console", subject: "Work", committedAt: interval.start)],
-            carriedTasks: [],
             activityRange: interval,
             sourceRepositoryNames: ["Console", "Console", "Pufferfishh"]
         )
         XCTAssertEqual(brief.activityRangeStart, interval.start)
         XCTAssertEqual(brief.activityRangeEnd, interval.end)
         XCTAssertEqual(brief.sourceRepositoryNames, ["Console", "Pufferfishh"])
-        XCTAssertFalse(brief.activityRangeDescription(calendar: calendar, locale: Locale(identifier: "en_US_POSIX")).isEmpty)
     }
 
-    func testReportLinesProduceFiveLineExecReport() {
+    func testReportLinesAreYesterdayLinesOnly() {
         let activities = [
-            CommitActivity(repositoryName: "Alpha", subject: "One", committedAt: Date()),
-            CommitActivity(repositoryName: "Beta", subject: "Two", committedAt: Date()),
-            CommitActivity(repositoryName: "Gamma", subject: "Three", committedAt: Date()),
-            CommitActivity(repositoryName: "Delta", subject: "Four", committedAt: Date())
+            CommitActivity(repositoryName: "Alpha", subject: "One", committedAt: date("2026-09-08T09:00:00-0400")),
+            CommitActivity(repositoryName: "Beta", subject: "Two", committedAt: date("2026-09-08T10:00:00-0400")),
+            CommitActivity(repositoryName: "Gamma", subject: "Three", committedAt: date("2026-09-08T11:00:00-0400")),
+            CommitActivity(repositoryName: "Delta", subject: "Four", committedAt: date("2026-09-08T12:00:00-0400"))
         ]
-        var brief = BriefComposer.compose(
+        let brief = BriefComposer.compose(
             day: Date(),
-            activities: activities,
-            carriedTasks: ["Top task", "Second task"]
+            activities: activities
         )
 
-        XCTAssertEqual(brief.reportLines.count, MorningBrief.maxYesterdayLines + MorningBrief.maxTodayTasks)
-        XCTAssertEqual(brief.reportLines.last, "Second task")
+        XCTAssertEqual(brief.reportLines.count, MorningBrief.maxYesterdayLines)
+        XCTAssertEqual(brief.reportLines.first, "Delta — Four")
+        XCTAssertEqual(brief.reportLines.last, "Beta — Two")
+        XCTAssertEqual(brief.reportText.split(separator: "\n").count, 3)
+    }
 
-        brief.tasksManuallyEdited = true
-        XCTAssertEqual(brief.reportText.split(separator: "\n").count, 5)
+    // MARK: - Workday selection
+
+    func testMostRecentActiveDayPicksLatestDayWithCommits() {
+        let calendar = newYorkCalendar()
+        let friday = date("2026-09-04T12:00:00-0400")
+        let monday = date("2026-09-07T10:00:00-0400")
+        let tuesday = date("2026-09-08T10:00:00-0400")
+        let briefDay = date("2026-09-09T09:00:00-0400")
+
+        let activities = [
+            CommitActivity(repositoryName: "Alpha", subject: "Friday work", committedAt: friday),
+            CommitActivity(repositoryName: "Beta", subject: "Monday work", committedAt: monday),
+            CommitActivity(repositoryName: "Gamma", subject: "Tuesday work", committedAt: tuesday)
+        ]
+        XCTAssertEqual(
+            BriefComposer.mostRecentActiveDay(of: activities, before: briefDay, calendar: calendar),
+            calendar.startOfDay(for: tuesday)
+        )
+    }
+
+    func testMostRecentActiveDaySkipsCurrentDayAndReturnsNilWhenQuiet() {
+        let calendar = newYorkCalendar()
+        let today = date("2026-09-08T10:00:00-0400")
+        let yesterday = date("2026-09-07T10:00:00-0400")
+
+        // Commits made today are not "previous workday" candidates.
+        let todayOnly = [
+            CommitActivity(repositoryName: "Alpha", subject: "Today", committedAt: today)
+        ]
+        XCTAssertNil(
+            BriefComposer.mostRecentActiveDay(of: todayOnly, before: today, calendar: calendar)
+        )
+
+        // Past commits become candidates again once the brief moves forward.
+        XCTAssertEqual(
+            BriefComposer.mostRecentActiveDay(of: todayOnly, before: yesterday, calendar: calendar),
+            nil
+        )
+        XCTAssertNil(
+            BriefComposer.mostRecentActiveDay(of: [], before: today, calendar: calendar)
+        )
+    }
+
+    func testPreviousWeekdaySkipsWeekends() {
+        let calendar = newYorkCalendar()
+        // Monday 2026-09-07: previous weekday is Friday 2026-09-04.
+        let monday = date("2026-09-07T09:00:00-0400")
+        XCTAssertEqual(
+            BriefComposer.previousWeekday(before: monday, calendar: calendar),
+            calendar.startOfDay(for: date("2026-09-04T00:00:00-0400"))
+        )
+        // Sunday: previous weekday is Friday.
+        let sunday = date("2026-09-06T12:00:00-0400")
+        XCTAssertEqual(
+            BriefComposer.previousWeekday(before: sunday, calendar: calendar),
+            calendar.startOfDay(for: date("2026-09-04T00:00:00-0400"))
+        )
+    }
+
+    func testWorkdayIntervalCoversExactlyOneDay() {
+        let calendar = newYorkCalendar()
+        let fridayMorning = date("2026-09-04T09:00:00-0400")
+        let interval = BriefComposer.workdayInterval(for: fridayMorning, calendar: calendar)
+        XCTAssertEqual(interval.start, calendar.startOfDay(for: fridayMorning))
+        XCTAssertEqual(
+            interval.end,
+            calendar.startOfDay(for: date("2026-09-05T00:00:00-0400"))
+        )
     }
 }

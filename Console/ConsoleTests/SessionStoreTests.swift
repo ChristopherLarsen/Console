@@ -306,8 +306,11 @@ final class SessionStoreTests: XCTestCase {
         let (store, launcher) = makeStore()
         let id = try store.createSession(name: "Live", workingDirectory: tmpDirectory("DeferredPrompt"))
         let session = try XCTUnwrap(store.session(withID: id))
-        let coordinator = SessionTerminalCoordinator(sessionID: id, store: store)
-        coordinator.processTerminated(source: session.terminalView, exitCode: 0)
+        // Exercise the delegate installed by createSession, not a separately
+        // retained test delegate: SwiftTerm itself holds this reference weakly.
+        XCTAssertNotNil(session.terminalView.processDelegate,
+                        "Session creation must retain its exit coordinator")
+        session.terminalView.processDelegate?.processTerminated(source: session.terminalView, exitCode: 0)
         XCTAssertEqual(launcher.exitShellStartCount, 0,
                        "SwiftTerm must finish childStopped before a replacement starts")
         await withCheckedContinuation { continuation in

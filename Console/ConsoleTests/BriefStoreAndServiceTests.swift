@@ -27,16 +27,18 @@ final class BriefStoreAndServiceTests: XCTestCase {
         calendar.date(byAdding: .day, value: offset, to: calendar.startOfDay(for: reference))!
     }
 
+    private func activity(_ subject: String, on day: Date) -> CommitActivity {
+        CommitActivity(repositoryName: "Repo", subject: subject, committedAt: day)
+    }
+
     // MARK: - Persistence round trip
 
     func testSaveAndLoadRoundTripsBrief() throws {
         let day = startOfDay(0)
         var brief = BriefComposer.compose(
             day: day,
-            activities: [CommitActivity(repositoryName: "Alpha", subject: "Did work", committedAt: day)],
-            carriedTasks: ["Task"]
+            activities: [CommitActivity(repositoryName: "Alpha", subject: "Did work", committedAt: day)]
         )
-        brief.tasksManuallyEdited = true
         brief.source = .ai
         brief.activityRangeStart = day
         brief.activityRangeEnd = calendar.date(byAdding: .day, value: 1, to: day)
@@ -47,12 +49,31 @@ final class BriefStoreAndServiceTests: XCTestCase {
 
         XCTAssertEqual(loaded.day, brief.day)
         XCTAssertEqual(loaded.yesterdayLines, brief.yesterdayLines)
-        XCTAssertEqual(loaded.todayTasks, brief.todayTasks)
-        XCTAssertTrue(loaded.tasksManuallyEdited)
         XCTAssertEqual(loaded.source, .ai)
         XCTAssertEqual(loaded.activityRangeStart, brief.activityRangeStart)
         XCTAssertEqual(loaded.activityRangeEnd, brief.activityRangeEnd)
         XCTAssertEqual(loaded.sourceRepositoryNames, ["Alpha"])
+    }
+
+    /// Briefs persisted by older builds carry task fields the model no longer
+    /// keeps; loading must succeed and simply ignore them.
+    func testLoadIgnoresLegacyTaskFields() throws {
+        let day = startOfDay(0)
+        try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: true)
+        let legacyJSON = """
+        {
+          "day": \(day.timeIntervalSince1970),
+          "yesterdayLines": ["Alpha — Work"],
+          "todayTasks": ["Old plan"],
+          "generatedAt": \(Date().timeIntervalSince1970),
+          "source": "local",
+          "tasksManuallyEdited": true
+        }
+        """
+        try Data(legacyJSON.utf8).write(to: store.url(forDay: day))
+
+        let loaded = try XCTUnwrap(store.load(forDay: day))
+        XCTAssertEqual(loaded.yesterdayLines, ["Alpha — Work"])
     }
 
     func testLoadMissingDayReturnsNil() {
@@ -61,56 +82,13 @@ final class BriefStoreAndServiceTests: XCTestCase {
 
     // MARK: - H38-F03: save failures must be surfaced, not silent
 
-    private func makeUnwritableStore() throws -> BriefStore {
+    func testSaveThrowsWhenDirectoryIsUnwritable() throws {
         try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
         let blocked = tempDirectory.appendingPathComponent("blocked", isDirectory: true)
         try Data("occupant".utf8).write(to: blocked)
-        return BriefStore(directory: blocked)
-    }
-
-    func testSaveThrowsWhenDirectoryIsUnwritable() throws {
-        let store = try makeUnwritableStore()
-        let brief = BriefComposer.compose(day: startOfDay(0), activities: [], carriedTasks: [])
+        let store = BriefStore(directory: blocked)
+        let brief = BriefComposer.compose(day: startOfDay(0), activities: [])
         XCTAssertThrowsError(try store.save(brief))
-    }
-
-    func testFailedTaskEditSaveRecordsErrorInsteadOfFakeSuccess() throws {
-        let blockedStore = try makeUnwritableStore()
-        let service = BriefGenerationService(store: blockedStore)
-        let brief = BriefComposer.compose(day: startOfDay(0), activities: [], carriedTasks: ["Original"])
-
-        let updated = service.updateTasks(["Edited"], in: brief)
-
-        XCTAssertEqual(updated.todayTasks, ["Edited"], "UI state still advances")
-        XCTAssertNotNil(service.lastPersistenceError, "the failed write must be reported")
-        XCTAssertNil(blockedStore.load(forDay: brief.day), "nothing reached disk")
-    }
-
-    func testSuccessfulSaveClearsPersistenceError() throws {
-        let service = BriefGenerationService(store: store)
-        let brief = BriefComposer.compose(day: startOfDay(0), activities: [], carriedTasks: [])
-        XCTAssertNil(service.lastPersistenceError)
-        _ = service.updateTasks(["Edited"], in: brief)
-        XCTAssertNil(service.lastPersistenceError)
-    }
-
-    // MARK: - Carry-forward queries
-
-    func testLoadMostRecentReturnsLatestEarlierBriefOnly() throws {
-        let today = startOfDay(0)
-        let yesterday = startOfDay(-1)
-        let older = startOfDay(-3)
-
-        try store.save(BriefComposer.compose(day: older, activities: [], carriedTasks: ["Old plan"]))
-        try store.save(BriefComposer.compose(day: yesterday, activities: [], carriedTasks: ["Recent plan"]))
-
-        let carried = try XCTUnwrap(store.loadMostRecent(before: today))
-        XCTAssertEqual(carried.day, yesterday)
-        XCTAssertEqual(carried.todayTasks, ["Recent plan"])
-    }
-
-    func testLoadMostRecentWithNoHistoryReturnsNil() {
-        XCTAssertNil(store.loadMostRecent(before: startOfDay(0)))
     }
 
     // MARK: - Generation service
@@ -129,102 +107,123 @@ final class BriefStoreAndServiceTests: XCTestCase {
         XCTAssertEqual(again.yesterdayLines, generated.yesterdayLines)
     }
 
-    func testRegeneratePreservesManuallyEditedTasks() async throws {
-        let service = BriefGenerationService(store: store, collector: StubCollector(activityCount: 1))
+    // MARK: - Previous-workday auto-detection
+
+    func testAutoDetectionReportsMostRecentDayWithCommits() async {
+        let service = BriefGenerationService(store: store, collector: LookbackCollector(days: [
+            startOfDay(-1): [activity("Quiet Monday work", on: startOfDay(-1))],
+            startOfDay(-4): [activity("Friday work", on: startOfDay(-4))],
+            startOfDay(-5): [activity("Older work", on: startOfDay(-5))]
+        ]))
         let today = startOfDay(0)
 
-        let first = await service.ensureBrief(for: today, workspacePaths: ["/tmp/Repo"])
-        let edited = service.updateTasks(["My own task"], in: first)
-        XCTAssertTrue(edited.tasksManuallyEdited)
+        let brief = await service.ensureBrief(for: today, workspacePaths: ["/tmp/Repo"])
 
-        let regenerated = await service.regenerate(for: today, workspacePaths: ["/tmp/Repo"])
-        XCTAssertEqual(regenerated.todayTasks, ["My own task"])
-        XCTAssertTrue(regenerated.tasksManuallyEdited)
-        XCTAssertEqual(regenerated.source, .local)
+        XCTAssertEqual(brief.yesterdayLines, ["Repo — Quiet Monday work"])
+        XCTAssertEqual(brief.activityRangeStart, startOfDay(-1))
+        XCTAssertEqual(brief.activityRangeEnd, today)
     }
 
-    func testApplyRefinementTakesAITasksOnlyWhenNotManuallyEdited() async throws {
+    func testAutoDetectionSkipsQuietWeekendsAndHolidays() async {
+        // The stub returns commits only for Friday; the weekend days
+        // in between carry nothing and must not become the report day.
+        let service = BriefGenerationService(store: store, collector: LookbackCollector(days: [
+            startOfDay(-3): [activity("Friday work", on: startOfDay(-3))]
+        ]))
+        let today = startOfDay(0)
+
+        let brief = await service.ensureBrief(for: today, workspacePaths: ["/tmp/Repo"])
+        XCTAssertEqual(brief.yesterdayLines, ["Repo — Friday work"])
+        XCTAssertEqual(brief.activityRangeStart, startOfDay(-3))
+    }
+
+    func testAutoDetectionFallsBackToQuietPreviousWeekday() async {
+        let service = BriefGenerationService(store: store, collector: LookbackCollector(days: [:]))
+        let today = startOfDay(0)
+
+        let brief = await service.ensureBrief(for: today, workspacePaths: ["/tmp/Repo"])
+        XCTAssertEqual(brief.yesterdayLines, [BriefComposer.quietDayLine])
+        let calendar = Calendar.current
+        XCTAssertEqual(
+            brief.activityRangeStart,
+            BriefComposer.previousWeekday(before: today, calendar: calendar)
+        )
+    }
+
+    func testExplicitWorkdayPickReportsExactlyThatDayEvenWhenQuiet() async {
+        let service = BriefGenerationService(store: store, collector: LookbackCollector(days: [
+            startOfDay(-1): [activity("Yesterday work", on: startOfDay(-1))]
+        ]))
+        let today = startOfDay(0)
+        let picked = startOfDay(-5)
+
+        let brief = await service.regenerate(for: today, workspacePaths: ["/tmp/Repo"], workday: picked)
+        XCTAssertEqual(brief.yesterdayLines, [BriefComposer.quietDayLine], "a picked quiet day stays quiet")
+        XCTAssertEqual(brief.activityRangeStart, picked)
+        XCTAssertEqual(brief.activityRangeEnd, startOfDay(-4))
+    }
+
+    func testExplicitWorkdayPickReportsThatDaysWork() async {
+        let service = BriefGenerationService(store: store, collector: LookbackCollector(days: [
+            startOfDay(-1): [activity("Recent work", on: startOfDay(-1))],
+            startOfDay(-6): [activity("Picked day work", on: startOfDay(-6))]
+        ]))
+        let today = startOfDay(0)
+        let picked = startOfDay(-6)
+
+        let brief = await service.regenerate(for: today, workspacePaths: ["/tmp/Repo"], workday: picked)
+        XCTAssertEqual(brief.yesterdayLines, ["Repo — Picked day work"])
+        XCTAssertEqual(brief.activityRangeStart, picked)
+    }
+
+    // MARK: - AI refinement
+
+    func testApplyRefinementReplacesReportLines() async throws {
         let service = BriefGenerationService(store: store, collector: StubCollector(activityCount: 1))
         let today = startOfDay(0)
 
-        var brief = await service.ensureBrief(for: today, workspacePaths: ["/tmp/Repo"])
-        brief.tasksManuallyEdited = false
-        try store.save(brief)
-
-        let parsed = BriefAIResponseParser.Parsed(
-            yesterdayLines: ["Polished line"],
-            todayTasks: ["AI task"]
-        )
+        let brief = await service.ensureBrief(for: today, workspacePaths: ["/tmp/Repo"])
+        let parsed = BriefAIResponseParser.Parsed(yesterdayLines: ["Polished line"])
         let refined = service.applyRefinement(parsed, to: brief)
         XCTAssertEqual(refined.yesterdayLines, ["Polished line"])
-        XCTAssertEqual(refined.todayTasks, ["AI task"])
         XCTAssertEqual(refined.source, .ai)
 
-        let edited = service.updateTasks(["Hand edited"], in: refined)
-        let refinedAgain = service.applyRefinement(parsed, to: edited)
-        XCTAssertEqual(refinedAgain.todayTasks, ["Hand edited"])
-        XCTAssertEqual(refinedAgain.yesterdayLines, ["Polished line"])
+        let refinedAgain = service.applyRefinement(
+            BriefAIResponseParser.Parsed(yesterdayLines: ["Second polish"]),
+            to: refined
+        )
+        XCTAssertEqual(refinedAgain.yesterdayLines, ["Second polish"])
     }
 
-    func testApplyRefinementTokenPreservesEditsMadeAfterBegin() async throws {
-        let service = BriefGenerationService(store: store, collector: StubCollector(activityCount: 1))
-        let today = startOfDay(0)
-        let brief = await service.ensureBrief(for: today, workspacePaths: ["/tmp/Repo"])
-        let token = service.beginOperation(.refine, for: today)
-        _ = service.updateTasks(["Typed while refining"], in: brief)
-
-        let parsed = BriefAIResponseParser.Parsed(
-            yesterdayLines: ["Polished while editing"],
-            todayTasks: ["AI should lose"]
-        )
-        let outcome = service.applyRefinement(parsed, token: token)
-        guard case .applied(let refined) = outcome else {
-            return XCTFail("Expected current refinement to apply")
-        }
-        XCTAssertEqual(refined.yesterdayLines, ["Polished while editing"])
-        XCTAssertEqual(refined.todayTasks, ["Typed while refining"])
-        XCTAssertTrue(refined.tasksManuallyEdited)
-
-        let reloaded = try XCTUnwrap(store.load(forDay: today))
-        XCTAssertEqual(reloaded.todayTasks, ["Typed while refining"])
-    }
-
-    func testRegeneratePreservesEditsMadeWhileCollectionIsSuspended() async throws {
-        let collector = SuspendableActivityCollector(
-            activities: [CommitActivity(repositoryName: "Repo", subject: "New work", committedAt: startOfDay(-1))]
-        )
+    func testRegenerateUsesChosenWorkdayAndRecordsSources() async throws {
+        let collector = RecordingCollector(activityCount: 1)
         let service = BriefGenerationService(store: store, collector: collector)
-        let today = startOfDay(0)
-        var seed = BriefComposer.compose(
-            day: today,
-            activities: [CommitActivity(repositoryName: "Repo", subject: "Old work", committedAt: startOfDay(-1))],
-            carriedTasks: ["Original task"]
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let monday = calendar.startOfDay(for: dateInNewYork("2026-09-07T09:00:00"))
+        let friday = calendar.startOfDay(for: dateInNewYork("2026-09-04T09:00:00"))
+        let sources = [
+            BriefCollectionSource(
+                workspaceID: UUID(),
+                path: "/tmp/Console",
+                displayName: "Console",
+                identity: BriefAuthorIdentity(name: "Dev", emails: ["dev@example.test"])
+            )
+        ]
+
+        let brief = await service.regenerate(
+            for: monday,
+            sources: sources,
+            calendar: calendar,
+            workday: friday
         )
-        seed.tasksManuallyEdited = false
-        try store.save(seed)
 
-        let token = service.beginOperation(.generate, for: today)
-        let generateTask = Task {
-            await service.regenerate(for: today, workspacePaths: ["/tmp/Repo"], token: token)
-        }
-        await waitUntil { collector.pendingCount == 1 }
-
-        let during = try XCTUnwrap(store.load(forDay: today))
-        _ = service.updateTasks(["Edited during generate"], in: during)
-
-        collector.releaseOldest()
-        let outcome = await generateTask.value
-
-        guard case .applied(let regenerated) = outcome else {
-            return XCTFail("Expected generation to apply")
-        }
-        XCTAssertEqual(regenerated.todayTasks, ["Edited during generate"])
-        XCTAssertTrue(regenerated.tasksManuallyEdited)
-        XCTAssertTrue(regenerated.yesterdayLines.contains(where: { $0.contains("New work") }))
-
-        let reloaded = try XCTUnwrap(store.load(forDay: today))
-        XCTAssertEqual(reloaded.todayTasks, ["Edited during generate"])
-        XCTAssertTrue(reloaded.yesterdayLines.contains(where: { $0.contains("New work") }))
+        let request = try XCTUnwrap(collector.lastRequest)
+        XCTAssertEqual(request.rangeStart, friday)
+        XCTAssertEqual(request.rangeEnd, calendar.date(byAdding: .day, value: 1, to: friday))
+        XCTAssertEqual(brief.sourceRepositoryNames, ["Console"])
+        XCTAssertEqual(brief.activityRangeStart, friday)
+        XCTAssertEqual(brief.activityRangeEnd, calendar.date(byAdding: .day, value: 1, to: friday))
     }
 
     func testSupersededGenerationDoesNotWriteDisk() async throws {
@@ -233,7 +232,10 @@ final class BriefStoreAndServiceTests: XCTestCase {
         )
         let service = BriefGenerationService(store: store, collector: collector)
         let today = startOfDay(0)
-        try store.save(BriefComposer.compose(day: today, activities: [], carriedTasks: ["Keep me"]))
+        try store.save(BriefComposer.compose(
+            day: today,
+            activities: [CommitActivity(repositoryName: "Repo", subject: "Stored work", committedAt: startOfDay(-2))]
+        ))
 
         let firstToken = service.beginOperation(.generate, for: today)
         let first = Task {
@@ -254,7 +256,6 @@ final class BriefStoreAndServiceTests: XCTestCase {
         let firstOutcome = await first.value
         XCTAssertEqual(firstOutcome, .superseded)
         let afterFirst = try XCTUnwrap(store.load(forDay: today))
-        XCTAssertEqual(afterFirst.todayTasks, ["Keep me"])
         XCTAssertFalse(afterFirst.yesterdayLines.contains(where: { $0.contains("First collect") }))
 
         collector.releaseOldest()
@@ -262,7 +263,6 @@ final class BriefStoreAndServiceTests: XCTestCase {
         guard case .applied(let regenerated) = secondOutcome else {
             return XCTFail("Expected the current generation to apply")
         }
-        XCTAssertEqual(regenerated.todayTasks, ["Keep me"])
         XCTAssertTrue(regenerated.yesterdayLines.contains(where: { $0.contains("Second collect") }))
     }
 
@@ -311,11 +311,13 @@ final class BriefStoreAndServiceTests: XCTestCase {
         let service = BriefGenerationService(store: store, collector: collector)
         let yesterday = startOfDay(-1)
         let today = startOfDay(0)
-        try store.save(BriefComposer.compose(day: yesterday, activities: [], carriedTasks: ["Yesterday plan"]))
+        try store.save(BriefComposer.compose(
+            day: yesterday,
+            activities: [activity("Yesterday stored", on: startOfDay(-2))]
+        ))
         try store.save(BriefComposer.compose(
             day: today,
-            activities: [CommitActivity(repositoryName: "Repo", subject: "Today already stored", committedAt: yesterday)],
-            carriedTasks: ["Today plan"]
+            activities: [activity("Today already stored", on: yesterday)]
         ))
 
         let yesterdayToken = service.beginOperation(.generate, for: yesterday)
@@ -329,49 +331,37 @@ final class BriefStoreAndServiceTests: XCTestCase {
         guard case .applied(let todayBrief) = todayOutcome else {
             return XCTFail("Expected today's stored brief")
         }
-        XCTAssertEqual(todayBrief.todayTasks, ["Today plan"])
+        XCTAssertEqual(todayBrief.day, today)
 
         collector.releaseOldest()
         let yesterdayOutcome = await yesterdayTask.value
         XCTAssertEqual(yesterdayOutcome, .superseded)
 
         let reloadedToday = try XCTUnwrap(store.load(forDay: today))
-        XCTAssertEqual(reloadedToday.todayTasks, ["Today plan"])
         XCTAssertTrue(reloadedToday.yesterdayLines.contains(where: { $0.contains("Today already stored") }))
         XCTAssertFalse(reloadedToday.yesterdayLines.contains(where: { $0.contains("Yesterday collect") }))
     }
 
-    func testRegenerateUsesCustomDateRangeAndRecordsSources() async throws {
-        let collector = RecordingCollector(activityCount: 1)
-        let service = BriefGenerationService(store: store, collector: collector)
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "America/New_York")!
-        let monday = calendar.startOfDay(for: dateInNewYork("2026-09-07T09:00:00"))
-        let friday = calendar.startOfDay(for: dateInNewYork("2026-09-04T09:00:00"))
-        let sunday = calendar.startOfDay(for: dateInNewYork("2026-09-06T09:00:00"))
-        let range = BriefDateRangeSelection(preset: .custom, customStart: friday, customEnd: sunday)
-        let sources = [
-            BriefCollectionSource(
-                workspaceID: UUID(),
-                path: "/tmp/Console",
-                displayName: "Console",
-                identity: BriefAuthorIdentity(name: "Dev", emails: ["dev@example.test"])
-            )
-        ]
+    func testQuietAutoGenerationKeepsAlreadyRecordedReport() async throws {
+        // First generation records the last active day; a later all-quiet
+        // lookback must not erase it.
+        let service = BriefGenerationService(store: store, collector: LookbackCollector(days: [
+            startOfDay(-1): [activity("Real work", on: startOfDay(-1))]
+        ]))
+        let today = startOfDay(0)
 
-        let brief = await service.regenerate(
-            for: monday,
-            sources: sources,
-            calendar: calendar,
-            range: range
+        let first = await service.ensureBrief(for: today, workspacePaths: ["/tmp/Repo"])
+        XCTAssertTrue(first.yesterdayLines.contains(where: { $0.contains("Real work") }))
+
+        let quietService = BriefGenerationService(store: store, collector: LookbackCollector(days: [:]))
+        let regenerated = await quietService.regenerate(for: today, workspacePaths: ["/tmp/Repo"])
+        XCTAssertTrue(
+            regenerated.yesterdayLines.contains(where: { $0.contains("Real work") }),
+            "quiet lookback keeps the recorded report"
         )
 
-        let request = try XCTUnwrap(collector.lastRequest)
-        XCTAssertEqual(request.rangeStart, friday)
-        XCTAssertEqual(request.rangeEnd, monday)
-        XCTAssertEqual(brief.sourceRepositoryNames, ["Console"])
-        XCTAssertEqual(brief.activityRangeStart, friday)
-        XCTAssertEqual(brief.activityRangeEnd, monday)
+        let reloaded = try XCTUnwrap(store.load(forDay: today))
+        XCTAssertTrue(reloaded.yesterdayLines.contains(where: { $0.contains("Real work") }))
     }
 
     func testAttributionStorePersistsAliasesAndDoesNotOverwriteConfirmedIdentity() throws {
@@ -386,12 +376,15 @@ final class BriefStoreAndServiceTests: XCTestCase {
         )
         XCTAssertFalse(store.selection(for: workspaceID)?.confirmed ?? true)
 
-        store.addEmail("alice.work@example.test", for: workspaceID)
+        store.setIdentity(
+            BriefAuthorIdentity(name: "Alice", emails: ["alice@example.test", "alice.work@example.test"]),
+            for: workspaceID,
+            confirmed: true
+        )
         XCTAssertEqual(
             store.selection(for: workspaceID)?.identity.emails,
             ["alice@example.test", "alice.work@example.test"]
         )
-        XCTAssertTrue(store.selection(for: workspaceID)?.confirmed ?? false)
 
         store.recordDefault(
             BriefAuthorIdentity(name: "Other", emails: ["other@example.test"]),
@@ -446,6 +439,24 @@ struct StubCollector: BriefActivityCollecting {
     }
 }
 
+/// Returns per-day commit groups within the requested lookback window, so
+/// previous-workday auto-detection can be exercised without git.
+struct LookbackCollector: BriefActivityCollecting {
+    let days: [Date: [CommitActivity]]
+
+    func collectActivities(_ request: BriefCollectionRequest) async -> BriefCollectionResult {
+        let calendar = request.calendar
+        let inWindow = days.filter { day, _ in
+            day >= calendar.startOfDay(for: request.rangeStart) && day < request.rangeEnd
+        }
+        let activities = inWindow.values.flatMap { $0 }
+        let repositories = request.sources.map {
+            BriefSourceRepository(displayName: $0.displayName, identity: $0.path)
+        }
+        return BriefCollectionResult(activities: activities, sourceRepositories: repositories)
+    }
+}
+
 /// Records the last collection request so tests can assert date-range wiring.
 final class RecordingCollector: BriefActivityCollecting, @unchecked Sendable {
     private let inner: StubCollector
@@ -471,7 +482,7 @@ final class RecordingCollector: BriefActivityCollecting, @unchecked Sendable {
 }
 
 /// Suspends each `collectActivities` call until `releaseOldest()` so tests can
-/// edit tasks while generation is in flight.
+/// interleave operations while generation is in flight.
 final class SuspendableActivityCollector: BriefActivityCollecting, @unchecked Sendable {
     var activities: [CommitActivity]
     private let gate = BriefContinuationGate()

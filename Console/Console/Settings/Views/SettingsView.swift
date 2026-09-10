@@ -13,6 +13,8 @@ struct SettingsView: View {
     @AppStorage(AppSettings.mrScanIntervalMinutesKey) private var mrScanIntervalMinutes: Int = AppSettings.mrScanIntervalMinutesDefault
     @AppStorage(AppSettings.mrScanModelKey) private var mrScanModel: String = AppSettings.mrScanModelDefault
 
+    @AppStorage(AppSettings.aiProviderEnabledKey) private var aiProviderEnabled: Bool = false
+
     @AppStorage(AppSettings.defaultTerminalFolderKey) private var defaultTerminalFolder: String = AppSettings.defaultTerminalFolderDefault
 
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
@@ -36,6 +38,8 @@ struct SettingsView: View {
             appearanceSection
 
             updatesSection
+
+            aiProviderSection
         }
         .formStyle(.grouped)
         .onAppear {
@@ -459,6 +463,16 @@ struct SettingsView: View {
             Text("Checks public GitHub Releases of ChristopherLarsen/Console. A qualifying release downloads its source to ~/Developer/ConsoleUpdates for a manual Release build in Xcode.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - AI Provider
+
+    private var aiProviderSection: some View {
+        Section("AI Provider") {
+            Toggle("Enable AI provider", isOn: $aiProviderEnabled)
+                .themedToggleStyle()
+                .accessibilityIdentifier("AIProviderEnabledToggle")
         }
     }
 

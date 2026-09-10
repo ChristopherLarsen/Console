@@ -26,6 +26,11 @@ class AppSettings {
     /// of these so the scheduler never sees an arbitrary value.
     static let mrScanIntervalChoices = [5, 10, 15, 30, 60]
 
+    /// Whether the AI Provider destination is exposed in the sidebar. When
+    /// off, the destination is hidden and the sidebar tile shows no local
+    /// LLM connection indicator.
+    static let aiProviderEnabledKey = "aiProviderEnabled"
+
     // Terminal drawer settings
     /// Folder where new Terminal sessions start. Supports "~" for the home
     /// directory. Defaults to the user's home directory.

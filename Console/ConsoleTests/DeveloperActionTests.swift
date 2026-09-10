@@ -102,8 +102,8 @@ final class DeveloperActionTests: XCTestCase {
 
     func testNumberedNavigationShortcutsKeepTheirDestinations() {
         let expected: [SidebarSelection] = [
-            .home, .brief, .jira,
-            .sessions, .mergeRequests, .commands,
+            .home, .jira, .sessions,
+            .mergeRequests, .commands, .brief,
             .aiProvider
         ]
         // ⌃1…⌃8 across the eight sidebar destinations.

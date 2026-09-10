@@ -8,8 +8,6 @@ final class BriefAIResponseParserTests: XCTestCase {
         Y1 | Merged attention badge feature
         Y2 | Fixed bridge socket flake
         Y3 | Reviewed MR !12
-        T1 | Ship morning brief
-        T2 | Write release notes
         """
 
         let parsed = BriefAIResponseParser.parse(response)
@@ -17,8 +15,7 @@ final class BriefAIResponseParserTests: XCTestCase {
         XCTAssertEqual(
             parsed,
             BriefAIResponseParser.Parsed(
-                yesterdayLines: ["Merged attention badge feature", "Fixed bridge socket flake", "Reviewed MR !12"],
-                todayTasks: ["Ship morning brief", "Write release notes"]
+                yesterdayLines: ["Merged attention badge feature", "Fixed bridge socket flake", "Reviewed MR !12"]
             )
         )
     }
@@ -29,7 +26,6 @@ final class BriefAIResponseParserTests: XCTestCase {
         ```
         Y1 | - Merged the feature
         y2: skipped tag
-        T1 | * Polish the brief
         Some closing remark.
         ```
         """
@@ -38,32 +34,28 @@ final class BriefAIResponseParserTests: XCTestCase {
 
         XCTAssertNotNil(parsed)
         XCTAssertEqual(parsed?.yesterdayLines, ["Merged the feature"])
-        XCTAssertEqual(parsed?.todayTasks, ["Polish the brief"])
     }
 
-    func testParseClampsExtraLinesToReportLimits() {
+    func testParseClampsExtraLinesToReportLimit() {
         let response = """
         Y1 | One
         Y2 | Two
         Y3 | Three
         Y4 | Four
-        T1 | Task one
-        T2 | Task two
-        T3 | Task three
+        Y5 | Five
         """
 
         let parsed = BriefAIResponseParser.parse(response)
 
         XCTAssertEqual(parsed?.yesterdayLines.count, MorningBrief.maxYesterdayLines)
-        XCTAssertEqual(parsed?.todayTasks.count, MorningBrief.maxTodayTasks)
         XCTAssertEqual(parsed?.yesterdayLines.last, "Three")
-        XCTAssertEqual(parsed?.todayTasks.last, "Task two")
     }
 
     func testParseReturnsNilWithoutYesterdayContent() throws {
         XCTAssertNil(BriefAIResponseParser.parse(""))
         XCTAssertNil(BriefAIResponseParser.parse("Just some prose."))
         XCTAssertNil(BriefAIResponseParser.parse("T1 | Only a task"))
+        XCTAssertNil(BriefAIResponseParser.parse("Y | Unnumbered line"))
     }
 
     func testCleanStripsWrappingQuotesAndTruncates() {
@@ -74,38 +66,37 @@ final class BriefAIResponseParserTests: XCTestCase {
         XCTAssertEqual(BriefAIResponseParser.clean(long).count, BriefComposer.maxLineLength)
     }
 
-    // MARK: - H38-F02: only numbered Y*/T* slot tags are slots
+    // MARK: - Only numbered Y slot tags are slots
 
-    func testProseWithPipeIsNotIngestedAsTasks() {
+    func testProseWithPipeIsNotIngestedAsLines() {
         let parsed = BriefAIResponseParser.parse("""
         Team follow-up | ping bob about the MR
         Today: standup | 10am
         """)
-        XCTAssertNil(parsed, "prose with pipes must not become tasks")
+        XCTAssertNil(parsed, "prose with pipes must not become report lines")
     }
 
     func testProseWithPipeIsIgnoredAroundValidSlots() {
         let parsed = BriefAIResponseParser.parse("""
         Y1 | Merged the feature
         Team follow-up | ping bob about the MR
-        T1 | Polish the brief
+        Y2 | Fixed the flake
         """)
 
-        XCTAssertEqual(parsed?.yesterdayLines, ["Merged the feature"])
-        XCTAssertEqual(parsed?.todayTasks, ["Polish the brief"])
+        XCTAssertEqual(parsed?.yesterdayLines, ["Merged the feature", "Fixed the flake"])
     }
 
     func testUnnumberedSlotTagsAreRejected() {
         XCTAssertNil(BriefAIResponseParser.parse("Y | Unnumbered line"))
-        XCTAssertNil(BriefAIResponseParser.parse("T | Unnumbered task"))
         XCTAssertNil(BriefAIResponseParser.parse("Yesterday | worked hard"))
     }
 
     func testSlotTagPredicate() {
         XCTAssertTrue(BriefAIResponseParser.isSlotTag("Y1"))
-        XCTAssertTrue(BriefAIResponseParser.isSlotTag("T12"))
+        XCTAssertTrue(BriefAIResponseParser.isSlotTag("Y12"))
         XCTAssertFalse(BriefAIResponseParser.isSlotTag("Y"))
         XCTAssertFalse(BriefAIResponseParser.isSlotTag("TEAM FOLLOW-UP"))
         XCTAssertFalse(BriefAIResponseParser.isSlotTag("Y1A"))
+        XCTAssertFalse(BriefAIResponseParser.isSlotTag("T1"))
     }
 }

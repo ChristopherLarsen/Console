@@ -9,8 +9,6 @@ final class BriefViewModel {
     private(set) var isRefining = false
     private(set) var errorMessage: String?
     private(set) var showCopiedFeedback = false
-    private(set) var aliasDrafts: [UUID: String] = [:]
-    private(set) var authorRows: [BriefAuthorDisplayRow] = []
 
     @ObservationIgnored private let generationService: BriefGenerationService
     @ObservationIgnored private let workspacesProvider: () -> [BriefWorkspaceSnapshot]
@@ -45,9 +43,11 @@ final class BriefViewModel {
         self.identityReader = identityReader
     }
 
-    var dateRange: BriefDateRangeSelection {
-        attributionStore.dateRange
-    }
+    /// The workday the user explicitly picked to report on; nil means
+    /// auto-detect the previous workday from commit activity. Deliberately
+    /// in-memory only: the pick lasts the session/day, then the brief
+    /// returns to automatic detection on the next day or launch.
+    private(set) var selectedWorkday: Date?
 
     // MARK: - Lifecycle
 
@@ -68,16 +68,16 @@ final class BriefViewModel {
             return
         }
 
+        // New day (or fresh launch): any manual workday pick expires.
+        selectedWorkday = nil
         let token = startOperation(.generate, day: day)
         operationTask = Task { [weak self, generationService] in
             guard let self else { return }
             let sources = await self.resolvedSources()
-            self.refreshAuthorRows()
-            let range = self.attributionStore.dateRange
             let outcome = await generationService.ensureBrief(
                 for: now,
                 sources: sources,
-                range: range,
+                workday: self.selectedWorkday,
                 token: token
             )
             self.applyOutcome(outcome, token: token)
@@ -93,59 +93,22 @@ final class BriefViewModel {
         operationTask = Task { [weak self, generationService] in
             guard let self else { return }
             let sources = await self.resolvedSources()
-            self.refreshAuthorRows()
-            let range = self.attributionStore.dateRange
             let outcome = await generationService.regenerate(
                 for: day,
                 sources: sources,
-                range: range,
+                workday: self.selectedWorkday,
                 token: token
             )
             self.applyOutcome(outcome, token: token)
         }
     }
 
-    func setDateRangePreset(_ preset: BriefDateRangePreset) {
-        var range = attributionStore.dateRange
-        range.preset = preset
-        if preset == .custom {
-            let calendar = Calendar.current
-            let today = BriefStore.startOfDay(for: brief?.day ?? Date(), calendar: calendar)
-            let yesterday = calendar.date(byAdding: .day, value: -1, to: today) ?? today
-            if range.customStart == nil { range.customStart = yesterday }
-            if range.customEnd == nil { range.customEnd = yesterday }
-        }
-        attributionStore.dateRange = range
-    }
-
-    func setCustomStart(_ date: Date) {
-        var range = attributionStore.dateRange
-        range.preset = .custom
-        range.customStart = date
-        attributionStore.dateRange = range
-    }
-
-    func setCustomEnd(_ date: Date) {
-        var range = attributionStore.dateRange
-        range.preset = .custom
-        range.customEnd = date
-        attributionStore.dateRange = range
-    }
-
-    func setAliasDraft(_ text: String, for workspaceID: UUID) {
-        aliasDrafts[workspaceID] = text
-    }
-
-    func addAlias(for workspaceID: UUID) {
-        let draft = aliasDrafts[workspaceID] ?? ""
-        attributionStore.addEmail(draft, for: workspaceID)
-        aliasDrafts[workspaceID] = ""
-        refreshAuthorRows()
-    }
-
-    func confirmAuthor(for workspaceID: UUID) {
-        attributionStore.confirm(workspaceID: workspaceID)
-        refreshAuthorRows()
+    /// Reports work completed on the exact chosen day. The pick is a
+    /// per-day override: it lives only until the next day or launch, then
+    /// the brief returns to automatic previous-workday detection.
+    func chooseWorkday(_ date: Date) {
+        selectedWorkday = date
+        regenerate()
     }
 
     func refineWithAI(aiProviderManager: AIProviderManager?) {
@@ -156,13 +119,9 @@ final class BriefViewModel {
         }
         let token = startOperation(.refine, day: current.day)
         let yesterdayLines = current.yesterdayLines
-        let todayTasks = current.todayTasks
         operationTask = Task { [weak self, generationService] in
             do {
-                let parsed = try await refiner.refine(
-                    yesterdayLines: yesterdayLines,
-                    todayTasks: todayTasks
-                )
+                let parsed = try await refiner.refine(yesterdayLines: yesterdayLines)
                 let outcome = generationService.applyRefinement(parsed, token: token)
                 self?.applyOutcome(outcome, token: token)
             } catch is CancellationError {
@@ -171,31 +130,6 @@ final class BriefViewModel {
                 self?.applyFailure(error, token: token)
             }
         }
-    }
-
-    func updateTask(at index: Int, text: String) {
-        guard let current = brief, current.todayTasks.indices.contains(index) else { return }
-        var tasks = current.todayTasks
-        tasks[index] = text
-        brief = generationService.updateTasks(tasks, in: current)
-        errorMessage = generationService.lastPersistenceError
-    }
-
-    func addTask() {
-        guard let current = brief,
-              current.todayTasks.count < MorningBrief.maxTodayTasks else { return }
-        var tasks = current.todayTasks
-        tasks.append("")
-        brief = generationService.updateTasks(tasks, in: current)
-        errorMessage = generationService.lastPersistenceError
-    }
-
-    func removeTask(at index: Int) {
-        guard let current = brief, current.todayTasks.indices.contains(index) else { return }
-        var tasks = current.todayTasks
-        tasks.remove(at: index)
-        brief = generationService.updateTasks(tasks, in: current)
-        errorMessage = generationService.lastPersistenceError
     }
 
     func copyReport() {
@@ -290,30 +224,9 @@ final class BriefViewModel {
         )
     }
 
-    private func refreshAuthorRows() {
-        authorRows = workspacesProvider().compactMap { workspace in
-            guard let selection = attributionStore.selection(for: workspace.id) else { return nil }
-            return BriefAuthorDisplayRow(
-                workspaceID: workspace.id,
-                workspaceName: workspace.name,
-                identity: selection.identity,
-                confirmed: selection.confirmed
-            )
-        }
-    }
-
     private func makeRefiner(aiProviderManager: AIProviderManager?) -> (any BriefRefining)? {
         if let injectedRefiner { return injectedRefiner }
         guard let aiProviderManager else { return nil }
         return ProviderBackedBriefRefiner(aiProviderManager: aiProviderManager)
     }
-}
-
-struct BriefAuthorDisplayRow: Identifiable, Equatable {
-    var workspaceID: UUID
-    var workspaceName: String
-    var identity: BriefAuthorIdentity
-    var confirmed: Bool
-
-    var id: UUID { workspaceID }
 }

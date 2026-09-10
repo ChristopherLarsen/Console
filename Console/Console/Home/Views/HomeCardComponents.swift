@@ -149,6 +149,40 @@ func HomePanelDetail(_ parts: String...) -> some View {
         .lineLimit(1)
 }
 
+/// Light gray age of a source's last successful refresh, rendered as whole
+/// elapsed minutes up to `maxStaleMinutes`; anything older (or never
+/// refreshed) collapses to a single hourglass symbol. Re-renders each minute.
+struct HomeRefreshAgeLabel: View {
+    /// Date of the source's last successful extraction; nil renders the
+    /// hourglass from the start.
+    let lastRefresh: Date?
+
+    static let maxStaleMinutes = 240
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            if let lastRefresh,
+               let minutes = elapsedMinutes(from: lastRefresh, to: context.date),
+               minutes <= Self.maxStaleMinutes {
+                Text("\(minutes)m")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            } else {
+                Image(systemName: "hourglass")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func elapsedMinutes(from date: Date, to now: Date) -> Int? {
+        let seconds = now.timeIntervalSince(date)
+        guard seconds >= 0 else { return nil }
+        return Int(seconds / 60)
+    }
+}
+
 /// Loading skeleton shaped like the real card: a short bone where the
 /// identity goes and a long one where the title goes.
 struct HomeSkeletonCard: View {

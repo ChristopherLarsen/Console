@@ -80,6 +80,9 @@ final class ClaudeSessionLauncher: SessionProcessLaunching {
 /// SwiftTerm terminal configured for Console sessions. All sends go through
 /// SwiftTerm's main-thread input API.
 final class ConsoleTerminalView: LocalProcessTerminalView {
+    // SwiftTerm's processDelegate is weak. Keep the per-session coordinator
+    // alive for exactly as long as this terminal; its store reference is weak.
+    var retainedSessionCoordinator: SessionTerminalCoordinator?
     init() {
         super.init(frame: .zero)
     }

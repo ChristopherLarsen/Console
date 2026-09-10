@@ -111,15 +111,52 @@ enum BriefComposer {
         return unique
     }
 
+    // MARK: - Workday selection
+
+    /// The most recent calendar day (strictly before `day`) holding at least
+    /// one attributed activity. Weekends, holidays, and vacation days without
+    /// commits are skipped automatically; a weekend with commits counts as a
+    /// worked day.
+    static func mostRecentActiveDay(of activities: [CommitActivity],
+                                    before day: Date,
+                                    calendar: Calendar) -> Date? {
+        let dayStart = calendar.startOfDay(for: day)
+        var latest: Date?
+        for activity in activities {
+            let activityDay = calendar.startOfDay(for: activity.committedAt)
+            guard activityDay < dayStart else { continue }
+            if latest == nil || activityDay > latest! {
+                latest = activityDay
+            }
+        }
+        return latest
+    }
+
+    /// Last non-weekend day strictly before `day`. Fallback when the
+    /// lookback window holds no attributed commits at all.
+    static func previousWeekday(before day: Date, calendar: Calendar) -> Date {
+        var candidate = calendar.startOfDay(for: day)
+        repeat {
+            candidate = calendar.date(byAdding: .day, value: -1, to: candidate) ?? candidate
+        } while calendar.isDateInWeekend(candidate)
+        return candidate
+    }
+
+    /// Half-open interval `[startOfReportedDay, startOfNextDay)` covering the
+    /// single reported workday.
+    static func workdayInterval(for day: Date, calendar: Calendar) -> DateInterval {
+        let start = calendar.startOfDay(for: day)
+        let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start
+        return DateInterval(start: start, end: end)
+    }
+
     // MARK: - Composition
 
-    /// Builds the deterministic local brief for `day`. Yesterday lines come
-    /// from commit activity; today tasks carry forward from the most recent
-    /// earlier brief so the user keeps their plan across days.
+    /// Builds the deterministic local brief for `day`. Lines come from the
+    /// collected commit activity; the brief is a record of completed work.
     static func compose(
         day: Date,
         activities: [CommitActivity],
-        carriedTasks: [String],
         now: Date = Date(),
         activityRange: DateInterval? = nil,
         sourceRepositoryNames: [String] = []
@@ -127,14 +164,11 @@ enum BriefComposer {
         let lines = activities.isEmpty
             ? [Self.quietDayLine]
             : yesterdayLines(from: activities)
-        let tasks = Array(carriedTasks.prefix(MorningBrief.maxTodayTasks))
         return MorningBrief(
             day: day,
             yesterdayLines: lines,
-            todayTasks: tasks,
             generatedAt: now,
             source: .local,
-            tasksManuallyEdited: false,
             activityRangeStart: activityRange?.start,
             activityRangeEnd: activityRange?.end,
             sourceRepositoryNames: Self.uniqueNames(sourceRepositoryNames)

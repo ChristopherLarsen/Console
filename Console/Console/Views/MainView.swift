@@ -6,6 +6,7 @@ struct MainView: View {
     @AppStorage("sidebarSelection") private var sidebarSelection: SidebarSelection = .home
     @AppStorage("tabSelection") private var tabSelection: TabSelection = .triggers
     @AppStorage(ConsoleNavigation.terminalExpandedKey) private var isTerminalExpanded: Bool = true
+    @AppStorage(AppSettings.aiProviderEnabledKey) private var isAIProviderEnabled = false
     @State private var terminalSessionManager = TerminalSessionManager()
     @State private var terminalPanelHeight: CGFloat = 250
     @State private var terminalResizeStartHeight: CGFloat = 250
@@ -60,6 +61,13 @@ struct MainView: View {
             }
             if newValue != .settings {
                 launchCoordinator.restoreCollisionSheetIfNeeded()
+            }
+        }
+        .onChange(of: isAIProviderEnabled) { _, enabled in
+            // The destination disappears with the toggle; never leave the
+            // selection parked on a hidden item.
+            if !enabled, sidebarSelection == .aiProvider {
+                sidebarSelection = .home
             }
         }
         .onChange(of: isTerminalExpanded) { _, expanded in

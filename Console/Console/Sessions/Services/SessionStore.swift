@@ -256,6 +256,7 @@ final class SessionStore {
 
         let coordinator = SessionTerminalCoordinator(sessionID: consoleID, store: self)
         terminalView.processDelegate = coordinator
+        (terminalView as? ConsoleTerminalView)?.retainedSessionCoordinator = coordinator
 
         // Plugin/bridge preparation is optional. A failure of either the
         // plugin assembly or the socket/server still launches the resolved

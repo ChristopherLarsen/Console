@@ -730,8 +730,7 @@ struct ConsoleApp: App {
             let sources = await attribution.sources(for: workspaces, probing: collector)
             _ = await BriefGenerationService(collector: collector).ensureBrief(
                 for: Date(),
-                sources: sources,
-                range: attribution.dateRange
+                sources: sources
             )
         }
     }

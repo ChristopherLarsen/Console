@@ -81,16 +81,23 @@ struct HomeView: View {
                 nextStorySlot(board)
             },
             accessory: {
-                Button {
-                    sources.refreshJira()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 18, weight: .regular))
-                        .frame(minWidth: 28, minHeight: 28)
-                        .contentShape(Rectangle())
+                HStack(spacing: 6) {
+                    HomeRefreshAgeLabel(
+                        lastRefresh: model.snapshot().jiraStatus.lastSuccessfulExtraction
+                    )
+                    .accessibilityIdentifier("HomeNextRefreshAge")
+
+                    Button {
+                        sources.refreshJira()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 18, weight: .regular))
+                            .frame(minWidth: 28, minHeight: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .help("Refresh Jira")
+                    .accessibilityIdentifier("HomeNextRefreshButton")
                 }
-                .help("Refresh Jira")
-                .accessibilityIdentifier("HomeNextRefreshButton")
             }
         )
         .accessibilityIdentifier("HomeNextColumn")
@@ -139,6 +146,9 @@ struct HomeView: View {
 
     // MARK: In Progress
 
+    /// Jira WIP limit: at most six in-progress stories render on the board.
+    private static let maxInProgressStories = 6
+
     private func inProgressColumn(_ board: HomeBoard, sessions: [ConsoleSession]) -> some View {
         HomeBoardColumn(
             title: "In Progress",
@@ -157,30 +167,49 @@ struct HomeView: View {
                         )
                     }
                 } else {
-                    ForEach(Array(board.inProgressTickets.enumerated()), id: \.element.key) { index, ticket in
+                    ForEach(
+                        Array(board.inProgressTickets.prefix(Self.maxInProgressStories).enumerated()),
+                        id: \.element.key
+                    ) { index, ticket in
                         inProgressCard(ticket, sessions: sessions, index: index)
+                    }
+
+                    if board.inProgressTickets.count > Self.maxInProgressStories {
+                        Text("Additional stories are in progress")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .accessibilityIdentifier("HomeInProgressOverflowFooter")
                     }
                 }
             },
             accessory: {
-                Button {
-                    sources.refreshJira()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 18, weight: .regular))
-                        .frame(minWidth: 28, minHeight: 28)
-                        .contentShape(Rectangle())
+                HStack(spacing: 6) {
+                    HomeRefreshAgeLabel(
+                        lastRefresh: model.snapshot().jiraStatus.lastSuccessfulExtraction
+                    )
+                    .accessibilityIdentifier("HomeInProgressRefreshAge")
+
+                    Button {
+                        sources.refreshJira()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 18, weight: .regular))
+                            .frame(minWidth: 28, minHeight: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .help("Refresh Jira")
+                    .accessibilityIdentifier("HomeInProgressRefreshButton")
                 }
-                .help("Refresh Jira")
-                .accessibilityIdentifier("HomeInProgressRefreshButton")
             }
         )
         .accessibilityIdentifier("HomeInProgressColumn")
     }
 
+    /// Quiet count only — the column title already names the source.
     private func inProgressDetail(_ board: HomeBoard) -> String? {
-        guard board.jiraHealth.retainsContent else { return "JIRA" }
-        return "JIRA · \(board.inProgressTickets.count)"
+        guard board.jiraHealth.retainsContent else { return nil }
+        return "\(board.inProgressTickets.count)"
     }
 
     private func inProgressCard(
@@ -255,7 +284,11 @@ struct HomeView: View {
             },
             accessory: {
                 HStack(spacing: 6) {
-                    reviewInfoButton
+                    HomeRefreshAgeLabel(
+                        lastRefresh: model.snapshot().reviewStatus.lastSuccessfulExtraction
+                    )
+                    .accessibilityIdentifier("HomeReviewRefreshAge")
+
                     Button {
                         reviewScanScheduler?.scanNow()
                     } label: {
@@ -276,24 +309,6 @@ struct HomeView: View {
         guard board.reviewHealth.retainsContent else { return "GitLab" }
         return "GitLab · \(board.reviewQueue.count)"
     }
-
-    /// Discloses the Review column's approximations: Console sees the host's
-    /// review state but cannot confirm who reviewed or whether the author
-    /// has responded since, and the urgency order reads the host-rendered
-    /// timestamp and target version.
-    private var reviewInfoButton: some View {
-        Image(systemName: "info.circle")
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .help(Self.reviewProvenanceText)
-            .accessibilityLabel("About the Review column")
-            .accessibilityIdentifier("HomeReviewInfo")
-    }
-
-    static let reviewProvenanceText =
-        "Shows every merge request in your review queue, most urgent first: "
-        + "re-reviews before first reviews, lower target versions before higher, older before newer. "
-        + "Console cannot confirm who reviewed them or whether the author has responded."
 
     // MARK: - Source recovery
 

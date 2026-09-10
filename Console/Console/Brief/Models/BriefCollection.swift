@@ -29,19 +29,6 @@ struct BriefCollectionRequest: Sendable {
         self.rangeEnd = max(rangeStart, rangeEnd)
         self.calendar = calendar
     }
-
-    init(sources: [BriefCollectionSource],
-         range: BriefDateRangeSelection,
-         briefDay: Date,
-         calendar: Calendar) {
-        let interval = range.interval(relativeTo: briefDay, calendar: calendar)
-        self.init(
-            sources: sources,
-            rangeStart: interval.start,
-            rangeEnd: interval.end,
-            calendar: calendar
-        )
-    }
 }
 
 /// A repository that was actually opened while collecting activity.

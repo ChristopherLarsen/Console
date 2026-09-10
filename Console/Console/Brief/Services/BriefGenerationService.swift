@@ -13,7 +13,6 @@ struct BriefOperationToken: Equatable, Sendable {
     let id: UInt64
     let day: Date
     let kind: BriefOperationKind
-    let taskEditRevision: UInt64
 }
 
 /// Result of finishing generate/refine. `.superseded` must not be written
@@ -24,7 +23,7 @@ enum BriefOperationOutcome: Equatable {
 }
 
 /// Owns brief lifecycle for the app: ensures a pre-prepared brief exists for
-/// today, regenerates it, applies AI refinement, and persists task edits.
+/// today, regenerates it, and applies AI refinement.
 ///
 /// Policy: **last-started operation wins**. Starting Regenerate supersedes an
 /// in-flight Refine, and starting Refine supersedes an in-flight Regenerate.
@@ -34,8 +33,6 @@ final class BriefGenerationService {
     private let store: BriefStore
     private let collector: any BriefActivityCollecting
     private let sequencer: BriefOperationSequencer
-
-    private var taskEditRevisionByDay: [Date: UInt64] = [:]
 
     /// Persisted-content error from the most recent write attempt. Save
     /// failures must be visible: the UI otherwise shows content the disk
@@ -96,12 +93,15 @@ final class BriefGenerationService {
         return BriefOperationToken(
             id: id,
             day: dayStart,
-            kind: kind,
-            taskEditRevision: taskEditRevisionByDay[dayStart] ?? 0
+            kind: kind
         )
     }
 
     // MARK: - Generation
+
+    /// How far back auto-detection searches for the last day with completed
+    /// work before giving up and reporting a quiet weekday.
+    static let workdayLookbackDays = 14
 
     /// Returns today's stored brief, generating it deterministically when
     /// missing. Cheap to call on every panel open; collection only runs when
@@ -109,19 +109,19 @@ final class BriefGenerationService {
     func ensureBrief(for day: Date,
                      workspacePaths: [String],
                      calendar: Calendar = .current,
-                     range: BriefDateRangeSelection = .yesterday) async -> MorningBrief {
+                     workday: Date? = nil) async -> MorningBrief {
         await ensureBrief(
             for: day,
             sources: Self.sources(from: workspacePaths),
             calendar: calendar,
-            range: range
+            workday: workday
         )
     }
 
     func ensureBrief(for day: Date,
                      sources: [BriefCollectionSource],
                      calendar: Calendar = .current,
-                     range: BriefDateRangeSelection = .yesterday) async -> MorningBrief {
+                     workday: Date? = nil) async -> MorningBrief {
         let dayStart = BriefStore.startOfDay(for: day, calendar: calendar)
         if let existing = store.load(forDay: dayStart) {
             return existing
@@ -131,7 +131,7 @@ final class BriefGenerationService {
             from: await performGeneration(
                 dayStart: dayStart,
                 sources: sources,
-                range: range,
+                workday: workday,
                 calendar: calendar,
                 token: token
             ),
@@ -142,13 +142,13 @@ final class BriefGenerationService {
     func ensureBrief(for day: Date,
                      workspacePaths: [String],
                      calendar: Calendar = .current,
-                     range: BriefDateRangeSelection = .yesterday,
+                     workday: Date? = nil,
                      token: BriefOperationToken) async -> BriefOperationOutcome {
         await ensureBrief(
             for: day,
             sources: Self.sources(from: workspacePaths),
             calendar: calendar,
-            range: range,
+            workday: workday,
             token: token
         )
     }
@@ -156,7 +156,7 @@ final class BriefGenerationService {
     func ensureBrief(for day: Date,
                      sources: [BriefCollectionSource],
                      calendar: Calendar = .current,
-                     range: BriefDateRangeSelection = .yesterday,
+                     workday: Date? = nil,
                      token: BriefOperationToken) async -> BriefOperationOutcome {
         let dayStart = BriefStore.startOfDay(for: day, calendar: calendar)
         if let existing = store.load(forDay: dayStart) {
@@ -166,38 +166,37 @@ final class BriefGenerationService {
         return await performGeneration(
             dayStart: dayStart,
             sources: sources,
-            range: range,
+            workday: workday,
             calendar: calendar,
             token: token
         )
     }
 
-    /// Rebuilds yesterday's lines from current activity data. Manually edited
-    /// tasks always survive, and a quiet collection result never erases an
-    /// already-recorded report.
+    /// Rebuilds the report from current activity data. A quiet collection
+    /// result never erases an already-recorded report.
     func regenerate(for day: Date,
                     workspacePaths: [String],
                     calendar: Calendar = .current,
-                    range: BriefDateRangeSelection = .yesterday) async -> MorningBrief {
+                    workday: Date? = nil) async -> MorningBrief {
         await regenerate(
             for: day,
             sources: Self.sources(from: workspacePaths),
             calendar: calendar,
-            range: range
+            workday: workday
         )
     }
 
     func regenerate(for day: Date,
                     sources: [BriefCollectionSource],
                     calendar: Calendar = .current,
-                    range: BriefDateRangeSelection = .yesterday) async -> MorningBrief {
+                    workday: Date? = nil) async -> MorningBrief {
         let dayStart = BriefStore.startOfDay(for: day, calendar: calendar)
         let token = beginOperation(.generate, for: dayStart, calendar: calendar)
         return resolvedBrief(
             from: await performGeneration(
                 dayStart: dayStart,
                 sources: sources,
-                range: range,
+                workday: workday,
                 calendar: calendar,
                 token: token
             ),
@@ -208,13 +207,13 @@ final class BriefGenerationService {
     func regenerate(for day: Date,
                     workspacePaths: [String],
                     calendar: Calendar = .current,
-                    range: BriefDateRangeSelection = .yesterday,
+                    workday: Date? = nil,
                     token: BriefOperationToken) async -> BriefOperationOutcome {
         await regenerate(
             for: day,
             sources: Self.sources(from: workspacePaths),
             calendar: calendar,
-            range: range,
+            workday: workday,
             token: token
         )
     }
@@ -222,12 +221,12 @@ final class BriefGenerationService {
     func regenerate(for day: Date,
                     sources: [BriefCollectionSource],
                     calendar: Calendar = .current,
-                    range: BriefDateRangeSelection = .yesterday,
+                    workday: Date? = nil,
                     token: BriefOperationToken) async -> BriefOperationOutcome {
         await performGeneration(
             dayStart: BriefStore.startOfDay(for: day, calendar: calendar),
             sources: sources,
-            range: range,
+            workday: workday,
             calendar: calendar,
             token: token
         )
@@ -235,60 +234,75 @@ final class BriefGenerationService {
 
     private func performGeneration(dayStart: Date,
                                    sources: [BriefCollectionSource],
-                                   range: BriefDateRangeSelection,
+                                   workday: Date?,
                                    calendar: Calendar,
                                    token: BriefOperationToken) async -> BriefOperationOutcome {
+        // Explicit pick: collect exactly that workday. Auto: scan a lookback
+        // window so the last day with completed work wins — weekends,
+        // holidays, and quiet days are skipped automatically.
+        let window: DateInterval
+        if let workday {
+            window = BriefComposer.workdayInterval(for: workday, calendar: calendar)
+        } else {
+            let lookbackStart = calendar.date(
+                byAdding: .day,
+                value: -Self.workdayLookbackDays,
+                to: dayStart
+            ) ?? dayStart
+            window = DateInterval(start: lookbackStart, end: dayStart)
+        }
         let request = BriefCollectionRequest(
             sources: sources,
-            range: range,
-            briefDay: dayStart,
+            rangeStart: window.start,
+            rangeEnd: window.end,
             calendar: calendar
         )
         let collected = await collector.collectActivities(request)
         guard isCurrent(token) else { return .superseded }
 
+        let reportedDay: Date
+        let dayActivities: [CommitActivity]
+        if let workday {
+            // An explicit pick reports exactly that workday.
+            reportedDay = calendar.startOfDay(for: workday)
+            dayActivities = collected.activities.filter {
+                calendar.startOfDay(for: $0.committedAt) == reportedDay
+            }
+        } else if let activeDay = BriefComposer.mostRecentActiveDay(
+            of: collected.activities,
+            before: dayStart,
+            calendar: calendar
+        ) {
+            reportedDay = activeDay
+            dayActivities = collected.activities.filter {
+                calendar.startOfDay(for: $0.committedAt) == activeDay
+            }
+        } else {
+            reportedDay = BriefComposer.previousWeekday(before: dayStart, calendar: calendar)
+            dayActivities = []
+        }
+
         let latest = store.load(forDay: dayStart)
-        let editedDuringFlight = (taskEditRevisionByDay[dayStart] ?? 0) > token.taskEditRevision
-        let carriedTasks = carriedTasks(
-            from: latest,
-            dayStart: dayStart,
-            calendar: calendar,
-            preserveLatestTasks: editedDuringFlight
-        )
         var brief = BriefComposer.compose(
             day: dayStart,
-            activities: collected.activities,
-            carriedTasks: carriedTasks,
-            activityRange: request.interval,
+            activities: dayActivities,
+            activityRange: BriefComposer.workdayInterval(for: reportedDay, calendar: calendar),
             sourceRepositoryNames: collected.sourceRepositories.map(\.displayName)
         )
-        if let latest {
-            brief.tasksManuallyEdited = latest.tasksManuallyEdited
-            // A quiet result never erases an already-recorded report.
+        if let latest, workday == nil {
+            // A quiet auto-detected result never erases an already-recorded
+            // report. Explicit picks always report exactly the chosen day.
             if brief.yesterdayLines == [BriefComposer.quietDayLine],
                latest.yesterdayLines != [BriefComposer.quietDayLine] {
                 brief.yesterdayLines = latest.yesterdayLines
                 brief.activityRangeStart = latest.activityRangeStart
                 brief.activityRangeEnd = latest.activityRangeEnd
                 brief.sourceRepositoryNames = latest.sourceRepositoryNames
-                if !brief.tasksManuallyEdited { brief.source = latest.source }
+                brief.source = latest.source
             }
         }
         save(brief)
         return .applied(brief)
-    }
-
-    private func carriedTasks(from latest: MorningBrief?,
-                              dayStart: Date,
-                              calendar: Calendar,
-                              preserveLatestTasks: Bool) -> [String] {
-        if let latest, latest.tasksManuallyEdited || preserveLatestTasks {
-            return latest.todayTasks
-        }
-        if let latest, !latest.todayTasks.isEmpty {
-            return latest.todayTasks
-        }
-        return store.loadMostRecent(before: dayStart, calendar: calendar)?.todayTasks ?? []
     }
 
     private func resolvedBrief(from outcome: BriefOperationOutcome,
@@ -298,7 +312,7 @@ final class BriefGenerationService {
             return brief
         case .superseded:
             return store.load(forDay: dayStart)
-                ?? BriefComposer.compose(day: dayStart, activities: [], carriedTasks: [])
+                ?? BriefComposer.compose(day: dayStart, activities: [])
         }
     }
 
@@ -315,8 +329,7 @@ final class BriefGenerationService {
 
     // MARK: - Mutations
 
-    /// Applies parsed AI output as the new report content. Today tasks are
-    /// only taken when the user has not hand-edited them.
+    /// Applies parsed AI output as the new report content.
     @discardableResult
     func applyRefinement(_ parsed: BriefAIResponseParser.Parsed, to brief: MorningBrief) -> MorningBrief {
         let token = beginOperation(.refine, for: brief.day)
@@ -335,27 +348,10 @@ final class BriefGenerationService {
 
         var updated = latest
         updated.yesterdayLines = parsed.yesterdayLines
-        let editedDuringFlight = (taskEditRevisionByDay[token.day] ?? 0) > token.taskEditRevision
-        if !latest.tasksManuallyEdited, !editedDuringFlight, !parsed.todayTasks.isEmpty {
-            updated.todayTasks = parsed.todayTasks
-        }
         updated.source = .ai
         updated.generatedAt = Date()
         save(updated)
         return .applied(updated)
-    }
-
-    /// Persists a hand edit of today's tasks.
-    @discardableResult
-    func updateTasks(_ tasks: [String], in brief: MorningBrief) -> MorningBrief {
-        let day = brief.day
-        taskEditRevisionByDay[day, default: 0] += 1
-        let latest = store.load(forDay: day) ?? brief
-        var updated = latest
-        updated.todayTasks = Array(tasks.prefix(MorningBrief.maxTodayTasks))
-        updated.tasksManuallyEdited = true
-        save(updated)
-        return updated
     }
 
     /// Persists and records a failure in `lastPersistenceError` so the UI can

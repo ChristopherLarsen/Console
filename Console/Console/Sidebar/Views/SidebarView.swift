@@ -7,6 +7,8 @@ struct SidebarView: View {
     /// expansion preference and the Focus Mode guard).
     @Binding var isTerminalExpanded: Bool
     @Environment(ThemeManager.self) private var themeManager
+    /// The AI Provider destination only exists when enabled in Settings.
+    @AppStorage(AppSettings.aiProviderEnabledKey) private var isAIProviderEnabled = false
 
     var body: some View {
         ZStack {
@@ -31,14 +33,6 @@ struct SidebarView: View {
                             isSelected: selection == .home
                         ) {
                             selection = .home
-                        }
-
-                        SidebarRow(
-                            label: SidebarSelection.brief.label,
-                            icon: SidebarSelection.brief.icon,
-                            isSelected: selection == .brief
-                        ) {
-                            selection = .brief
                         }
 
                         SidebarRow(
@@ -74,11 +68,21 @@ struct SidebarView: View {
                         }
 
                         SidebarRow(
-                            label: SidebarSelection.aiProvider.label,
-                            icon: SidebarSelection.aiProvider.icon,
-                            isSelected: selection == .aiProvider
+                            label: SidebarSelection.brief.label,
+                            icon: SidebarSelection.brief.icon,
+                            isSelected: selection == .brief
                         ) {
-                            selection = .aiProvider
+                            selection = .brief
+                        }
+
+                        if isAIProviderEnabled {
+                            SidebarRow(
+                                label: SidebarSelection.aiProvider.label,
+                                icon: SidebarSelection.aiProvider.icon,
+                                isSelected: selection == .aiProvider
+                            ) {
+                                selection = .aiProvider
+                            }
                         }
                     }
                 }
