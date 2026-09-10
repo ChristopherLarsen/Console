@@ -27,9 +27,8 @@ Console/
 │   ├── ConsoleUITests/       # UI tests — TARGETED RUNS ONLY, never full suite
 │   ├── ConsoleTermBridge/    # signed CLI helper target (hook + MCP modes)
 │   └── SwiftTerm/            # VENDORED terminal emulator — do not modify unless explicitly tasked
-├── CatalogGenerator/         # dev-only SPM CLI → generates bundled ActionCatalog.json (never ships)
 ├── Design/HomeCards/         # shared home-card design grammar (DESIGN_PROMPT.md §3)
-├── Scripts/                  # generate-catalog.sh, clean-install.sh
+├── Scripts/                  # clean-install.sh
 ├── docs/                     # agent-console ledgers (`overview`, build/test) and `docs/reviews/`
 └── CONSOLE_*.md              # binding spec documents (see docs index in the charter)
 ```
@@ -70,7 +69,6 @@ to add files.
    transcripts, ticket content, or summaries.
 4. **API keys only in the Keychain** (`KeychainManager` / `AIKeychain`).
 5. **SwiftTerm is vendored** — treat as a dependency, not app code.
-6. **CatalogGenerator never ships**; only its generated `ActionCatalog.json`
-   resource ships (committed to repo).
+6. **ActionCatalog.json** is a bundled command-reference resource (committed to repo).
 7. Accessibility identifiers are stable and generic (`JiraWebView`,
    `SessionRow.<name>`) — never embed ticket keys, titles, URLs, or company data.

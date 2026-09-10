@@ -96,12 +96,3 @@ repeatedly — looks like a hang. Guards:
 Filesystem-synchronized Xcode groups: drop new `.swift` files under
 `Console/Console/` (app) or `Console/ConsoleTests/` (unit tests) and they are
 picked up automatically. No project-file surgery required.
-
-## CatalogGenerator (dev-only CLI)
-
-```bash
-./Scripts/generate-catalog.sh all        # or: build | discover | generate | validate | review
-```
-
-Output `ActionCatalog.json` is committed and bundled with the shipping app.
-The tool itself never ships. See `CatalogGenerator/README.md`.

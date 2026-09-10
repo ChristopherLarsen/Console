@@ -40,13 +40,6 @@ Carthage/Build/
 .claude/
 .cursor/debug.log
 
-# Catalog Generator (dev tool)
-CatalogGenerator/.build/
-CatalogGenerator/discovered-apps.json
-CatalogGenerator/discovered-system-apps.json
-CatalogGenerator/filtered-apps.json
-CatalogGenerator/*.backup
-
 # Local developer commands (may contain secrets)
 DeveloperCommands/
 

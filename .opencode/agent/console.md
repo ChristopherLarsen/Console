@@ -54,8 +54,7 @@ speech+AI pipeline, `Speech/`, `Sessions/` Claude PTYs + hook/MCP bridge,
 quadrants, `Brief/`, `Next/`, `Note/`, `Terminal/` zsh drawer,
 `Permissions/`, `Updates/`, `MenuBar/`, `Settings/`, `App/` wiring).
 Build/test from the `Console/` subdirectory that contains `Console.xcodeproj`.
-`CatalogGenerator/` is a dev-only SPM CLI that regenerates the bundled
-`ActionCatalog.json`.
+`ActionCatalog.json` is the bundled command-reference resource.
 
 ## Working method
 
