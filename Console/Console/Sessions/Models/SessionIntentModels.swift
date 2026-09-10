@@ -146,6 +146,40 @@ struct SessionWorkspace: Identifiable, Codable, Equatable {
     }
 }
 
+// MARK: - New-ticket display names
+
+/// Display-name rules for new-ticket session creation. The story number is
+/// the identity the developer recognizes: `NMA-1234` renders as `S-1234`.
+/// Any other project key keeps its full key. Local display only — the name
+/// never reaches Claude.
+nonisolated enum NewTicketSessionNaming {
+    /// `NMA-1234` → `S-1234`; any other key keeps its full uppercased key.
+    static func displayName(forJiraKey key: String) -> String {
+        if let match = key.firstMatch(of: /^(?i)NMA-(\d+)$/) {
+            return "S-\(match.1)"
+        }
+        return key.uppercased()
+    }
+
+    /// Parses user-typed story input — `1234`, `S-1234`, `NMA-1234`, or
+    /// `NMA1234` — into the bare digits. Anything else is rejected.
+    static func storyNumber(fromRaw raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        for pattern in [/^(\d+)$/, /^(?i)S-?(\d+)$/, /^(?i)NMA-?(\d+)$/] {
+            if let match = trimmed.firstMatch(of: pattern) {
+                return String(match.1)
+            }
+        }
+        return nil
+    }
+
+    /// Display name for a parsed story number: always the `S-` form, since
+    /// the picker's New Ticket step asks for NMA story numbers.
+    static func displayName(forStoryNumber number: String) -> String {
+        displayName(forJiraKey: "NMA-\(number)")
+    }
+}
+
 // MARK: - Source context parsing (memory-only)
 
 /// Parses Jira keys and URLs out of strings the retained WebView already

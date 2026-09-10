@@ -52,6 +52,40 @@ final class SessionLaunchNamingTests: XCTestCase {
         )
     }
 
+    // MARK: - New-ticket display names (S-XXXX rule)
+
+    func testNMAKeysRenderAsSNames() {
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "NMA-1234"), "S-1234")
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "NMA-42"), "S-42")
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "nma-7"), "S-7")
+    }
+
+    func testNonNMAKeysKeepTheirFullKey() {
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "ENG-1234"), "ENG-1234")
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "ab2-9"), "AB2-9")
+    }
+
+    func testStoryNumberParsingAcceptsFriendlyForms() {
+        XCTAssertEqual(NewTicketSessionNaming.storyNumber(fromRaw: "1234"), "1234")
+        XCTAssertEqual(NewTicketSessionNaming.storyNumber(fromRaw: " 42 "), "42")
+        XCTAssertEqual(NewTicketSessionNaming.storyNumber(fromRaw: "S-1234"), "1234")
+        XCTAssertEqual(NewTicketSessionNaming.storyNumber(fromRaw: "s7"), "7")
+        XCTAssertEqual(NewTicketSessionNaming.storyNumber(fromRaw: "NMA-1234"), "1234")
+        XCTAssertEqual(NewTicketSessionNaming.storyNumber(fromRaw: "nma1234"), "1234")
+    }
+
+    func testStoryNumberParsingRejectsNonNumbers() {
+        XCTAssertNil(NewTicketSessionNaming.storyNumber(fromRaw: ""))
+        XCTAssertNil(NewTicketSessionNaming.storyNumber(fromRaw: "ENG-123"))
+        XCTAssertNil(NewTicketSessionNaming.storyNumber(fromRaw: "S-12x4"))
+        XCTAssertNil(NewTicketSessionNaming.storyNumber(fromRaw: "fix login"))
+    }
+
+    func testStoryNumberDisplayNameIsAlwaysTheSForm() {
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forStoryNumber: "1234"), "S-1234")
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forStoryNumber: "9"), "S-9")
+    }
+
     // MARK: - Starter prompts (never generated)
 
     private let jiraURL = URL(string: "https://sentinel.example.test/browse/SYN-99999")!

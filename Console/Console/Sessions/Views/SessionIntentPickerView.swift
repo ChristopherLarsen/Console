@@ -9,8 +9,17 @@ struct SessionIntentPickerView: View {
 
     enum Step {
         case intents
+        case awaitingNewTicketNumber
         case awaitingJiraContext
         case awaitingMergeRequestContext
+    }
+
+    /// What one inline-context submission resolves to before launch: a
+    /// parsed artifact source, or a bare story number that only names the
+    /// session.
+    enum InlineLaunch {
+        case source(SessionLaunchSource)
+        case namedStory(number: String)
     }
 
     @State private var step: Step = .intents
@@ -28,6 +37,8 @@ struct SessionIntentPickerView: View {
             case .intents:
                 intentRows
                 if let draft { customizeArea(draft: draft) }
+            case .awaitingNewTicketNumber:
+                newTicketNumberStep
             case .awaitingJiraContext:
                 jiraContextStep
             case .awaitingMergeRequestContext:
@@ -113,9 +124,10 @@ struct SessionIntentPickerView: View {
 
     private func showsInlineBadge(_ purpose: SessionPurpose) -> Bool {
         switch purpose {
+        case .newTicket: return true
         case .existingTicket: return retainedJiraSource == nil
         case .review: return retainedMergeRequestSource == nil
-        case .newTicket, .general: return false
+        case .general: return false
         }
     }
 
@@ -136,7 +148,12 @@ struct SessionIntentPickerView: View {
         }
 
         switch purpose {
-        case .newTicket, .general:
+        case .newTicket:
+            withAnimation(.easeInOut(duration: 0.15)) {
+                step = .awaitingNewTicketNumber
+            }
+
+        case .general:
             launch(purpose: purpose, source: nil)
 
         case .existingTicket:
@@ -159,9 +176,13 @@ struct SessionIntentPickerView: View {
         }
     }
 
-    private func launch(purpose: SessionPurpose, source: SessionLaunchSource?) {
+    private func launch(
+        purpose: SessionPurpose,
+        source: SessionLaunchSource?,
+        nameOverride: String? = nil
+    ) {
         var resolvedDraft = coordinator.draft(purpose: purpose, source: source)
-        resolvedDraft.name = effectiveName(for: resolvedDraft)
+        resolvedDraft.name = nameOverride ?? effectiveName(for: resolvedDraft)
         draft = resolvedDraft
 
         Task { @MainActor in
@@ -186,6 +207,21 @@ struct SessionIntentPickerView: View {
 
     // MARK: - Inline context steps
 
+    /// New Ticket always expands here: the story number is the only input,
+    /// and it names the session (`S-1234`). No ticket source is attached.
+    private var newTicketNumberStep: some View {
+        inlineContextStep(
+            title: "Start New Ticket",
+            caption: "Enter the NMA story number — the session is named S-1234. Type the work into Claude yourself.",
+            placeholder: "1234",
+            purpose: .newTicket,
+            identifierPrefix: "Sessions.Launcher.NewTicket"
+        ) { raw in
+            guard let number = NewTicketSessionNaming.storyNumber(fromRaw: raw) else { return nil }
+            return .namedStory(number: number)
+        }
+    }
+
     private var jiraContextStep: some View {
         inlineContextStep(
             title: "Start Existing Ticket",
@@ -198,7 +234,7 @@ struct SessionIntentPickerView: View {
             let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
                 $0.host != nil ? $0 : nil
             }
-            return SessionLaunchSource.jira(key: key, title: nil, url: url)
+            return .source(SessionLaunchSource.jira(key: key, title: nil, url: url))
         }
     }
 
@@ -215,7 +251,7 @@ struct SessionIntentPickerView: View {
                   let mrURL = URL(string: trimmed) else { return nil }
             // Keep the full MR URL (matching retained-page launches) so
             // artifact URLs point at the merge request, not the project root.
-            return .mergeRequest(iid: info.iid, title: nil, url: mrURL)
+            return .source(.mergeRequest(iid: info.iid, title: nil, url: mrURL))
         }
     }
 
@@ -225,7 +261,7 @@ struct SessionIntentPickerView: View {
         placeholder: String,
         purpose: SessionPurpose,
         identifierPrefix: String,
-        parse: @escaping (String) -> SessionLaunchSource?
+        parse: @escaping (String) -> InlineLaunch?
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
@@ -276,14 +312,23 @@ struct SessionIntentPickerView: View {
 
     private func submitInlineContext(
         _ purpose: SessionPurpose,
-        _ parse: (String) -> SessionLaunchSource?
+        _ parse: (String) -> InlineLaunch?
     ) {
-        guard let source = parse(inlineContext) else {
+        guard let resolution = parse(inlineContext) else {
             inlineError = "That does not look like a valid source. Check the format and try again."
             return
         }
         inlineError = nil
-        launch(purpose: purpose, source: source)
+        switch resolution {
+        case let .source(source):
+            launch(purpose: purpose, source: source)
+        case let .namedStory(number):
+            launch(
+                purpose: purpose,
+                source: nil,
+                nameOverride: NewTicketSessionNaming.displayName(forStoryNumber: number)
+            )
+        }
     }
 
     // MARK: - Customize area

@@ -128,6 +128,26 @@ final class SessionsUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
     }
 
+    func testNewTicketExpandsInlineStoryNumberField() throws {
+        launchSessions(preview: false)
+
+        let newButton = element("NewSessionButton")
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+        newButton.tap()
+
+        let newRow = element("Sessions.Intent.newTicket")
+        XCTAssertTrue(newRow.waitForExistence(timeout: 8))
+        newRow.tap()
+
+        let numberField = element("Sessions.Launcher.NewTicket.Field")
+        XCTAssertTrue(
+            numberField.waitForExistence(timeout: 8),
+            "New Ticket expands the inline story-number field. Tree:\n\(app.debugDescription)"
+        )
+
+        app.typeKey(.escape, modifierFlags: [])
+    }
+
     // MARK: - Synthetic launch failure
 
     func testSyntheticLaunchFailureShowsActionableError() throws {

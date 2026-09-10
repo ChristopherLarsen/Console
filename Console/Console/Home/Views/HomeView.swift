@@ -418,7 +418,12 @@ struct HomeView: View {
             ConsoleNavigation.showSessions()
         }
         model.startSessionHandler = { [launchCoordinator] key, title, url in
-            await launchCoordinator.beginJiraTicketLaunch(key: key, title: title, url: url)
+            await launchCoordinator.beginJiraTicketLaunch(
+                key: key,
+                title: title,
+                url: url,
+                displayName: NewTicketSessionNaming.displayName(forJiraKey: key)
+            )
         }
         model.refreshJiraHandler = { [sources] in
             sources.refreshJira()

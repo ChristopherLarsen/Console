@@ -409,6 +409,29 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         assertSourceMetadataAbsent(from: stack)
     }
 
+    func testDisplayNameOverrideNamesSessionButKeepsSourceArtifactKey() async throws {
+        let stack = makeStack()
+        try addWorkspace(stack, named: "NewTicketHome")
+
+        await stack.coordinator.beginJiraTicketLaunch(
+            key: "NMA-1234",
+            title: nil,
+            url: nil,
+            displayName: NewTicketSessionNaming.displayName(forJiraKey: "NMA-1234")
+        )
+
+        let session = try XCTUnwrap(stack.store.selectedSession)
+        XCTAssertEqual(session.name, "S-1234", "new-ticket launches render the story number as S-XXXX")
+        XCTAssertTrue(
+            session.artifacts.contains { $0.label == "NMA-1234" && $0.kind == .jiraIssue },
+            "the seeded Jira artifact keeps the full key so Home story matching still resolves"
+        )
+
+        receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-new-ticket-name")
+        XCTAssertEqual(stack.store.session(withID: session.id)?.activity, .idle)
+        assertSourceMetadataAbsent(from: stack)
+    }
+
     func testToolbarMergeRequestLaunchKeepsSentinelOutOfClaude() async throws {
         let stack = makeStack()
         try addWorkspace(

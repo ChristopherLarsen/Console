@@ -124,9 +124,14 @@ final class SessionLaunchCoordinator {
 
     // MARK: - Typed entry points for browser toolbars / future cards
 
-    func beginJiraTicketLaunch(key: String, title: String?, url: URL?) async {
+    /// `displayName` overrides the automatic key-based session name. Home's
+    /// new-ticket card passes the new-ticket rule (`NMA-1234` → `S-1234`);
+    /// Jira-panel launches keep the automatic key name.
+    func beginJiraTicketLaunch(key: String, title: String?, url: URL?, displayName: String? = nil) async {
         let source = SessionLaunchSource.jira(key: key, title: title, url: url)
-        await startContextualLaunch(draft(purpose: .existingTicket, source: source))
+        var prepared = draft(purpose: .existingTicket, source: source)
+        if let displayName { prepared.name = displayName }
+        await startContextualLaunch(prepared)
     }
 
     func beginMergeRequestReview(iid: String, title: String?, url: URL) async {
