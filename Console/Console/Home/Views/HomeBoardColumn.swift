@@ -21,6 +21,8 @@ struct HomeBoardColumn<Accessory: View, Content: View>: View {
         VStack(spacing: 0) {
             HomePanelHeader(
                 title: title,
+                titleFontSize: HomeCardMetrics.columnTitleFontSize,
+                height: HomeCardMetrics.columnHeaderHeight,
                 detail: {
                     if let detail {
                         HomePanelDetail(detail)

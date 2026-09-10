@@ -106,10 +106,10 @@ struct CommandListView: View {
                     .font(.system(size: 36))
                     .foregroundStyle(Color.accentColor)
 
-                Text("No AI Provider Selected")
+                Text("No Local LLM Connected")
                     .font(.headline)
 
-                Text("Would you like to go to AI Provider to set one up for Console?")
+                Text("Create Command generates with your local LLM. Would you like to go to AI Provider to set one up for Console?")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -319,11 +319,21 @@ struct CommandListView: View {
         persistChanges()
     }
 
+    /// Create Command generates with the local LLM only. Any other provider —
+    /// or a local server that isn't running — gets the error dialogue instead
+    /// of the creation popup.
     private func handleAddCommand() {
-        if aiProviderManager.selectedProvider == .none {
+        guard aiProviderManager.selectedProvider == .lmStudio else {
             showNoProviderAlert = true
-        } else {
-            showCreationSheet = true
+            return
+        }
+        Task {
+            let result = await aiProviderManager.testConnection(for: .lmStudio)
+            if result.isSuccess {
+                showCreationSheet = true
+            } else {
+                showNoProviderAlert = true
+            }
         }
     }
 

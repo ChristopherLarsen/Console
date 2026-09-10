@@ -39,6 +39,11 @@ enum HomeCardMetrics {
 
     /// Panel header height, one row.
     static let headerHeight: CGFloat = 28
+
+    /// Home board column titles: 13pt grown by 50%.
+    static let columnTitleFontSize: CGFloat = 19.5
+    /// Header height that fits the larger column title.
+    static let columnHeaderHeight: CGFloat = 34
 }
 
 extension View {
@@ -87,15 +92,24 @@ extension View {
 /// always this exact shape.
 struct HomePanelHeader<Detail: View, Accessory: View>: View {
     let title: String
+    /// Title point size; 13pt is the shared default, Home board columns opt
+    /// into a larger ramp.
+    var titleFontSize: CGFloat = 13
+    /// Header row height; sized to fit the title font.
+    var height: CGFloat = HomeCardMetrics.headerHeight
     @ViewBuilder var detail: () -> Detail
     @ViewBuilder var accessory: () -> Accessory
 
     init(
         title: String,
+        titleFontSize: CGFloat = 13,
+        height: CGFloat = HomeCardMetrics.headerHeight,
         @ViewBuilder detail: @escaping () -> Detail = { EmptyView() },
         @ViewBuilder accessory: @escaping () -> Accessory
     ) {
         self.title = title
+        self.titleFontSize = titleFontSize
+        self.height = height
         self.detail = detail
         self.accessory = accessory
     }
@@ -103,7 +117,7 @@ struct HomePanelHeader<Detail: View, Accessory: View>: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: titleFontSize, weight: .semibold))
                 .lineLimit(1)
 
             detail()
@@ -115,7 +129,7 @@ struct HomePanelHeader<Detail: View, Accessory: View>: View {
         .buttonStyle(.borderless)
         .controlSize(.small)
         .padding(.horizontal, 10)
-        .frame(height: HomeCardMetrics.headerHeight)
+        .frame(height: height)
         .accessibilityElement(children: .contain)
     }
 }

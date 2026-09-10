@@ -74,8 +74,8 @@ struct HomeView: View {
     /// itself always renders content; the slot owns its state presentation.
     private func nextColumn(_ board: HomeBoard) -> some View {
         HomeBoardColumn(
-            title: "Next",
-            detail: "JIRA",
+            title: "Next Story",
+            detail: nil,
             health: .ready,
             content: {
                 nextStorySlot(board)
@@ -148,6 +148,9 @@ struct HomeView: View {
 
     /// Jira WIP limit: at most six in-progress stories render on the board.
     private static let maxInProgressStories = 6
+
+    /// Review limit: at most six merge requests render on the board.
+    private static let maxReviewRequests = 6
 
     private func inProgressColumn(_ board: HomeBoard, sessions: [ConsoleSession]) -> some View {
         HomeBoardColumn(
@@ -268,7 +271,10 @@ struct HomeView: View {
                         )
                     }
                 } else {
-                    ForEach(Array(board.reviewQueue.enumerated()), id: \.element.id) { index, item in
+                    ForEach(
+                        Array(board.reviewQueue.prefix(Self.maxReviewRequests).enumerated()),
+                        id: \.element.id
+                    ) { index, item in
                         HomeBoardReviewRequestCard(
                             item: item,
                             stateLabel: AttentionChannel.awaitingAuthorReviewState(item.reviewDisplayState)?.label
@@ -279,6 +285,14 @@ struct HomeView: View {
                             model.openReview(item)
                         }
                         .accessibilityIdentifier("HomeReviewCard.\(index)")
+                    }
+
+                    if board.reviewQueue.count > Self.maxReviewRequests {
+                        Text("More merge requests to review")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .accessibilityIdentifier("HomeReviewOverflowFooter")
                     }
                 }
             },
@@ -305,9 +319,10 @@ struct HomeView: View {
         .accessibilityIdentifier("HomeReviewColumn")
     }
 
+    /// Quiet count only — the column title already names the source.
     private func reviewDetail(_ board: HomeBoard) -> String? {
-        guard board.reviewHealth.retainsContent else { return "GitLab" }
-        return "GitLab · \(board.reviewQueue.count)"
+        guard board.reviewHealth.retainsContent else { return nil }
+        return "\(board.reviewQueue.count)"
     }
 
     // MARK: - Source recovery

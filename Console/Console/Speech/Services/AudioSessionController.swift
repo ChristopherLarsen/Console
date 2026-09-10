@@ -50,6 +50,8 @@ final class AudioSessionController {
 
         _ = audioEngine.inputNode
 
+        applyPreferredVoiceProcessing()
+
         audioEngine.prepare()
         do {
             try audioEngine.start()
@@ -57,6 +59,23 @@ final class AudioSessionController {
             printDebug("[AudioSession] Engine prewarmed and running")
         } catch {
             printDebug("[AudioSession] Failed to start engine: \(error)")
+        }
+    }
+
+    /// Voice Isolation-style capture as Console's default: Apple's voice DSP
+    /// (echo cancellation + noise suppression) on the input node. The system
+    /// microphone-mode picker (Standard / Voice Isolation) is read-only to
+    /// apps; this is the app-side equivalent and applies to every listening
+    /// session. May only be toggled while the engine is stopped, which
+    /// prewarmEngine() guarantees.
+    private func applyPreferredVoiceProcessing() {
+        let inputNode = audioEngine.inputNode
+        guard !inputNode.isVoiceProcessingEnabled else { return }
+        do {
+            try inputNode.setVoiceProcessingEnabled(true)
+            printDebug("[AudioSession] Voice processing enabled (Voice Isolation default)")
+        } catch {
+            printDebug("[AudioSession] Voice processing unavailable: \(error)")
         }
     }
 
@@ -81,7 +100,11 @@ final class AudioSessionController {
         }
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
-            self?.audioContinuation?.yield(buffer)
+            // The stream consumes this after the tap returns. Retaining the
+            // engine's buffer does not give the consumer its own sample storage.
+            if let ownedBuffer = Self.copyInputBuffer(buffer) {
+                self?.audioContinuation?.yield(ownedBuffer)
+            }
 
             guard let channelData = buffer.floatChannelData?[0] else { return }
             let frames = Int(buffer.frameLength)
@@ -95,6 +118,38 @@ final class AudioSessionController {
             }
         }
         isMicTapInstalled = true
+    }
+
+    nonisolated static func copyInputBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        // Speech recognition consumes a single microphone channel rather than
+        // a hardware/aggregate-device multichannel layout. Copy while the tap
+        // owns the source samples, including strided interleaved input.
+        if buffer.format.commonFormat == .pcmFormatFloat32 {
+            guard buffer.frameLength > 0,
+                  let input = buffer.floatChannelData?[0],
+                  let format = AVAudioFormat(standardFormatWithSampleRate: buffer.format.sampleRate, channels: 1),
+                  let copy = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: buffer.frameLength),
+                  let output = copy.floatChannelData?[0] else { return nil }
+            copy.frameLength = buffer.frameLength
+            for frame in 0..<Int(buffer.frameLength) {
+                output[frame] = input[frame * buffer.stride]
+            }
+            return copy
+        }
+        guard buffer.frameLength > 0,
+              let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
+            return nil
+        }
+        copy.frameLength = buffer.frameLength
+        let source = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: buffer.audioBufferList))
+        let destination = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
+        guard source.count == destination.count else { return nil }
+        for index in source.indices {
+            guard let input = source[index].mData, let output = destination[index].mData,
+                  source[index].mDataByteSize <= destination[index].mDataByteSize else { return nil }
+            memcpy(output, input, Int(source[index].mDataByteSize))
+        }
+        return copy
     }
 
     private func removeMicTap() {

@@ -89,7 +89,7 @@ struct CommandConfigView: View {
                         Text(interval.displayName).tag(interval.rawValue)
                     }
                 }
-                .frame(width: 120)
+                .frame(width: 240)
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -102,10 +102,6 @@ struct CommandConfigView: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
-
-                Text("Press twice to also show Commands")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
             }
             .contentShape(Rectangle())
             .onTapGesture {

@@ -128,66 +128,6 @@ final class MenuBarManager: NSObject {
         noteItem.image = NSImage(systemSymbolName: "note.text", accessibilityDescription: "Note")
         menu.addItem(noteItem)
 
-        menu.addItem(.separator())
-
-        let triggersItem = NSMenuItem(title: "Triggers", action: #selector(openTriggers), keyEquivalent: "")
-        triggersItem.target = self
-        triggersItem.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Triggers")
-        menu.addItem(triggersItem)
-
-        let commandsItem = NSMenuItem(title: "Commands", action: #selector(openCommands), keyEquivalent: "")
-        commandsItem.target = self
-        commandsItem.image = NSImage(systemSymbolName: "fish.fill", accessibilityDescription: "Commands")
-        menu.addItem(commandsItem)
-
-        let settingsItem = NSMenuItem(title: "Settings", action: #selector(openSettings), keyEquivalent: "")
-        settingsItem.target = self
-        settingsItem.image = NSImage(systemSymbolName: "gear", accessibilityDescription: "Settings")
-        menu.addItem(settingsItem)
-
-        #if DEBUG
-        menu.addItem(.separator())
-
-        let devModeOn = DeveloperModeManager.shared.isDeveloperModeEnabled
-
-        let devModeTitleLabel = NSTextField(labelWithString: "Developer Mode")
-        devModeTitleLabel.font = .menuFont(ofSize: 0)
-        devModeTitleLabel.textColor = .labelColor
-        devModeTitleLabel.sizeToFit()
-
-        let devModeStateLabel = NSTextField(labelWithString: devModeOn ? "✓" : "")
-        devModeStateLabel.font = .menuFont(ofSize: 0)
-        devModeStateLabel.textColor = .secondaryLabelColor
-        devModeStateLabel.sizeToFit()
-
-        let devModeContainer = NSView(frame: NSRect(x: 0, y: 0, width: 250, height: 20))
-        devModeContainer.autoresizingMask = [.width]
-        devModeTitleLabel.frame.origin = NSPoint(x: 14, y: (20 - devModeTitleLabel.frame.height) / 2)
-        devModeTitleLabel.autoresizingMask = []
-        devModeStateLabel.autoresizingMask = [.minXMargin]
-        devModeStateLabel.frame.origin = NSPoint(x: devModeContainer.frame.width - devModeStateLabel.frame.width - 14, y: (20 - devModeStateLabel.frame.height) / 2)
-        devModeContainer.addSubview(devModeTitleLabel)
-        devModeContainer.addSubview(devModeStateLabel)
-
-        let devModeItem = NSMenuItem()
-        devModeItem.view = devModeContainer
-        menu.addItem(devModeItem)
-
-        let devModeClickArea = ClickableMenuView(frame: devModeContainer.frame) { [weak self] in
-            self?.toggleDeveloperMode()
-        }
-        devModeContainer.addSubview(devModeClickArea)
-        devModeClickArea.frame = devModeContainer.bounds
-        devModeClickArea.autoresizingMask = [.width, .height]
-
-        #endif
-
-        menu.addItem(.separator())
-
-        let quitItem = NSMenuItem(title: "Quit Console", action: #selector(quitApp), keyEquivalent: "")
-        quitItem.target = self
-        menu.addItem(quitItem)
-
         guard let button = statusItem?.button else { return }
         statusItem?.menu = menu
         button.performClick(nil)
@@ -216,34 +156,9 @@ final class MenuBarManager: NSObject {
         viewModel?.stopExecution()
     }
 
-    @objc private func openTriggers() {
-        ConsoleNavigation.showTerminal(tab: .triggers)
-        bringAppToFront()
-    }
-
-    @objc private func openCommands() {
-        ConsoleNavigation.showTerminal(tab: .myCommands)
-        bringAppToFront()
-    }
-
-    @objc private func openSettings() {
-        ConsoleNavigation.showSettings()
-        bringAppToFront()
-    }
-
     private func bringAppToFront() {
         ConsoleWindowManager.bringToFront("main")
     }
-
-    @objc private func quitApp() {
-        NSApplication.shared.terminate(nil)
-    }
-
-    #if DEBUG
-    @objc private func toggleDeveloperMode() {
-        DeveloperModeManager.shared.toggleDeveloperMode()
-    }
-    #endif
 
     // MARK: - Global Hotkey
 
@@ -398,24 +313,5 @@ final class MenuBarManager: NSObject {
     func shutdown() {
         cleanupResources()
         statusItem = nil
-    }
-}
-
-// MARK: - Clickable Menu View
-
-private class ClickableMenuView: NSView {
-    private let onClick: () -> Void
-
-    init(frame: NSRect, onClick: @escaping () -> Void) {
-        self.onClick = onClick
-        super.init(frame: frame)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func mouseUp(with event: NSEvent) {
-        onClick()
-        enclosingMenuItem?.menu?.cancelTracking()
     }
 }

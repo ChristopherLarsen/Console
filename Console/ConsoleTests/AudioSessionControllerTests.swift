@@ -47,6 +47,50 @@ final class AudioSessionControllerTests: XCTestCase {
     // MARK: - requestMode with no active mode
 
     @MainActor
+    func testQueuedInputPreservesSamplesWhenSourceIsReused() async throws {
+        let configurations: [(AudioChannelLayoutTag, Bool)] = [
+            (kAudioChannelLayoutTag_MPEG_3_0_A, false),
+            (kAudioChannelLayoutTag_MPEG_3_0_A, true),
+            (kAudioChannelLayoutTag_DiscreteInOrder | 9, false),
+            (kAudioChannelLayoutTag_DiscreteInOrder | 9, true)
+        ]
+        for (layoutTag, interleaved) in configurations {
+            let layout = try XCTUnwrap(AVAudioChannelLayout(layoutTag: layoutTag))
+            let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                                   sampleRate: 48_000, interleaved: interleaved,
+                                                   channelLayout: layout))
+            let source = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 32))
+            source.frameLength = 16
+            let sourceBuffers = UnsafeMutableAudioBufferListPointer(source.mutableAudioBufferList)
+            for (bufferIndex, buffer) in sourceBuffers.enumerated() {
+                let samples = try XCTUnwrap(buffer.mData).assumingMemoryBound(to: Float.self)
+                for index in 0..<(Int(buffer.mDataByteSize) / MemoryLayout<Float>.size) {
+                    let channel = interleaved ? index % Int(format.channelCount) : bufferIndex
+                    samples[index] = Float(channel + 1) * 0.25
+                }
+            }
+            let (stream, continuation) = AsyncStream<AVAudioPCMBuffer>.makeStream()
+            continuation.yield(try XCTUnwrap(AudioSessionController.copyInputBuffer(source)))
+            for buffer in sourceBuffers {
+                memset(try XCTUnwrap(buffer.mData), 0, Int(buffer.mDataByteSize))
+            }
+            continuation.finish()
+            var iterator = stream.makeAsyncIterator()
+            let next = await iterator.next()
+            let received = try XCTUnwrap(next)
+            XCTAssertEqual(received.format.channelCount, 1)
+            XCTAssertEqual(received.format.sampleRate, format.sampleRate)
+            XCTAssertEqual(received.frameLength, 16)
+            for buffer in UnsafeMutableAudioBufferListPointer(received.mutableAudioBufferList) {
+                let samples = try XCTUnwrap(buffer.mData).assumingMemoryBound(to: Float.self)
+                for index in 0..<(Int(buffer.mDataByteSize) / MemoryLayout<Float>.size) {
+                    XCTAssertEqual(samples[index], 0.25)
+                }
+            }
+        }
+    }
+
+    @MainActor
     func testRequestModeWithNoActiveMode() async {
         let controller = AudioSessionController.shared
         let mode = MockMode(identifier: "test", priority: .primary)
