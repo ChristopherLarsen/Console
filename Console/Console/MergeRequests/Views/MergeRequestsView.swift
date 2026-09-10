@@ -62,6 +62,7 @@ struct MergeRequestsView: View {
                     tabStore.reloadStaleTabs()
                     selectPinnedTabIfHinted()
                     loadActiveList()
+                    openPendingNewTab()
                     consumePendingDeepLink()
                 }
                 .onChange(of: tabStore.activeTabID) { _, _ in
@@ -109,6 +110,14 @@ struct MergeRequestsView: View {
         guard let kind = activeKind,
               let url = MergeRequestDeepLink.shared.consume(matching: kind) else { return }
         sessionStore.page(for: kind).load(URLRequest(url: url))
+    }
+
+    /// Opens a queued new-tab handoff — e.g. an MR badge tap from Sessions —
+    /// as its own dynamic tab, after the ordinary list bookkeeping. At the
+    /// tab cap the active tab navigates instead, so the link is never lost.
+    private func openPendingNewTab() {
+        guard let url = MergeRequestDeepLink.shared.consumeNewTab() else { return }
+        tabStore.openTab(url: url)
     }
 
     // MARK: - Navigation

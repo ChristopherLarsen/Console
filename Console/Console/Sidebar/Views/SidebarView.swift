@@ -44,19 +44,19 @@ struct SidebarView: View {
                         }
 
                         SidebarRow(
-                            label: SidebarSelection.sessions.label,
-                            icon: SidebarSelection.sessions.icon,
-                            isSelected: selection == .sessions
-                        ) {
-                            selection = .sessions
-                        }
-
-                        SidebarRow(
                             label: "GitLab",
                             icon: "arrow.triangle.merge",
                             isSelected: selection == .mergeRequests
                         ) {
                             selection = .mergeRequests
+                        }
+
+                        SidebarRow(
+                            label: SidebarSelection.sessions.label,
+                            icon: SidebarSelection.sessions.icon,
+                            isSelected: selection == .sessions
+                        ) {
+                            selection = .sessions
                         }
 
                         SidebarRow(

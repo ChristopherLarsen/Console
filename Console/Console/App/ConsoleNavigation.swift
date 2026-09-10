@@ -100,8 +100,8 @@ enum ConsoleNavigation {
     /// Sidebar destinations addressed by ⌃1…⌃9 (plus ⌃0 when a tenth exists),
     /// in visible sidebar order. Settings deliberately has no number.
     static let sidebarHotkeyDestinations: [SidebarSelection] = [
-        .home, .jira, .sessions,
-        .mergeRequests, .commands, .brief,
+        .home, .jira, .mergeRequests,
+        .sessions, .commands, .brief,
         .aiProvider
     ]
 

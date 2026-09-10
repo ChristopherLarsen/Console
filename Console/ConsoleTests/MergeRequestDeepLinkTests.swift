@@ -42,4 +42,23 @@ final class MergeRequestDeepLinkTests: XCTestCase {
         XCTAssertEqual(MergeRequestDeepLink.shared.consume(matching: .authored), nil)
         XCTAssertEqual(MergeRequestDeepLink.shared.consume(matching: .reviewsRequested), url)
     }
+
+    // MARK: - New-tab handoff
+
+    func testNewTabHandoffIsOneShot() {
+        let url = URL(string: "https://gitlab.example.com/group/project/-/merge_requests/11")!
+        MergeRequestDeepLink.shared.setNewTab(url: url)
+
+        XCTAssertEqual(MergeRequestDeepLink.shared.consumeNewTab(), url)
+        XCTAssertNil(MergeRequestDeepLink.shared.consumeNewTab(), "A consumed tab handoff must not reopen")
+    }
+
+    func testNewTabHandoffIsIndependentOfKindHandoff() {
+        let tabURL = URL(string: "https://gitlab.example.com/group/project/-/merge_requests/12")!
+        MergeRequestDeepLink.shared.setNewTab(url: tabURL)
+
+        XCTAssertNil(MergeRequestDeepLink.shared.consume(matching: .reviewsRequested))
+        XCTAssertNil(MergeRequestDeepLink.shared.consumeKindHint())
+        XCTAssertEqual(MergeRequestDeepLink.shared.consumeNewTab(), tabURL)
+    }
 }

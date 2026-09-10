@@ -9,6 +9,9 @@ final class MergeRequestDeepLink {
 
     private var pendingURL: URL?
     private var pendingKind: CodeHostListKind?
+    /// URL queued to open as its own new browser tab (never a pinned list
+    /// page) the next time the destination appears.
+    private var pendingNewTabURL: URL?
 
     func set(url: URL, kind: CodeHostListKind) {
         set(url: Optional.some(url), kind: kind)
@@ -39,8 +42,21 @@ final class MergeRequestDeepLink {
         return pendingKind
     }
 
+    /// Queues a URL that must open as a new dynamic browser tab instead of
+    /// landing on a pinned list page. Unrelated to the kind-based handoff.
+    func setNewTab(url: URL) {
+        pendingNewTabURL = url
+    }
+
+    /// Returns and clears the pending new-tab URL.
+    func consumeNewTab() -> URL? {
+        defer { pendingNewTabURL = nil }
+        return pendingNewTabURL
+    }
+
     func reset() {
         pendingURL = nil
         pendingKind = nil
+        pendingNewTabURL = nil
     }
 }

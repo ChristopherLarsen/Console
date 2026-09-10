@@ -30,7 +30,17 @@ struct SessionTerminalPane: View {
     }
 
     private var showsInfoStrip: Bool {
-        session.summary != nil || !session.artifacts.isEmpty
+        session.summary != nil || !infoStripArtifacts.isEmpty
+    }
+
+    /// The session's most recent merge-request artifact, rendered as the
+    /// tappable header badge. The info strip deliberately excludes it.
+    private var mergeRequestArtifact: SessionArtifact? {
+        session.artifacts.last { $0.kind == .gitlabMergeRequest }
+    }
+
+    private var infoStripArtifacts: [SessionArtifact] {
+        session.artifacts.filter { $0.kind != .gitlabMergeRequest }
     }
 
     private var header: some View {
@@ -55,6 +65,8 @@ struct SessionTerminalPane: View {
 
             Spacer()
 
+            mergeRequestBadge
+
             colorMenu
 
             Button(action: onTerminate) {
@@ -69,6 +81,44 @@ struct SessionTerminalPane: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// Tappable chip for the session's merge-request artifact: opens the
+    /// GitLab destination with the MR in a new browser tab for review.
+    /// Memory-only handoff — the URL never leaves the process.
+    @ViewBuilder
+    private var mergeRequestBadge: some View {
+        if let artifact = mergeRequestArtifact {
+            Button {
+                openMergeRequest(artifact)
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.triangle.merge")
+                        .font(.caption2)
+                    Text(artifact.label)
+                        .font(.caption)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
+                .overlay(Capsule().stroke(Color(nsColor: .separatorColor), lineWidth: 0.5))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(artifact.url == nil)
+            .help("Review this merge request in GitLab")
+            .accessibilityLabel("Review \(artifact.label) in GitLab")
+            .accessibilityIdentifier("Sessions.MergeRequestBadge")
+        }
+    }
+
+    /// Queues the MR URL as a new-tab handoff and switches to the GitLab
+    /// destination, which consumes it on appear.
+    private func openMergeRequest(_ artifact: SessionArtifact) {
+        guard let url = artifact.url else { return }
+        MergeRequestDeepLink.shared.setNewTab(url: url)
+        ConsoleNavigation.show(.mergeRequests)
     }
 
     /// Palette for Claude Code's `/color` command. Disabled after Claude
@@ -88,10 +138,12 @@ struct SessionTerminalPane: View {
                 .accessibilityIdentifier("Sessions.Color.\(option.argument)")
             }
         } label: {
-            Image(systemName: "paintpalette")
+            Image(systemName: "square.fill")
                 .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.gray)
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .fixedSize()
         .disabled(session.activity == .exited)
         .help("Set Claude session color — use with an empty prompt.")
@@ -167,6 +219,8 @@ private struct SessionInstrumentationWarning: View {
 
 /// Compact strip showing the latest summary/attention message and up to two
 /// artifact chips plus an overflow count. Chips are informational only.
+/// Merge-request artifacts are excluded: they render as the tappable header
+/// badge in `SessionTerminalPane` instead.
 struct SessionInfoStrip: View {
     let session: ConsoleSession
 
@@ -219,12 +273,16 @@ struct SessionInfoStrip: View {
         .accessibilityIdentifier("Sessions.InfoStrip")
     }
 
+    private var stripArtifacts: [SessionArtifact] {
+        session.artifacts.filter { $0.kind != .gitlabMergeRequest }
+    }
+
     private var chips: [SessionArtifact] {
-        Array(session.artifacts.suffix(Self.maxVisibleChips))
+        Array(stripArtifacts.suffix(Self.maxVisibleChips))
     }
 
     private var overflowCount: Int {
-        max(0, session.artifacts.count - Self.maxVisibleChips)
+        max(0, stripArtifacts.count - Self.maxVisibleChips)
     }
 
     private func icon(for kind: SessionArtifactKind) -> String {

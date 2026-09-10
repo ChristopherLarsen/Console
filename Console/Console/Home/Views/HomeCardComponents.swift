@@ -18,7 +18,7 @@ enum HomeCardMetrics {
     static let cornerRadius: CGFloat = 6
 
     /// Minimum card height; grows to content.
-    static let minHeight: CGFloat = 44
+    static let minHeight: CGFloat = 75
 
     /// The permanently reserved trailing action slot on row two. Reserved
     /// even when empty — that is what makes occlusion structurally impossible.
