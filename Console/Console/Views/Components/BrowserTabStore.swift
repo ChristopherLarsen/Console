@@ -32,21 +32,41 @@ struct BrowserTab: Identifiable {
 final class BrowserTabStore {
     static let maxTabs = 8
 
+    /// Tabs whose content stamp is at least this old are reloaded when their
+    /// destination is entered.
+    static let staleTabReloadInterval: TimeInterval = 10 * 60
+
     private(set) var tabs: [BrowserTab]
     private(set) var activeTabID: UUID
     /// URL loaded into each newly opened dynamic tab.
     var newTabURLProvider: () -> URL?
 
+    /// When each tab's content last became current: seeded at tab creation
+    /// (a new tab's page was just loaded or is blank) and refreshed whenever
+    /// the destination auto-reloads stale tabs. Memory-only.
+    private var contentStampedAt: [UUID: Date] = [:]
+    private let now: () -> Date
+    /// Reload seam; production calls the page's own reload.
+    private let pageReloader: @MainActor (WebPage) -> Void
+
     init(
         pinnedTabs: [(page: WebPage, title: String?)],
-        newTabURLProvider: @escaping () -> URL?
+        newTabURLProvider: @escaping () -> URL?,
+        now: @escaping () -> Date = { Date() },
+        pageReloader: (@MainActor (WebPage) -> Void)? = nil
     ) {
         self.newTabURLProvider = newTabURLProvider
+        self.now = now
+        self.pageReloader = pageReloader ?? { $0.reload() }
+        let stampedAt = now()
         let pinned = pinnedTabs.map {
             BrowserTab(page: $0.page, titleOverride: $0.title, isPinned: true)
         }
         tabs = pinned
         activeTabID = pinned[0].id
+        for tab in pinned {
+            contentStampedAt[tab.id] = stampedAt
+        }
     }
 
     var activeTab: BrowserTab {
@@ -97,7 +117,35 @@ final class BrowserTabStore {
         let tab = BrowserTab(page: WebPage(), titleOverride: nil, isPinned: false)
         tabs.append(tab)
         activeTabID = tab.id
+        contentStampedAt[tab.id] = now()
         return tab
+    }
+
+    /// Reloads every open tab whose content stamp is at least `maxAge` old
+    /// (or missing) and returns the reloaded tabs. Destinations call this on
+    /// entry so long-idle tabs show the latest without reloading on every
+    /// visit. A page already mid-load is treated as current and re-stamped,
+    /// and `pageReloader` reloads in place so a page the user navigated away
+    /// from the list keeps its location.
+    @discardableResult
+    func reloadStaleTabs(
+        maxAge: TimeInterval = BrowserTabStore.staleTabReloadInterval
+    ) -> [BrowserTab] {
+        let current = now()
+        var reloaded: [BrowserTab] = []
+        for tab in tabs {
+            let stampedAt = contentStampedAt[tab.id] ?? .distantPast
+            guard current.timeIntervalSince(stampedAt) >= maxAge else { continue }
+            if tab.page.isLoading {
+                // An in-flight load is the freshest content there is.
+                contentStampedAt[tab.id] = current
+                continue
+            }
+            pageReloader(tab.page)
+            contentStampedAt[tab.id] = current
+            reloaded.append(tab)
+        }
+        return reloaded
     }
 
     /// Closes a non-pinned tab. Closing the active tab activates its right

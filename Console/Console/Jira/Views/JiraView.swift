@@ -133,6 +133,9 @@ struct JiraView: View {
                 }
                 .onAppear {
                     mountWebViewAfterSettling()
+                    // Long-idle tabs reload in place before anything else so
+                    // the destination never presents hour-old content.
+                    JiraWebSession.shared.tabStore.reloadStaleTabs()
                     if let pending = JiraDeepLink.shared.consume() {
                         // Home story cards land in their own tab; the pinned
                         // list page (Home panels, extraction) stays untouched.

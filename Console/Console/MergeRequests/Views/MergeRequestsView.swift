@@ -56,6 +56,9 @@ struct MergeRequestsView: View {
                 }
                 .onAppear {
                     mountWebViewAfterSettling()
+                    // Long-idle tabs reload in place before anything else so
+                    // the destination never presents hour-old content.
+                    tabStore.reloadStaleTabs()
                     selectPinnedTabIfHinted()
                     loadActiveList()
                     consumePendingDeepLink()
