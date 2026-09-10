@@ -73,12 +73,30 @@ final class BrowserTabStore {
     @discardableResult
     func openTab() -> BrowserTab {
         guard canOpenTab else { return activeTab }
-        let tab = BrowserTab(page: WebPage(), titleOverride: nil, isPinned: false)
-        tabs.append(tab)
-        activeTabID = tab.id
+        let tab = appendDynamicTab()
         if let url = newTabURLProvider() {
             tab.page.load(URLRequest(url: url))
         }
+        return tab
+    }
+
+    /// Opens a new tab, makes it active, and loads `url`. At the tab cap the
+    /// active tab navigates instead, so a handoff link is never dropped.
+    @discardableResult
+    func openTab(url: URL) -> BrowserTab {
+        guard canOpenTab else {
+            activePage.load(URLRequest(url: url))
+            return activeTab
+        }
+        let tab = appendDynamicTab()
+        tab.page.load(URLRequest(url: url))
+        return tab
+    }
+
+    private func appendDynamicTab() -> BrowserTab {
+        let tab = BrowserTab(page: WebPage(), titleOverride: nil, isPinned: false)
+        tabs.append(tab)
+        activeTabID = tab.id
         return tab
     }
 

@@ -134,8 +134,9 @@ struct JiraView: View {
                 .onAppear {
                     mountWebViewAfterSettling()
                     if let pending = JiraDeepLink.shared.consume() {
-                        JiraWebSession.shared.tabStore.select(JiraWebSession.shared.tabStore.tabs[0].id)
-                        JiraWebSession.shared.navigate(to: pending)
+                        // Home story cards land in their own tab; the pinned
+                        // list page (Home panels, extraction) stays untouched.
+                        JiraWebSession.shared.tabStore.openTab(url: pending)
                         return
                     }
                     loadIfNeeded(url: url, force: false)

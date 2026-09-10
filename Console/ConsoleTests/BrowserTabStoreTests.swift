@@ -81,6 +81,43 @@ final class BrowserTabStoreTests: XCTestCase {
         XCTAssertEqual(store.activeTabID, tab.id)
     }
 
+    func testOpenTabWithURLAppendsActivatesAndLoadsGivenURL() throws {
+        let providerURL = URL(string: "https://example.test/list")!
+        let issueURL = URL(string: "https://example.test/browse/ENG-1")!
+        let (store, _) = makeStore(pinnedCount: 1, newTabURL: providerURL)
+
+        let tab = store.openTab(url: issueURL)
+
+        XCTAssertEqual(store.tabs.count, 2)
+        XCTAssertEqual(store.activeTabID, tab.id)
+        XCTAssertFalse(tab.isPinned)
+        let requested = try XCTUnwrap(tab.page.url)
+        XCTAssertEqual(requested, issueURL)
+        // The provider URL must never load first and race the deep link; the
+        // pinned page is the only thing tracking the list.
+        XCTAssertNil(store.tabs[0].page.url)
+    }
+
+    func testOpenTabWithURLAtCapNavigatesActiveTab() throws {
+        let issueURL = URL(string: "https://example.test/browse/ENG-2")!
+        let (store, _) = makeStore(pinnedCount: 1)
+
+        while store.canOpenTab {
+            store.openTab()
+        }
+        let activeBefore = store.activeTabID
+        let activePageBefore = store.activePage
+
+        let result = store.openTab(url: issueURL)
+
+        XCTAssertEqual(store.tabs.count, BrowserTabStore.maxTabs)
+        XCTAssertEqual(store.activeTabID, activeBefore)
+        XCTAssertEqual(result.id, activeBefore)
+        XCTAssertTrue(store.activePage === activePageBefore)
+        let requested = try XCTUnwrap(store.activePage.url)
+        XCTAssertEqual(requested, issueURL)
+    }
+
     func testOpenTabStopsAtCap() {
         let (store, _) = makeStore(pinnedCount: 1)
 
