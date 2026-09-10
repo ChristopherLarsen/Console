@@ -146,6 +146,7 @@ final class ManagedClaudeService {
     /// Runs one headless operation on the serial queue. One process per
     /// operation in v1; no eternal process, no warm SDK runtime.
     func perform(_ invocation: ClaudeOperationInvocation) async throws -> ClaudeOperationOutput {
+        try Task.checkCancellation()
         guard !isShuttingDown else { throw ClaudeServiceError.shuttingDown }
         if preparedExecutablePath == nil || supportedFlags == nil {
             let prepared = await prepare()
@@ -162,6 +163,13 @@ final class ManagedClaudeService {
 
         await gate.acquire()
         defer { gate.release() }
+        try Task.checkCancellation()
+        guard !isShuttingDown else { throw ClaudeServiceError.shuttingDown }
+        guard invocation.deadline > Date() else {
+            throw ClaudeServiceError.timedOut(correlationID: invocation.correlationID)
+        }
+        let missingFlags = invocation.requiredFlags.subtracting(flags)
+        guard missingFlags.isEmpty else { throw ClaudeServiceError.unsupportedFlags(missingFlags.sorted()) }
         state = .busy
         defer {
             if state == .busy { state = .ready }
@@ -169,9 +177,9 @@ final class ManagedClaudeService {
 
         let build = HeadlessInvocationBuilder.arguments(
             options: HeadlessInvocationBuilder.Options(
-                model: configuration.model,
+                model: invocation.modelOverride ?? configuration.model,
                 maxTurns: configuration.maxTurns,
-                allowedTools: configuration.allowedTools,
+                allowedTools: invocation.allowedToolsOverride ?? configuration.allowedTools,
                 sessionID: invocation.sessionID,
                 resume: invocation.resume,
                 ephemeral: invocation.ephemeral,
@@ -242,9 +250,19 @@ final class ManagedClaudeService {
             throw ClaudeServiceError.executionFailed(reason: String(detail.prefix(400)))
         }
         let reportedSessionID = envelope.sessionID.flatMap { UUID(uuidString: $0) }
+        // --json-schema responses arrive in structured_output on current
+        // Claude Code, often with an empty result string.
+        var resultText = envelope.result
+        if let raw = outcome.stdout?.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
+           let structured = object["structured_output"],
+           JSONSerialization.isValidJSONObject(structured),
+           let data = try? JSONSerialization.data(withJSONObject: structured) {
+            resultText = String(decoding: data, as: UTF8.self)
+        }
         return ClaudeOperationOutput(
             correlationID: invocation.correlationID,
-            resultText: envelope.result,
+            resultText: resultText,
             sessionID: reportedSessionID
         )
     }

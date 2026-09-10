@@ -12,6 +12,9 @@ struct SettingsView: View {
     @AppStorage(AppSettings.mrScanEnabledKey) private var mrScanEnabled: Bool = false
     @AppStorage(AppSettings.mrScanIntervalMinutesKey) private var mrScanIntervalMinutes: Int = AppSettings.mrScanIntervalMinutesDefault
     @AppStorage(AppSettings.mrScanModelKey) private var mrScanModel: String = AppSettings.mrScanModelDefault
+    @AppStorage(AppSettings.mrDispositionEnabledKey) private var mrDispositionEnabled: Bool = true
+    @AppStorage(AppSettings.mrDispositionPromptKey) private var mrDispositionPrompt: String = MRDispositionPrompt.defaultText
+    @State private var dispositionPromptDraft = ""
 
     @AppStorage(AppSettings.aiProviderEnabledKey) private var aiProviderEnabled: Bool = false
 
@@ -47,6 +50,7 @@ struct SettingsView: View {
                 NSApp.keyWindow?.makeFirstResponder(nil)
             }
             detectedClaudePath = locator.locate()
+            dispositionPromptDraft = mrDispositionPrompt
         }
     }
 
@@ -298,6 +302,14 @@ struct SettingsView: View {
                 .accessibilityIdentifier("MRScanIntervalPicker")
             }
 
+            Toggle("AI Disposition", isOn: $mrDispositionEnabled)
+                .themedToggleStyle()
+                .accessibilityIdentifier("MRDispositionEnabledToggle")
+
+            Text("First Console reads GitLab cards. When enabled, Claude classifies their disposition using the extracted fields. This also applies to manual refreshes when periodic scanning is off.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 20) {
                     Text("Claude model")
@@ -321,15 +333,42 @@ struct SettingsView: View {
                     )
                     .focused($isMRScanModelFocused)
                     .frame(maxWidth: .infinity)
-                    .disabled(!mrScanEnabled)
+                    .disabled(!mrDispositionEnabled)
                     .accessibilityIdentifier("MRScanModelField")
                 }
 
                 HStack {
                     Spacer()
-                    Text("Claude model that classifies scan results (any version; default haiku)")
+                    Text("Uses managed Claude access; default haiku. Missing evidence produces Unknown.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                }
+            }
+
+            DisclosureGroup("AI Disposition prompt") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Customize only if necessary. The structured response contract is appended automatically and cannot be changed here. MR fields are sent as data, not instructions.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $dispositionPromptDraft)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 220)
+                        .accessibilityIdentifier("MRDispositionPromptEditor")
+                    HStack {
+                        Button("Save Prompt") {
+                            let trimmed = dispositionPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                            mrDispositionPrompt = trimmed.isEmpty ? MRDispositionPrompt.defaultText : dispositionPromptDraft
+                            dispositionPromptDraft = mrDispositionPrompt
+                        }
+                        .disabled(dispositionPromptDraft == mrDispositionPrompt)
+                        .accessibilityIdentifier("MRDispositionSavePromptButton")
+
+                        Button("Restore Default Prompt") {
+                            mrDispositionPrompt = MRDispositionPrompt.defaultText
+                            dispositionPromptDraft = MRDispositionPrompt.defaultText
+                        }
+                        .accessibilityIdentifier("MRDispositionRestorePromptButton")
+                    }
                 }
             }
         }

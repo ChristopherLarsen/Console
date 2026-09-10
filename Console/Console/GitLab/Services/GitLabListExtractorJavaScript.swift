@@ -65,18 +65,25 @@ enum GitLabListExtractorJavaScript {
     }
 
     function isVisible(element) {
-      if (!element) { return false; }
-      if (element.getClientRects().length === 0) { return false; }
-      const style = window.getComputedStyle(element);
-      return style.display !== 'none' && style.visibility !== 'hidden';
+      if (!element || !element.isConnected) { return false; }
+      // Home reads a retained page without mounting a WebView. Geometry may
+      // be empty there; CSS visibility still distinguishes hidden templates.
+      for (let current = element; current; current = current.parentElement) {
+        const style = window.getComputedStyle(current);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') {
+          return false;
+        }
+      }
+      return true;
     }
 
     function firstVisible(selectorRoots, selectors) {
       for (const root of selectorRoots) {
         if (!root || !root.querySelectorAll) { continue; }
         for (const selector of selectors) {
-          const found = root.querySelector(selector);
-          if (found && isVisible(found)) { return found; }
+          for (const found of root.querySelectorAll(selector)) {
+            if (isVisible(found)) { return found; }
+          }
         }
       }
       return null;
@@ -140,10 +147,12 @@ enum GitLabListExtractorJavaScript {
       return JSON.stringify({ outcome: 'authenticationRequired', items: [] });
     }
 
-    const hasListContainer = matchesAny(LIST_SELECTORS);
+    const listContainer = firstVisible([document], LIST_SELECTORS);
+    const hasListContainer = Boolean(listContainer);
+    const isListRoute = /\/(?:dashboard\/merge_requests|-\/merge_requests)\/?$/.test(window.location.pathname);
 
     const anchors = [];
-    for (const anchor of document.querySelectorAll('a[href]')) {
+    for (const anchor of (listContainer || document).querySelectorAll('a[href]')) {
       if (!anchor.pathname) { continue; }
       const match = anchor.pathname.match(MR_PATH_PATTERN);
       if (!match) { continue; }
@@ -166,7 +175,9 @@ enum GitLabListExtractorJavaScript {
     }
 
     if (rowsInOrder.size === 0) {
-      if (matchesAny(EMPTY_SELECTORS)) {
+      const emptyState = firstVisible([document], EMPTY_SELECTORS);
+      const saysNoMergeRequests = /\bno (?:open |closed |merged |matching )?merge requests?\b/i.test(compactText(emptyState) || '');
+      if ((hasListContainer || isListRoute) && saysNoMergeRequests) {
         return JSON.stringify({ outcome: 'empty', items: [] });
       }
       // A bare list container may still be hydrating; without positive

@@ -16,7 +16,7 @@ import Foundation
 /// the 15-minute window. Fresh retained data is never re-extracted, work in
 /// flight is never doubled, and a sign-in flow always wins over background
 /// refresh. Review refreshes are dispatched through `refreshReviewsHandler`
-/// (production: `MRReviewScanScheduler.scanNow`) so the retained GitLab
+/// (production: `MRReviewScanScheduler.scanOnAppearance`) so the retained GitLab
 /// page's user navigation keeps winning over background work.
 @MainActor
 final class HomeSourcesCoordinator {
@@ -29,7 +29,7 @@ final class HomeSourcesCoordinator {
     private let now: () -> Date
 
     /// Refresh entry for the Review column. HomeView wires
-    /// `MRReviewScanScheduler.scanNow` so the scheduler's in-flight guard and
+    /// `MRReviewScanScheduler.scanOnAppearance` so the scheduler's in-flight guard and
     /// the retained-page-away protections apply. Unwired (previews), the
     /// review staleness pass is a no-op.
     var refreshReviewsHandler: (@MainActor () -> Void)?

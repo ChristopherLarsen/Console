@@ -4,9 +4,7 @@ import Foundation
 ///
 /// Fires the scan action on a user-configured interval (default 15 minutes)
 /// when the scans are enabled and the Web View GitLab Reviews URL is set.
-/// The scan action itself is a seam: production triggers the shared
-/// reviews-requested list extraction (`MergeRequestListSession`); the AI
-/// classification pipeline plugs in behind the same closure later.
+/// Fresh deterministic extractions independently trigger AI Disposition.
 ///
 /// Guards: never two scans in flight, never a scan while disabled or
 /// unconfigured. A Settings change restarts the loop so a new interval or
@@ -18,18 +16,21 @@ final class MRReviewScanScheduler {
     /// The scan action. Production refreshes the shared reviews-requested
     /// list extraction; tests substitute a recorder.
     typealias ScanPerformer = @MainActor () async -> Void
+    typealias ScanAction = @MainActor (MRReviewScanTrigger) async -> MRReviewScanOutcome
 
     // MARK: - Observable state
 
     private(set) var isScanning = false
     private(set) var lastScanStartedAt: Date?
     private(set) var lastScanFinishedAt: Date?
+    private(set) var lastOutcome: MRReviewScanOutcome?
+    let dispositions: MRReviewDispositionController?
 
     // MARK: - Configuration seams
 
     private let defaults: UserDefaults
     private let reviewsURLProvider: () -> String
-    private let performer: ScanPerformer
+    private let performer: ScanAction
     private let now: () -> Date
     private let sleep: (TimeInterval) async -> Void
     private let notificationCenter: NotificationCenter
@@ -51,7 +52,9 @@ final class MRReviewScanScheduler {
     init(
         defaults: UserDefaults = .standard,
         reviewsURLProvider: @escaping () -> String = { GitLabConfiguration.effectiveReviewsURLString() },
-        performer: @escaping ScanPerformer,
+        performer: ScanPerformer? = nil,
+        scanPerformer: ScanAction? = nil,
+        dispositions: MRReviewDispositionController? = nil,
         now: @escaping () -> Date = { Date() },
         sleep: @escaping (TimeInterval) async -> Void = { interval in
             try? await Task.sleep(nanoseconds: UInt64(max(0, interval) * 1_000_000_000))
@@ -60,7 +63,14 @@ final class MRReviewScanScheduler {
     ) {
         self.defaults = defaults
         self.reviewsURLProvider = reviewsURLProvider
-        self.performer = performer
+        self.performer = scanPerformer ?? { trigger in
+            if let performer {
+                await performer()
+                return .refreshed(0)
+            }
+            return await MergeRequestListSession.shared.refreshReviewsList(trigger: trigger)
+        }
+        self.dispositions = dispositions
         self.now = now
         self.sleep = sleep
         self.notificationCenter = notificationCenter
@@ -106,9 +116,14 @@ final class MRReviewScanScheduler {
         spawnLoop()
     }
 
-    /// Immediate manual scan, subject to the same guards as a scheduled one.
+    /// Explicit refresh bypasses the timer toggle and browsing deferral.
     func scanNow() {
-        beginScanIfEligible(manual: true)
+        beginScanIfEligible(manual: true, trigger: .manual)
+    }
+
+    /// Home entry checks are not a timer, but still respect user browsing.
+    func scanOnAppearance() {
+        beginScanIfEligible(manual: true, trigger: .background)
     }
 
     // MARK: - Settings readers
@@ -128,7 +143,7 @@ final class MRReviewScanScheduler {
     }
 
     private var settingsSignature: String {
-        "\(isScanEnabled)|\(effectiveIntervalMinutes)|\(reviewsURLProvider())|\(defaults.string(forKey: AppSettings.mrScanModelKey) ?? AppSettings.mrScanModelDefault)"
+        "\(isScanEnabled)|\(effectiveIntervalMinutes)|\(reviewsURLProvider())"
     }
 
     // MARK: - Loop
@@ -180,19 +195,28 @@ final class MRReviewScanScheduler {
     /// Single entry into a scan. The in-flight guard is claimed
     /// synchronously on the caller so two rapid triggers cannot both pass,
     /// and the second call is observably skipped.
-    private func beginScanIfEligible(manual: Bool = false) {
-        guard (manual || isScanEnabled), ListURLNormalization.url(from: reviewsURLProvider()) != nil,
-              !isScanning else { return }
+    private func beginScanIfEligible(manual: Bool = false, trigger: MRReviewScanTrigger = .background) {
+        guard manual || isScanEnabled else { return }
+        guard ListURLNormalization.url(from: reviewsURLProvider()) != nil else {
+            lastOutcome = .unconfigured
+            return
+        }
+        guard !isScanning else {
+            if manual { lastOutcome = .alreadyRefreshing }
+            return
+        }
         isScanning = true
+        lastOutcome = nil
         lastScanStartedAt = now()
         let requestedGeneration = generation
         scanTask = Task { [weak self] in
             guard let self else { return }
-            if !Task.isCancelled { await self.performer() }
+            let outcome = Task.isCancelled ? .cancelled : await self.performer(trigger)
             self.isScanning = false
             self.scanTask = nil
             guard !Task.isCancelled, self.generation == requestedGeneration else { return }
-            self.lastScanFinishedAt = self.now()
+            self.lastOutcome = outcome
+            if outcome.succeeded { self.lastScanFinishedAt = self.now() }
             self.nextScanDate = self.now().addingTimeInterval(
                 TimeInterval(self.effectiveIntervalMinutes * 60)
             )

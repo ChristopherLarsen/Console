@@ -15,6 +15,7 @@ final class MergeRequestListSession {
     static let shared = MergeRequestListSession()
 
     private var controllers: [CodeHostListKind: CodeHostListPanelController] = [:]
+    let dispositions = MRReviewDispositionController()
 
     /// The list controller for `kind`, creating it on first use. The same
     /// instance backs the Home panel and any off-screen reader (Next).
@@ -25,6 +26,10 @@ final class MergeRequestListSession {
             page: CodeHostWebSessionStore.shared.page(for: kind),
             configuredURLStringProvider: { CodeHostConfiguration.effectiveURLString(for: kind) }
         )
+        if kind == .reviewsRequested {
+            created.onExtractionStarted = { [weak self] in self?.dispositions.reset() }
+            created.onItemsExtracted = { [weak self] items in self?.dispositions.update(items) }
+        }
         controllers[kind] = created
         return created
     }
@@ -49,30 +54,68 @@ final class MergeRequestListSession {
         }
     }
 
-    /// The scheduled reviews-requested scan cycle used by
-    /// `MRReviewScanScheduler`.
-    ///
-    /// The user's browsing of the retained GitLab page always wins over the
-    /// timer: when the page has been navigated away from the configured list
-    /// URL (an MR detail page, say) or is mid-navigation, the cycle defers
-    /// its forced reload and only resumes pending work. Sign-in recovery is
-    /// respected by the controller itself (`startOrRefresh` never reloads
-    /// while a sign-in round trip is in progress).
-    func refreshReviewsList(timeout: TimeInterval = 10) async {
+    /// Reviews-requested scan cycle. Background requests defer to browsing;
+    /// explicit refresh returns to the configured list. Sign-in is preserved.
+    @discardableResult
+    func refreshReviewsList(trigger: MRReviewScanTrigger = .background, timeout: TimeInterval = 30) async -> MRReviewScanOutcome {
         let controller = controller(for: .reviewsRequested)
-        guard !Task.isCancelled, !retainedReviewsPageIsAwayFromList,
-              !controller.wantsAuthenticationObservation, !controller.isRefreshing else { return }
-        controller.startOrRefresh()
+        return await Self.refreshReviewsList(
+            controller: controller,
+            trigger: trigger,
+            pageIsAwayFromList: retainedReviewsPageIsAwayFromList,
+            timeout: timeout
+        )
+    }
+
+    /// Manual checks return to the configured list. Background checks alone
+    /// defer to browsing. Neither interrupts a recognized sign-in round trip.
+    static func refreshReviewsList(
+        controller: CodeHostListPanelController,
+        trigger: MRReviewScanTrigger,
+        pageIsAwayFromList: Bool,
+        timeout: TimeInterval = 30
+    ) async -> MRReviewScanOutcome {
+        guard !Task.isCancelled else { return .cancelled }
+        if controller.wantsAuthenticationObservation { return .signInRequired }
+        if !controller.isRefreshing {
+            if trigger == .background, pageIsAwayFromList { return .deferred }
+            controller.startOrRefresh()
+        }
+        // Join a first load already started by Home rather than silently
+        // skipping it or cancelling/restarting the same request.
         let generation = controller.currentGeneration
         let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if Task.isCancelled { break }
-            if !controller.isRefreshing { return }
+        while controller.isRefreshing, Date() < deadline {
+            if Task.isCancelled {
+                // This task may have joined Home's first load. Cancelling a
+                // timer/settings wait must not suspend that shared work;
+                // the controller owns its own deadline and recovery state.
+                return .cancelled
+            }
+            if controller.currentGeneration != generation { return .cancelled }
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
-        // Only cancel the extraction this scan started, never newer user work.
-        if controller.currentGeneration == generation {
-            controller.cancelPendingWork()
+        if controller.lastRefreshTimedOut { return .timedOut }
+        guard controller.currentGeneration == generation else { return .cancelled }
+        if controller.isRefreshing {
+            controller.finishTimedOut(generation: generation)
+            return .timedOut
+        }
+        switch controller.state {
+        case .loaded(let items, _): return .refreshed(items.count)
+        case .empty: return .refreshed(0)
+        case .unconfigured: return .unconfigured
+        case .authenticationRequired: return .signInRequired
+        case .unsupportedPage: return .unsupportedPage
+        case .stale(_, _, let reason):
+            switch reason {
+            case .signInRequired: return .signInRequired
+            case .pageWasNotAList: return .unsupportedPage
+            case .timedOut: return .timedOut
+            case .extractionFailed: return .failed
+            }
+        case .extractionFailed: return .failed
+        case .loadingPage, .extracting: return .cancelled
         }
     }
 

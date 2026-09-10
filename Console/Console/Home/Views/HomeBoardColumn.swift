@@ -12,6 +12,7 @@ struct HomeBoardColumn<Accessory: View, Content: View>: View {
     /// for sources that have nothing to recover into.
     var recovery: HomeBoardRecovery?
     var onRecovery: (() -> Void)?
+    var statusMessage: String? = nil
     /// What to render when `health.retainsContent`. Empty lists render their
     /// own placeholder cards.
     @ViewBuilder var content: () -> Content
@@ -30,6 +31,17 @@ struct HomeBoardColumn<Accessory: View, Content: View>: View {
                 },
                 accessory: accessory
             )
+
+            if let statusMessage {
+                Text(statusMessage)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 6)
+                    .accessibilityIdentifier("HomeColumnStatus.\(title)")
+            }
 
             ScrollView {
                 LazyVStack(spacing: HomeCardMetrics.listGap) {
@@ -229,13 +241,13 @@ struct HomeBoardTicketCard: View {
     }
 }
 
-/// One review-request card: grey dot, normalized state, project and target
-/// version, title. Grey dot even though the state text is red — red dots
-/// are reserved for needs-you sessions; Console cannot confirm who reviewed.
+/// One review-request card: grey dot, host state or explicitly labelled AI
+/// disposition, project, target version and title. No personal review claim.
 struct HomeBoardReviewRequestCard: View {
     let item: MergeRequestSummary
-    /// Host-rendered review state, verbatim or normalized; the view decides.
+    /// Host-rendered state, or an AI-prefixed disposition with host tooltip.
     let stateLabel: String
+    var disposition: MRReviewDisposition? = nil
     let actionLabel: String
     let action: () -> Void
 
@@ -263,7 +275,8 @@ struct HomeBoardReviewRequestCard: View {
 
                     Text(stateLabel)
                         .font(HomeCardMetrics.stateFont)
-                        .foregroundStyle(AttentionChannel.needsYou.color)
+                        .foregroundStyle(dispositionColor)
+                        .help(disposition == nil ? stateLabel : "AI Disposition. GitLab: \(item.reviewDisplayState ?? "No review state displayed")")
                         .lineLimit(1)
 
                     Spacer(minLength: 4)
@@ -319,5 +332,14 @@ struct HomeBoardReviewRequestCard: View {
         ]
         .compactMap { $0 }
         .joined(separator: ", ")
+    }
+
+    private var dispositionColor: Color {
+        switch disposition {
+        case .approved, .merged: return AttentionChannel.clear.color
+        case .changesRequested: return AttentionChannel.inFlight.color
+        case .draft, .closed, .unknown: return .secondary
+        case .reviewRequired, nil: return AttentionChannel.needsYou.color
+        }
     }
 }

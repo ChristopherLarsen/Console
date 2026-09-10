@@ -102,6 +102,32 @@ final class MRReviewScanSchedulerTests: XCTestCase {
 
     // MARK: - Eligibility
 
+    func testManualRefreshBypassesTimerToggleAndReportsDeferredWithoutSuccessTimestamp() async {
+        let defaults = makeDefaults()
+        configure(defaults: defaults, enabled: false)
+        var triggers: [MRReviewScanTrigger] = []
+        let scheduler = MRReviewScanScheduler(
+            defaults: defaults,
+            reviewsURLProvider: { "https://gitlab.example.test/dashboard/merge_requests" },
+            scanPerformer: { trigger in triggers.append(trigger); return .deferred }
+        )
+        scheduler.scanNow()
+        await waitUntilIdle(scheduler)
+        XCTAssertEqual(triggers, [.manual])
+        XCTAssertEqual(scheduler.lastOutcome, .deferred)
+        XCTAssertNil(scheduler.lastScanFinishedAt)
+        scheduler.scanOnAppearance()
+        await waitUntilIdle(scheduler)
+        XCTAssertEqual(triggers, [.manual, .background])
+    }
+
+    func testManualUnconfiguredRefreshHasVisibleOutcome() {
+        let scheduler = MRReviewScanScheduler(defaults: makeDefaults(), reviewsURLProvider: { "" }, performer: {})
+        scheduler.scanNow()
+        XCTAssertEqual(scheduler.lastOutcome, .unconfigured)
+        XCTAssertFalse(scheduler.isScanning)
+    }
+
     func testIneligibleWhenDisabled() {
         let defaults = makeDefaults()
         configure(defaults: defaults, enabled: false)

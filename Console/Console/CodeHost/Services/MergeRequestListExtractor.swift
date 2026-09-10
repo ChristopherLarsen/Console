@@ -134,7 +134,10 @@ enum MergeRequestListExtractor {
         case "empty":
             return .empty
         case "items":
-            return .items(summaries(from: payload.rows))
+            let items = summaries(from: payload.rows)
+            // Unreadable rows are not evidence that the user's queue is empty.
+            if !payload.rows.isEmpty && items.isEmpty { return .unsupportedPage }
+            return .items(items)
         default:
             return .unsupportedPage
         }

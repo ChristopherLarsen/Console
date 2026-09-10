@@ -262,6 +262,7 @@ struct HomeView: View {
             health: board.reviewHealth,
             recovery: gitLabRecovery(for: board.reviewHealth),
             onRecovery: { recover(gitLabRecovery(for: board.reviewHealth)) },
+            statusMessage: reviewScanStatus,
             content: {
                 if board.reviewQueue.isEmpty {
                     if board.reviewHealth == .ready {
@@ -277,9 +278,8 @@ struct HomeView: View {
                     ) { index, item in
                         HomeBoardReviewRequestCard(
                             item: item,
-                            stateLabel: AttentionChannel.awaitingAuthorReviewState(item.reviewDisplayState)?.label
-                                ?? item.reviewDisplayState
-                                ?? "Review requested",
+                            stateLabel: reviewStateLabel(item),
+                            disposition: reviewScanScheduler?.dispositions?.disposition(for: item),
                             actionLabel: "Open review"
                         ) {
                             model.openReview(item)
@@ -298,6 +298,11 @@ struct HomeView: View {
             },
             accessory: {
                 HStack(spacing: 6) {
+                    if isReviewRefreshing || reviewScanScheduler?.dispositions?.isClassifying == true {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .accessibilityLabel(isReviewRefreshing ? "Checking GitLab" : "Classifying review dispositions")
+                    }
                     HomeRefreshAgeLabel(
                         lastRefresh: model.snapshot().reviewStatus.lastSuccessfulExtraction
                     )
@@ -312,11 +317,50 @@ struct HomeView: View {
                             .contentShape(Rectangle())
                     }
                     .help("Refresh reviews")
+                    .disabled(isReviewRefreshing || reviewScanScheduler == nil)
                     .accessibilityIdentifier("HomeReviewRefreshButton")
                 }
             }
         )
         .accessibilityIdentifier("HomeReviewColumn")
+    }
+
+    private var isReviewRefreshing: Bool {
+        reviewScanScheduler?.isScanning == true || MergeRequestListSession.shared.controller(for: .reviewsRequested).isRefreshing
+    }
+
+    private var reviewScanStatus: String? {
+        if isReviewRefreshing { return "Checking GitLab…" }
+        let controller = MergeRequestListSession.shared.controller(for: .reviewsRequested)
+        if controller.lastRefreshTimedOut {
+            return MRReviewScanOutcome.timedOut.message
+        }
+        let sourceMessage: String?
+        // Live source state wins over a previous scan outcome, especially
+        // when sign-in recovery finishes after the scheduler has returned.
+        switch controller.state {
+        case .unconfigured: sourceMessage = MRReviewScanOutcome.unconfigured.message
+        case .authenticationRequired: sourceMessage = MRReviewScanOutcome.signInRequired.message
+        case .unsupportedPage: sourceMessage = MRReviewScanOutcome.unsupportedPage.message
+        case .extractionFailed: sourceMessage = MRReviewScanOutcome.failed.message
+        case .stale(_, _, let reason): sourceMessage = "\(reason.reasonText). Showing previous cards; refresh to retry."
+        case .loaded(let items, _): sourceMessage = MRReviewScanOutcome.refreshed(items.count).message
+        case .empty: sourceMessage = MRReviewScanOutcome.refreshed(0).message
+        case .loadingPage, .extracting: sourceMessage = MRReviewScanOutcome.cancelled.message
+        }
+        let deferred = reviewScanScheduler?.lastOutcome == .deferred
+            && (reviewScanScheduler?.lastScanStartedAt ?? .distantPast) >= (controller.state.refreshedAt ?? .distantPast)
+        let message = [deferred ? MRReviewScanOutcome.deferred.message : sourceMessage, reviewScanScheduler?.dispositions?.message]
+            .compactMap { $0 }.joined(separator: " ")
+        return message.isEmpty ? nil : message
+    }
+
+    private func reviewStateLabel(_ item: MergeRequestSummary) -> String {
+        if let disposition = reviewScanScheduler?.dispositions?.disposition(for: item) {
+            return "AI: \(disposition.rawValue)"
+        }
+        return AttentionChannel.awaitingAuthorReviewState(item.reviewDisplayState)?.label
+            ?? item.reviewDisplayState ?? "Review requested"
     }
 
     /// Quiet count only — the column title already names the source.
@@ -383,7 +427,7 @@ struct HomeView: View {
         // scan scheduler so its in-flight guard and retained-page-away
         // protections apply.
         sources.refreshReviewsHandler = { [reviewScanScheduler] in
-            reviewScanScheduler?.scanNow()
+            reviewScanScheduler?.scanOnAppearance()
         }
     }
 }

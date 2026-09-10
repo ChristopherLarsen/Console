@@ -22,6 +22,8 @@ class AppSettings {
     static let mrScanModelKey = "mrScanModel"
     static let mrScanIntervalMinutesDefault = 15
     static let mrScanModelDefault = "haiku"
+    static let mrDispositionEnabledKey = "mrDispositionEnabled"
+    static let mrDispositionPromptKey = "mrDispositionPrompt"
     /// Interval choices surfaced in Settings; the stored value is always one
     /// of these so the scheduler never sees an arbitrary value.
     static let mrScanIntervalChoices = [5, 10, 15, 30, 60]

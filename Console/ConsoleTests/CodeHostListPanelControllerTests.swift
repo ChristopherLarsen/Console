@@ -95,6 +95,75 @@ final class CodeHostListPanelControllerTests: XCTestCase {
 
     // MARK: - Configuration
 
+    func testManualRefreshReturnsToListWhileBackgroundDefers() async {
+        var loads = 0
+        let controller = makeController(page: makePage(), loader: { _, _ in loads += 1; return true }, executor: { _ in
+            "{\"outcome\":\"empty\",\"items\":[]}"
+        })
+        let background = await MergeRequestListSession.refreshReviewsList(controller: controller, trigger: .background, pageIsAwayFromList: true)
+        XCTAssertEqual(background, .deferred)
+        XCTAssertEqual(loads, 0)
+        let manual = await MergeRequestListSession.refreshReviewsList(controller: controller, trigger: .manual, pageIsAwayFromList: true)
+        XCTAssertEqual(manual, .refreshed(0))
+        XCTAssertEqual(loads, 1)
+    }
+
+    func testManualRefreshReportsSignInRatherThanInterruptingIt() async {
+        let controller = makeController(page: makePage())
+        controller.apply(.authenticationRequired, generation: controller.currentGeneration)
+        let result = await MergeRequestListSession.refreshReviewsList(controller: controller, trigger: .manual, pageIsAwayFromList: true)
+        XCTAssertEqual(result, .signInRequired)
+        XCTAssertTrue(controller.wantsAuthenticationObservation)
+        controller.cancelPendingWork()
+    }
+
+    func testTimeoutSettlesLoadingAndPreservesPriorCardsAsStale() async {
+        let controller = makeController(page: makePage(), loader: { _, _ in true }, executor: { _ in nil })
+        let timeout = await MergeRequestListSession.refreshReviewsList(controller: controller, trigger: .manual, pageIsAwayFromList: false, timeout: 0)
+        XCTAssertEqual(timeout, .timedOut)
+        XCTAssertEqual(controller.state, .extractionFailed)
+        XCTAssertFalse(controller.isRefreshing)
+        XCTAssertFalse(controller.isSuspended)
+
+        controller.apply(.items([summary(index: 1)]), generation: controller.currentGeneration)
+        let staleTimeout = await MergeRequestListSession.refreshReviewsList(controller: controller, trigger: .manual, pageIsAwayFromList: false, timeout: 0)
+        XCTAssertEqual(staleTimeout, .timedOut)
+        guard case .stale(let items, _, let reason) = controller.state else { return XCTFail("Expected stale cards") }
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(reason, .timedOut)
+    }
+
+    func testFreshExtractionAloneFeedsSecondStageAndOldTimeoutCannotReplaceIt() async {
+        let controller = makeController(page: makePage(), loader: { _, _ in true }, executor: { [weak self] _ in self?.itemsJSON(count: 2) })
+        var published: [MergeRequestSummary] = []
+        controller.onItemsExtracted = { published = $0 }
+        let oldGeneration = controller.currentGeneration
+        let result = await MergeRequestListSession.refreshReviewsList(controller: controller, trigger: .manual, pageIsAwayFromList: false)
+        XCTAssertEqual(result, .refreshed(2))
+        XCTAssertEqual(published.count, 2)
+        controller.finishTimedOut(generation: oldGeneration)
+        XCTAssertEqual(controller.itemCount, 2)
+        XCTAssertFalse(controller.lastRefreshTimedOut)
+    }
+
+    func testCancellingScanWaitDoesNotSuspendSharedFirstLoad() async {
+        var release: CheckedContinuation<Bool, Never>?
+        let controller = makeController(page: makePage(), loader: { _, _ in
+            await withCheckedContinuation { release = $0 }
+        }, executor: { _ in "{\"outcome\":\"empty\",\"items\":[]}" })
+        controller.startIfNeeded()
+        await waitUntil { release != nil }
+        let scan = Task { await MergeRequestListSession.refreshReviewsList(controller: controller, trigger: .manual, pageIsAwayFromList: false) }
+        await Task.yield()
+        scan.cancel()
+        let outcome = await scan.value
+        XCTAssertEqual(outcome, .cancelled)
+        XCTAssertTrue(controller.isRefreshing)
+        release?.resume(returning: true)
+        await waitForSettled(controller)
+        XCTAssertEqual(controller.state, .empty(refreshedAt: currentDate))
+    }
+
     func testUnconfiguredStateWhenProviderIsEmpty() async {
         let controller = makeController(page: makePage(), provider: { "" })
 

@@ -48,6 +48,10 @@ final class CodeHostListPanelController {
     private(set) var state: MergeRequestListPanelState = .unconfigured
     private(set) var presentation: Presentation = .cards
     private(set) var isRefreshing = false
+    /// Fresh DOM results feed the optional second stage; failures never do.
+    var onExtractionStarted: (() -> Void)?
+    var onItemsExtracted: (([MergeRequestSummary]) -> Void)?
+    private(set) var lastRefreshTimedOut = false
 
     /// True when in-flight work was cancelled because the panel disappeared.
     private(set) var isSuspended = false
@@ -78,7 +82,7 @@ final class CodeHostListPanelController {
         page: WebPage,
         configuredURLStringProvider: @escaping () -> String?,
         now: @escaping () -> Date = { Date() },
-        readinessAttempts: Int = 12,
+        readinessAttempts: Int = 40,
         readinessIntervalNanoseconds: UInt64 = 250_000_000,
         pageLoader: (@MainActor (WebPage, URLRequest) async -> Bool)? = nil,
         extractionExecutor: (@MainActor (WebPage) async throws -> String?)? = nil,
@@ -151,6 +155,17 @@ final class CodeHostListPanelController {
                 needsExtraction = true
             }
         }
+    }
+
+    /// A deadline is a visible failure, not a suspended loading state.
+    func finishTimedOut(generation requestedGeneration: Int) {
+        guard generation == requestedGeneration, isRefreshing else { return }
+        cancelPendingWork()
+        page.stopLoading()
+        lastRefreshTimedOut = true
+        needsExtraction = false
+        isSuspended = false
+        applyOrdinaryFailure(.extractionFailed, reason: .timedOut)
     }
 
     // MARK: - Presentation
@@ -377,12 +392,14 @@ final class CodeHostListPanelController {
             stopAuthenticationWatch(keepingIntent: false)
             state = items.isEmpty ? .empty(refreshedAt: timestamp) : .loaded(items: items, refreshedAt: timestamp)
             presentation = .cards
+            onItemsExtracted?(items)
 
         case .empty:
             clearHiddenItems()
             stopAuthenticationWatch(keepingIntent: false)
             state = .empty(refreshedAt: timestamp)
             presentation = .cards
+            onItemsExtracted?([])
 
         case .authenticationRequired:
             enterAuthenticationRequired()
@@ -528,6 +545,8 @@ final class CodeHostListPanelController {
     }
 
     private func applyMissingConfiguration() {
+        onExtractionStarted?()
+        lastRefreshTimedOut = false
         extractionTask?.cancel()
         extractionTask = nil
         stopAuthenticationWatch(keepingIntent: false)
@@ -542,6 +561,8 @@ final class CodeHostListPanelController {
     }
 
     private func beginExtraction(invalidatingSource: Bool, forceReload: Bool = true) {
+        onExtractionStarted?()
+        lastRefreshTimedOut = false
         extractionTask?.cancel()
         extractionTask = nil
         generation += 1
@@ -576,6 +597,13 @@ final class CodeHostListPanelController {
         }
 
         extractionTask = Task { [weak self] in
+            // Bound all entries, including Home's first headless load and
+            // sign-in recovery, rather than only scheduled scans.
+            let watchdog = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                self?.finishTimedOut(generation: currentGeneration)
+            }
+            defer { watchdog.cancel() }
             await self?.runExtraction(
                 url: url,
                 requestedGeneration: currentGeneration,

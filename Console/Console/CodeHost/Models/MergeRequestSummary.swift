@@ -50,12 +50,14 @@ struct MergeRequestSummary: Identifiable, Equatable, Sendable {
 /// Why a manual refresh did not produce fresh cards. Values are fixed,
 /// data-free strings safe for state descriptions.
 enum MergeRequestRefreshFailureReason: String, Equatable, Sendable {
+    case timedOut
     case signInRequired
     case pageWasNotAList
     case extractionFailed
 
     var reasonText: String {
         switch self {
+        case .timedOut: return "Refresh timed out"
         case .signInRequired: return "Sign-in required"
         case .pageWasNotAList: return "Page was not a merge-request list"
         case .extractionFailed: return "Refresh failed"

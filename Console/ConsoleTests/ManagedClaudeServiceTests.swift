@@ -85,6 +85,47 @@ final class ManagedClaudeServiceTests: XCTestCase {
 
     // MARK: perform plumbing
 
+    func testDispositionOverridesModelAndToolsWithoutChangingSharedConfiguration() async throws {
+        service.configuration.model = "sonnet"
+        service.configuration.allowedTools = ["Bash"]
+        transport.enqueueSuccess(result: "{}")
+        let invocation = ClaudeOperationInvocation(
+            prompt: "Synthetic classification", modelOverride: "haiku", allowedToolsOverride: [],
+            requiredFlags: ["--tools", "--model", "--no-session-persistence"],
+            deadline: Date().addingTimeInterval(5)
+        )
+        _ = try await service.perform(invocation)
+        let args = try XCTUnwrap(transport.requests.last?.arguments)
+        XCTAssertEqual(args[try XCTUnwrap(args.firstIndex(of: "--model")) + 1], "haiku")
+        XCTAssertEqual(args[try XCTUnwrap(args.firstIndex(of: "--tools")) + 1], "")
+        XCTAssertTrue(args.contains("--no-session-persistence"))
+        XCTAssertEqual(service.configuration.model, "sonnet")
+        XCTAssertEqual(service.configuration.allowedTools, ["Bash"])
+    }
+
+    func testStructuredOutputEnvelopeIsUsedInsteadOfEmptyResult() throws {
+        let invocation = pingInvocation()
+        let outcome = ClaudeHeadlessOutcome.success(stdout: #"{"type":"result","is_error":false,"result":"","structured_output":{"items":[]}}"#, stderr: nil)
+        let output = try ManagedClaudeService.interpret(outcome: outcome, invocation: invocation)
+        let data = try XCTUnwrap(output.resultText?.data(using: .utf8))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNotNil(object["items"])
+    }
+
+    func testRequiredDispositionCapabilityFailsBeforeDispatch() async {
+        let invocation = ClaudeOperationInvocation(
+            prompt: "Synthetic input", requiredFlags: ["--unsupported-test-capability"],
+            deadline: Date().addingTimeInterval(5)
+        )
+        do {
+            _ = try await service.perform(invocation)
+            XCTFail("Must refuse missing required capabilities")
+        } catch {
+            XCTAssertEqual(error as? ClaudeServiceError, .unsupportedFlags(["--unsupported-test-capability"]))
+        }
+        XCTAssertTrue(transport.requests.isEmpty)
+    }
+
     func testPerformPipesPromptViaStdinAndParsesEnvelope() async throws {
         transport.enqueueSuccess(result: StubCLI.structuredResult(operation: "ping", correlationID: UUID()))
         _ = await service.prepare()

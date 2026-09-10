@@ -13,7 +13,7 @@ final class MergeRequestListExtractorTests: XCTestCase {
 
     // MARK: - Synthetic fixtures (invented data)
 
-    private let baseURLString = "https://gitlab.example.test/"
+    private let baseURLString = "https://gitlab.example.test/dashboard/merge_requests"
 
     private var fullListHTML: String {
         """
@@ -187,10 +187,10 @@ final class MergeRequestListExtractorTests: XCTestCase {
     }
 
     @discardableResult
-    private func loadHTML(_ html: String, into page: WebPage) async throws -> Bool {
+    private func loadHTML(_ html: String, into page: WebPage, baseURL: URL? = nil) async throws -> Bool {
         let events = page.load(
             html: html,
-            baseURL: URL(string: baseURLString)!
+            baseURL: baseURL ?? URL(string: baseURLString)!
         )
         for try await event in events {
             if case .finished = event { return true }
@@ -208,6 +208,43 @@ final class MergeRequestListExtractorTests: XCTestCase {
     }
 
     // MARK: - Real-JS extraction outcomes
+
+    func testUnrelatedEmptyPageIsNotAnEmptyReviewList() async throws {
+        let page = makePage()
+        _ = try await loadHTML(emptyListHTML, into: page, baseURL: URL(string: "https://gitlab.example.test/wiki")!)
+        let raw = try await page.callJavaScript(GitLabListExtractorJavaScript.source)
+        let json = try XCTUnwrap(raw as? String)
+        XCTAssertEqual(try MergeRequestListExtractor.decode(json), .unsupportedPage)
+    }
+
+    func testPermissionErrorEmptyComponentIsNotAnEmptyQueue() async throws {
+        let result = try await extract(from: "<html><body><div class='empty-state'>You cannot access this project.</div></body></html>")
+        XCTAssertEqual(result, .unsupportedPage)
+    }
+
+    func testAllMalformedRowsAreNotAnEmptyQueue() throws {
+        let result = try MergeRequestListExtractor.decode(#"{"outcome":"items","items":[{"title":"Fixture","url":"not-absolute"}]}"#)
+        XCTAssertEqual(result, .unsupportedPage)
+    }
+
+    func testHeadlessExtractionIgnoresHiddenTemplatesAndUnrelatedLinks() async throws {
+        let html = """
+        <html><body>
+        <a href="https://gitlab.example.test/p/-/merge_requests/99">Unrelated widget</a>
+        <ul id="merge_requests_list">
+          <li style="display:none"><a href="https://gitlab.example.test/p/-/merge_requests/1">Hidden template</a></li>
+          <li><a href="https://gitlab.example.test/p/-/merge_requests/2">Visible card</a>
+            <span class="review-state" style="display:none">Wrong hidden state</span>
+            <span class="review-state">Approved</span>
+          </li>
+        </ul></body></html>
+        """
+        // This harness deliberately never mounts a WebView, just like Home.
+        guard case .items(let items) = try await extract(from: html) else { return XCTFail("Expected cards") }
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items.first?.iidText, "2")
+        XCTAssertEqual(items.first?.reviewDisplayState, "Approved")
+    }
 
     func testItemsAreExtractedWithVisibleFieldsInDOMOrder() async throws {
         guard case .items(let items) = try await extract(from: fullListHTML) else {

@@ -118,6 +118,9 @@ struct ClaudeOperationInvocation: Sendable {
     let resume: Bool
     /// When true the run persists no session on disk (`--no-session-persistence`).
     let ephemeral: Bool
+    let modelOverride: String?
+    let allowedToolsOverride: [String]?
+    let requiredFlags: Set<String>
     let deadline: Date
 
     init(
@@ -127,6 +130,9 @@ struct ClaudeOperationInvocation: Sendable {
         sessionID: UUID = UUID(),
         resume: Bool = false,
         ephemeral: Bool = true,
+        modelOverride: String? = nil,
+        allowedToolsOverride: [String]? = nil,
+        requiredFlags: Set<String> = [],
         deadline: Date
     ) {
         self.correlationID = correlationID
@@ -135,6 +141,9 @@ struct ClaudeOperationInvocation: Sendable {
         self.sessionID = sessionID
         self.resume = resume
         self.ephemeral = ephemeral
+        self.modelOverride = modelOverride
+        self.allowedToolsOverride = allowedToolsOverride
+        self.requiredFlags = requiredFlags
         self.deadline = deadline
     }
 }

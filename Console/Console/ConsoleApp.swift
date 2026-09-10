@@ -89,7 +89,8 @@ struct ConsoleApp: App {
     @State private var launchCoordinator: SessionLaunchCoordinator
     @State private var managedClaudeService = ManagedClaudeService()
     @State private var mrReviewScanScheduler = MRReviewScanScheduler(
-        performer: { await MergeRequestListSession.shared.refreshReviewsList() }
+        scanPerformer: { trigger in await MergeRequestListSession.shared.refreshReviewsList(trigger: trigger) },
+        dispositions: MergeRequestListSession.shared.dispositions
     )
     @State private var sessionWorkspaceLayout = SessionWorkspaceLayoutController()
     @State private var developerActions: DeveloperActionRunner
@@ -118,7 +119,8 @@ struct ConsoleApp: App {
             "listenOnStartup": true,
             "visualFeedbackEnabled": true,
             AppSettings.mrScanIntervalMinutesKey: AppSettings.mrScanIntervalMinutesDefault,
-            AppSettings.mrScanModelKey: AppSettings.mrScanModelDefault
+            AppSettings.mrScanModelKey: AppSettings.mrScanModelDefault,
+            AppSettings.mrDispositionEnabledKey: true
         ])
 
         let workspaceStore = SessionWorkspaceStore()
@@ -299,6 +301,7 @@ struct ConsoleApp: App {
                     // The scan scheduler owns no child processes; stopping it
                     // only cancels its timer loop and defaults observation.
                     activeMRReviewScanScheduler.stop()
+                    activeMRReviewScanScheduler.dispositions?.shutdown()
                 }
             }
         }
@@ -722,6 +725,10 @@ struct ConsoleApp: App {
     /// configures the GitLab reviews URL in Settings.
     private func startMRReviewScansIfNeeded() {
         guard !Self.isRunningUnitTests else { return }
+        let service = managedClaudeService
+        mrReviewScanScheduler.dispositions?.configure { invocation in
+            try await service.perform(invocation)
+        }
         mrReviewScanScheduler.start()
     }
 
