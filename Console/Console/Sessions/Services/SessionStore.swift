@@ -660,15 +660,41 @@ final class SessionStore {
         // A retained pane must never sit as a dead terminal: when the Claude
         // child exits, hand the same terminal view to a login shell so the
         // user gets a command-line prompt. Scrollback is preserved by
-        // SwiftTerm; the session stays Exited until the user closes it.
+        // SwiftTerm; a resumed Claude reports SessionStart through the same bridge.
         guard startExitShell,
               let session = session(withID: sessionID),
               session.terminalView.process?.running != true else { return }
         launcher.startExitShell(
             workingDirectory: session.workingDirectory.path,
-            environment: childEnvironment(bridgeEnvironment: [:]),
+            environment: exitShellEnvironment(for: sessionID),
             terminalView: session.terminalView
         )
+    }
+
+    private func exitShellEnvironment(for sessionID: UUID) -> [String: String] {
+        let fallback = childEnvironment(bridgeEnvironment: [:])
+        guard let token = sessionTokens[sessionID], let socketPath,
+              let pluginRoot = assembledPluginRoot, let executable = locator.locate() else {
+            return fallback
+        }
+        let environment = childEnvironment(bridgeEnvironment: [
+            "CONSOLE_TERM_BRIDGE_HELPER": Self.helperPath(),
+            "CONSOLE_TERM_BRIDGE_SOCKET": socketPath,
+            "CONSOLE_TERM_BRIDGE_SESSION_ID": sessionID.uuidString,
+            "CONSOLE_TERM_BRIDGE_TOKEN": token,
+        ])
+        do {
+            return try SessionExitShellBootstrap.environment(
+                environment, root: ephemeralRoot.appendingPathComponent("exit-shell"),
+                executable: executable, pluginDirectory: pluginRoot.path
+            )
+        } catch {
+            if let index = sessions.firstIndex(where: { $0.id == sessionID }) {
+                sessions[index].bridgeStatus = .unavailable
+                sessions[index].instrumentationWarning = SessionCreationError.pluginAssemblyFailed.errorDescription
+            }
+            return fallback
+        }
     }
 
     /// Stops every running session. Used on actual app termination only —

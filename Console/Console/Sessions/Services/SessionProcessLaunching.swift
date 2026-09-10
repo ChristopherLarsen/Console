@@ -77,6 +77,44 @@ final class ClaudeSessionLauncher: SessionProcessLaunching {
     }
 }
 
+/// Pane-local zsh startup shim. No user dotfiles or Claude settings are changed,
+/// and credentials remain in the child environment rather than the script.
+enum SessionExitShellBootstrap {
+    static func environment(
+        _ base: [String: String], root: URL, executable: String, pluginDirectory: String
+    ) throws -> [String: String] {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let script = #"""
+        if [[ -n ${CONSOLE_TERM_BRIDGE_ORIGINAL_ZDOTDIR+x} ]]; then
+            export ZDOTDIR="$CONSOLE_TERM_BRIDGE_ORIGINAL_ZDOTDIR"
+        else
+            unset ZDOTDIR
+        fi
+        unset CONSOLE_TERM_BRIDGE_ORIGINAL_ZDOTDIR
+        [[ -r "${ZDOTDIR-$HOME}/.zshenv" ]] && source "${ZDOTDIR-$HOME}/.zshenv"
+
+        # Install after the user's login/interactive startup files have run.
+        # Restore normal ZDOTDIR above so those files and nested shells behave normally.
+        function _console_install_claude_bridge() {
+            unalias claude 2>/dev/null
+            function claude() {
+                command "$CONSOLE_TERM_BRIDGE_EXECUTABLE" --plugin-dir "$CONSOLE_TERM_BRIDGE_PLUGIN_DIR" "$@"
+            }
+            precmd_functions=(${precmd_functions:#_console_install_claude_bridge})
+            unfunction _console_install_claude_bridge
+        }
+        precmd_functions+=(_console_install_claude_bridge)
+        """#
+        try script.write(to: root.appendingPathComponent(".zshenv"), atomically: true, encoding: .utf8)
+        var environment = base
+        environment["CONSOLE_TERM_BRIDGE_ORIGINAL_ZDOTDIR"] = base["ZDOTDIR"]
+        environment["ZDOTDIR"] = root.path
+        environment["CONSOLE_TERM_BRIDGE_EXECUTABLE"] = executable
+        environment["CONSOLE_TERM_BRIDGE_PLUGIN_DIR"] = pluginDirectory
+        return environment
+    }
+}
+
 /// SwiftTerm terminal configured for Console sessions. All sends go through
 /// SwiftTerm's main-thread input API.
 final class ConsoleTerminalView: LocalProcessTerminalView {

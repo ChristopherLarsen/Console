@@ -493,10 +493,17 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(launcher.lastExitShellWorkingDirectory, dir.path)
         let environment = try XCTUnwrap(launcher.lastExitShellEnvironment)
         XCTAssertEqual(environment["TERM"], "xterm-256color")
-        XCTAssertFalse(
-            environment.keys.contains { $0.hasPrefix("CONSOLE_TERM_BRIDGE_") },
-            "the exit shell carries no bridge identity"
-        )
+        XCTAssertEqual(environment["CONSOLE_TERM_BRIDGE_SESSION_ID"], id.uuidString)
+        XCTAssertEqual(environment["CONSOLE_TERM_BRIDGE_TOKEN"], store.debugSessionToken(id))
+    }
+
+    func testUninstrumentedExitShellDoesNotAcquireBridgeIdentity() throws {
+        let (store, launcher) = makeStore(assembler: FakeAssembler())
+        let id = try store.createSession(name: "Plain", workingDirectory: tmpDirectory("Plain"))
+        store.handleProcessTerminated(sessionID: id)
+        let environment = try XCTUnwrap(launcher.lastExitShellEnvironment)
+        XCTAssertFalse(environment.keys.contains { $0.hasPrefix("CONSOLE_TERM_BRIDGE_") })
+        XCTAssertEqual(launcher.exitShellStartCount, 1)
     }
 
     func testTerminalDelegateDefersShellUntilAfterExitCallback() async throws {
@@ -811,5 +818,33 @@ final class SessionStoreTests: XCTestCase {
 
         store.debugReceiveEnvelope(envelope(.promptSubmitted, "evt-prompt-2"))
         XCTAssertEqual(store.session(withID: id)?.activity, .working)
+    }
+
+    func testExitShellPreservesBridgeForRepeatedClaudeResumes() throws {
+        let (store, launcher) = makeStore()
+        let id = try store.createSession(name: "Resume", workingDirectory: tmpDirectory("Resume"))
+        let original = try XCTUnwrap(launcher.lastEnvironment)
+
+        for cycle in 0..<2 {
+            store.handleProcessTerminated(sessionID: id)
+            XCTAssertEqual(store.displayedState(for: id), .exited)
+            let shell = try XCTUnwrap(launcher.lastExitShellEnvironment)
+            for key in ["HELPER", "SOCKET", "SESSION_ID", "TOKEN"] {
+                XCTAssertEqual(shell["CONSOLE_TERM_BRIDGE_" + key], original["CONSOLE_TERM_BRIDGE_" + key])
+            }
+            XCTAssertEqual(shell["CONSOLE_TERM_BRIDGE_EXECUTABLE"], launcher.lastExecutable)
+            XCTAssertTrue(try XCTUnwrap(launcher.lastArguments).contains(
+                try XCTUnwrap(shell["CONSOLE_TERM_BRIDGE_PLUGIN_DIR"])))
+
+            for (event, state) in [(BridgeProtocol.LifecycleEventKind.sessionStarted, DisplayedSessionState.idle),
+                                   (.promptSubmitted, .working), (.sessionEnded, .exited)] {
+                store.debugReceiveEnvelope(BridgeEnvelope(
+                    sessionID: try XCTUnwrap(shell["CONSOLE_TERM_BRIDGE_SESSION_ID"]),
+                    token: try XCTUnwrap(shell["CONSOLE_TERM_BRIDGE_TOKEN"]),
+                    eventID: "resume-\(cycle)-\(event)", kind: .lifecycle, lifecycleEvent: event
+                ))
+                XCTAssertEqual(store.displayedState(for: id), state)
+            }
+        }
     }
 }
