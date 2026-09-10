@@ -1,9 +1,9 @@
 import XCTest
 @testable import Console
 
-/// Pure selection rules for the Home work board: next story, in-progress
-/// filter, awaiting-author review filter, and health mapping from
-/// `NextSourceStatus` including retained-data upgrades.
+/// Pure selection and ordering rules for the Home work board: next story,
+/// in-progress filter, review-queue urgency order, and health mapping from
+/// `HomeSourceStatus` including retained-data upgrades.
 final class HomeBoardBuilderTests: XCTestCase {
 
     // MARK: - Fixtures
@@ -28,6 +28,8 @@ final class HomeBoardBuilderTests: XCTestCase {
         iid: String = "1",
         reviewState: String?,
         pipeline: String? = nil,
+        updated: String? = nil,
+        targetVersion: String? = nil,
         order: Int
     ) -> MergeRequestSummary {
         MergeRequestSummary(
@@ -39,7 +41,8 @@ final class HomeBoardBuilderTests: XCTestCase {
             isDraft: false,
             pipelineDisplayState: pipeline,
             reviewDisplayState: reviewState,
-            updatedText: nil,
+            updatedText: updated,
+            targetVersionText: targetVersion,
             mergeRequestURL: URL(string: "https://gitlab.example.test/p/r/-/merge_requests/\(iid)")!,
             sourceOrder: order
         )
@@ -86,9 +89,9 @@ final class HomeBoardBuilderTests: XCTestCase {
         XCTAssertEqual(board.inProgressTickets.map(\.key), ["A", "C"])
     }
 
-    // MARK: - Awaiting author
+    // MARK: - Review queue ordering
 
-    func testAwaitingAuthorKeepsChangesRequestedAndDiscussionOnly() {
+    func testReviewQueueKeepsEveryRow() {
         let items = [
             reviewItem(iid: "1", reviewState: "Changes requested", order: 0),
             reviewItem(iid: "2", reviewState: "Discussion", order: 1),
@@ -97,38 +100,90 @@ final class HomeBoardBuilderTests: XCTestCase {
         ]
         let snapshot = HomeBoardSnapshot(reviewItems: items, reviewStatus: .current)
         let board = HomeBoardBuilder.build(snapshot)
-        XCTAssertEqual(board.awaitingAuthorRequests.map { $0.iidText }, ["1", "2"])
+        XCTAssertEqual(board.reviewQueue.map { $0.iidText }, ["1", "2", "3", "4"])
     }
 
-    func testNextReviewIsFirstRowRegardlessOfReviewState() {
+    func testReReviewsSortAboveNeverReviewedRegardlessOfAge() {
         let items = [
-            reviewItem(iid: "1", reviewState: "Approved", order: 0),
-            reviewItem(iid: "2", reviewState: "Changes requested", order: 1),
+            reviewItem(iid: "1", reviewState: "Review requested", updated: "4 weeks ago", order: 0),
+            reviewItem(iid: "2", reviewState: "Changes requested", updated: "3 days ago", order: 1),
+            reviewItem(iid: "3", reviewState: "Discussion", updated: "now", order: 2),
         ]
-        let snapshot = HomeBoardSnapshot(reviewItems: items, reviewStatus: .current)
-        let board = HomeBoardBuilder.build(snapshot)
-        XCTAssertEqual(board.nextReview?.iidText, "1")
+        XCTAssertEqual(HomeBoardBuilder.reviewQueue(in: items).map { $0.iidText }, ["2", "3", "1"])
+    }
+
+    func testOlderRowsSortAboveNewerWithinTierWhenVersionsMatch() {
+        let items = [
+            reviewItem(iid: "1", reviewState: nil, updated: "2 days ago", targetVersion: "1.0", order: 0),
+            reviewItem(iid: "2", reviewState: nil, updated: "3 weeks ago", targetVersion: "1.0", order: 1),
+            reviewItem(iid: "3", reviewState: nil, updated: "2 hours ago", targetVersion: "1.0", order: 2),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.reviewQueue(in: items).map { $0.iidText }, ["2", "1", "3"])
+    }
+
+    func testTargetVersionOutranksAgeWithinTier() {
+        let items = [
+            reviewItem(iid: "1", reviewState: nil, updated: "3 weeks ago", targetVersion: "2.0", order: 0),
+            reviewItem(iid: "2", reviewState: nil, updated: "2 hours ago", targetVersion: "1.0", order: 1),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.reviewQueue(in: items).map { $0.iidText }, ["2", "1"])
+    }
+
+    func testLowerTargetVersionSortsAboveHigherNumerically() {
+        let items = [
+            reviewItem(iid: "1", reviewState: nil, targetVersion: "1.10", order: 0),
+            reviewItem(iid: "2", reviewState: nil, targetVersion: "1.9", order: 1),
+            reviewItem(iid: "3", reviewState: nil, targetVersion: "24.10", order: 2),
+            reviewItem(iid: "4", reviewState: nil, targetVersion: "24.9", order: 3),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.reviewQueue(in: items).map { $0.iidText }, ["2", "1", "4", "3"])
+    }
+
+    func testMissingTargetVersionSortsLastWithinTie() {
+        let items = [
+            reviewItem(iid: "1", reviewState: nil, targetVersion: nil, order: 0),
+            reviewItem(iid: "2", reviewState: nil, targetVersion: "2.0", order: 1),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.reviewQueue(in: items).map { $0.iidText }, ["2", "1"])
+    }
+
+    func testHostOrderBreaksRemainingTies() {
+        let items = [
+            reviewItem(iid: "7", reviewState: nil, order: 1),
+            reviewItem(iid: "5", reviewState: nil, order: 0),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.reviewQueue(in: items).map { $0.iidText }, ["5", "7"])
+    }
+
+    func testCompareTargetVersionsIsNumericallyAware() {
+        XCTAssertEqual(HomeBoardBuilder.compareTargetVersions("1.9", "1.10"), .orderedAscending)
+        XCTAssertEqual(HomeBoardBuilder.compareTargetVersions("v1.2", "1.2.1"), .orderedAscending)
+        XCTAssertEqual(HomeBoardBuilder.compareTargetVersions("24.10", "24.9"), .orderedDescending)
+        XCTAssertEqual(HomeBoardBuilder.compareTargetVersions("1.2", "1.2"), .orderedSame)
+        XCTAssertEqual(HomeBoardBuilder.compareTargetVersions(nil, "1.0"), .orderedDescending)
+        XCTAssertEqual(HomeBoardBuilder.compareTargetVersions(nil, nil), .orderedSame)
+        XCTAssertEqual(HomeBoardBuilder.compareTargetVersions("M120", "M119"), .orderedDescending)
     }
 
     // MARK: - Health mapping
 
     func testPendingWithoutRetainedDataLoads() {
-        let health = HomeBoardBuilder.health(for: NextSourceStatus(check: .pending), hasRetained: false)
+        let health = HomeBoardBuilder.health(for: HomeSourceStatus(check: .pending), hasRetained: false)
         XCTAssertEqual(health, .loading)
     }
 
     func testPendingWithRetainedDataUpdates() {
-        let health = HomeBoardBuilder.health(for: NextSourceStatus(check: .pending), hasRetained: true)
+        let health = HomeBoardBuilder.health(for: HomeSourceStatus(check: .pending), hasRetained: true)
         XCTAssertEqual(health, .updating)
     }
 
     func testFailedOrUnsupportedWithoutRetainedDataIsUnavailable() {
         XCTAssertEqual(
-            HomeBoardBuilder.health(for: NextSourceStatus(check: .failed), hasRetained: false),
+            HomeBoardBuilder.health(for: HomeSourceStatus(check: .failed), hasRetained: false),
             .unavailable
         )
         XCTAssertEqual(
-            HomeBoardBuilder.health(for: NextSourceStatus(check: .unsupported), hasRetained: false),
+            HomeBoardBuilder.health(for: HomeSourceStatus(check: .unsupported), hasRetained: false),
             .unavailable
         )
     }
@@ -136,13 +191,13 @@ final class HomeBoardBuilderTests: XCTestCase {
     func testFailedOrUnsupportedWithRetainedDataStaysStale() {
         XCTAssertEqual(
             HomeBoardBuilder.health(
-                for: NextSourceStatus(check: .failed, failureReason: "could not read list"),
+                for: HomeSourceStatus(check: .failed, failureReason: "could not read list"),
                 hasRetained: true
             ),
             .stale(reason: "could not read list")
         )
         XCTAssertEqual(
-            HomeBoardBuilder.health(for: NextSourceStatus(check: .unsupported), hasRetained: true),
+            HomeBoardBuilder.health(for: HomeSourceStatus(check: .unsupported), hasRetained: true),
             .stale(reason: nil)
         )
     }
@@ -157,11 +212,11 @@ final class HomeBoardBuilderTests: XCTestCase {
 
     func testUnconfiguredAndSignedOutMapDirectly() {
         XCTAssertEqual(
-            HomeBoardBuilder.health(for: NextSourceStatus(check: .unconfigured), hasRetained: false),
+            HomeBoardBuilder.health(for: HomeSourceStatus(check: .unconfigured), hasRetained: false),
             .unconfigured
         )
         XCTAssertEqual(
-            HomeBoardBuilder.health(for: NextSourceStatus(check: .signedOut), hasRetained: true),
+            HomeBoardBuilder.health(for: HomeSourceStatus(check: .signedOut), hasRetained: true),
             .signedOut
         )
     }
@@ -171,8 +226,8 @@ final class HomeBoardBuilderTests: XCTestCase {
     func testStartSessionRequiresCurrentData() {
         XCTAssertTrue(HomeBoardBuilder.canStartSession(jiraStatus: .current))
         XCTAssertFalse(HomeBoardBuilder.canStartSession(
-            jiraStatus: NextSourceStatus(check: .stale, failureReason: "refresh failed")
+            jiraStatus: HomeSourceStatus(check: .stale, failureReason: "refresh failed")
         ))
-        XCTAssertFalse(HomeBoardBuilder.canStartSession(jiraStatus: NextSourceStatus(check: .pending)))
+        XCTAssertFalse(HomeBoardBuilder.canStartSession(jiraStatus: HomeSourceStatus(check: .pending)))
     }
 }

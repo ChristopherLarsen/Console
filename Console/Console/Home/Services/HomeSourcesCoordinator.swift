@@ -43,15 +43,6 @@ final class HomeSourcesCoordinator {
         jiraController.refresh()
     }
 
-    func refreshReviews() {
-        reviewsController.refresh()
-    }
-
-    func refreshAll() {
-        refreshJira()
-        refreshReviews()
-    }
-
     private var configuredJiraURL: URL? {
         jiraURLProvider().flatMap(JiraView.normalizedURL(from:))
     }

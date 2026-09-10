@@ -174,12 +174,6 @@ struct CommandValidator {
         return nil
     }
 
-    // MARK: - App Installation Check
-
-    func isAppInstalled(bundleID: String) -> Bool {
-        NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) != nil
-    }
-
     // MARK: - File Path Validation
 
     func validateFilePaths(_ command: String, args: [String]) -> String? {

@@ -102,15 +102,15 @@ final class NavigationUITests: XCTestCase {
         XCTAssertTrue(settingsItem.waitForExistence(timeout: 5), "Settings sidebar item should be visible")
         settingsItem.tap()
 
-        let mergeRequestsURLLabel = app.staticTexts["Web View Merge Requests URL"].firstMatch
-        XCTAssertTrue(mergeRequestsURLLabel.waitForExistence(timeout: 5), "Settings should show Web View Merge Requests URL field")
+        let mergeRequestsURLLabel = app.staticTexts["GitLab URL"].firstMatch
+        XCTAssertTrue(mergeRequestsURLLabel.waitForExistence(timeout: 5), "Settings should show GitLab URL field")
 
         // New GitLab list fields share the URL's section.
-        let gitLabReviewsURLLabel = app.staticTexts["Web View GitLab Reviews URL"].firstMatch
-        XCTAssertTrue(gitLabReviewsURLLabel.waitForExistence(timeout: 5), "Settings should show Web View GitLab Reviews URL field")
+        let gitLabReviewsURLLabel = app.staticTexts["GitLab Reviews URL"].firstMatch
+        XCTAssertTrue(gitLabReviewsURLLabel.waitForExistence(timeout: 5), "Settings should show GitLab Reviews URL field")
 
-        let gitLabMyMRsURLLabel = app.staticTexts["Web View GitLab My MRs URL"].firstMatch
-        XCTAssertTrue(gitLabMyMRsURLLabel.waitForExistence(timeout: 5), "Settings should show Web View GitLab My MRs URL field")
+        let gitLabMyMRsURLLabel = app.staticTexts["GitLab My MRs URL"].firstMatch
+        XCTAssertTrue(gitLabMyMRsURLLabel.waitForExistence(timeout: 5), "Settings should show GitLab My MRs URL field")
     }
 
     func testSettingsSidebarShowsSettings() throws {

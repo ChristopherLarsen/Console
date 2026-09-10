@@ -5,22 +5,18 @@ import SwiftData
 @MainActor
 final class CommandEntryPointTests: XCTestCase {
 
-    private var originalLogging: Any?
     private var originalConfirmation: Any?
     private var originalAuthorizeAll: Any?
 
     override func setUp() {
         super.setUp()
-        originalLogging = UserDefaults.standard.object(forKey: "enableCommandLogging")
         originalConfirmation = UserDefaults.standard.object(forKey: "requireConfirmationForDangerous")
         originalAuthorizeAll = UserDefaults.standard.object(forKey: "requireAuthorizationForAllCommands")
-        UserDefaults.standard.set(false, forKey: "enableCommandLogging")
         UserDefaults.standard.set(true, forKey: "requireConfirmationForDangerous")
         UserDefaults.standard.set(false, forKey: "requireAuthorizationForAllCommands")
     }
 
     override func tearDown() {
-        restore(originalLogging, key: "enableCommandLogging")
         restore(originalConfirmation, key: "requireConfirmationForDangerous")
         restore(originalAuthorizeAll, key: "requireAuthorizationForAllCommands")
         super.tearDown()
@@ -127,62 +123,6 @@ final class CommandEntryPointTests: XCTestCase {
 
         XCTAssertEqual(spy.executedCommands.map(\.name), ["Synthetic Voice Run"])
         XCTAssertTrue(run.result.overallSuccess)
-        XCTAssertEqual(viewModel.recentLogs.count, 0)
-    }
-
-    func testVoiceAlreadyRunningDoesNotLog() async {
-        UserDefaults.standard.set(true, forKey: "enableCommandLogging")
-        let spy = CommandRunningSpy()
-        spy.isExecuting = true
-        spy.resultProvider = { command, _ in CommandRun.alreadyRunning(command: command) }
-        let viewModel = MenuBarViewModel()
-        viewModel.setListeningServices(
-            localCommandExecutor: spy,
-            aiProviderManager: AIProviderManager()
-        )
-        let command = makeSafeCommand(name: "Synthetic Voice Busy")
-
-        let run = await viewModel.executeLocalCommand(command)
-        let didLog = viewModel.recordVoiceExecutionLog(
-            run: run,
-            triggerWord: "console",
-            rawTranscript: "console synthetic voice busy",
-            strippedTranscript: "synthetic voice busy",
-            matchedCommand: command.name,
-            confidence: 1,
-            duration: 0
-        )
-
-        XCTAssertTrue(run.result.alreadyRunning)
-        XCTAssertFalse(didLog)
-        XCTAssertEqual(viewModel.recentLogs.count, 0)
-    }
-
-    func testVoiceLogsOneEntryForCompletedRun() async {
-        UserDefaults.standard.set(true, forKey: "enableCommandLogging")
-        let spy = CommandRunningSpy()
-        let viewModel = MenuBarViewModel()
-        viewModel.setListeningServices(
-            localCommandExecutor: spy,
-            aiProviderManager: AIProviderManager()
-        )
-        let command = makeSafeCommand(name: "Synthetic Voice Log")
-
-        let run = await viewModel.executeLocalCommand(command)
-        let didLog = viewModel.recordVoiceExecutionLog(
-            run: run,
-            triggerWord: "console",
-            rawTranscript: "console synthetic voice log",
-            strippedTranscript: "synthetic voice log",
-            matchedCommand: command.name,
-            confidence: 1,
-            duration: 0.1
-        )
-
-        XCTAssertEqual(spy.executedCommands.count, 1)
-        XCTAssertTrue(didLog)
-        XCTAssertEqual(viewModel.recentLogs.count, 1)
-        XCTAssertEqual(viewModel.recentLogs.first?.matchedCommand, "Synthetic Voice Log")
     }
 
     func testGlobalStopCancelsInjectedExecutor() async {

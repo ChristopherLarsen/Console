@@ -49,6 +49,12 @@ enum GitLabListExtractorJavaScript {
       '[data-testid="merge-request-review-state"]',
       '.review-state'
     ];
+    const TARGET_SELECTORS = [
+      'a[href*="/milestones/"]',
+      '[data-testid="merge-request-milestone"]',
+      '[data-testid="milestone-link"]',
+      '.milestone'
+    ];
     const MR_PATH_PATTERN = /\/-\/merge_requests\/(\d+)\/?$/;
     const DRAFT_TITLE_PATTERN = /^\s*(\[(draft|wip)\]\s*|(draft|wip)\s*:\s*)/i;
 
@@ -207,6 +213,7 @@ enum GitLabListExtractorJavaScript {
         isDraft: isDraft,
         pipeline: pipelineState(rowElement),
         review: compactText(firstVisible(roots, REVIEW_SELECTORS)),
+        target: compactText(firstVisible(roots, TARGET_SELECTORS)),
         updated: updatedText(rowElement)
       });
     }

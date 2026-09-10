@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import WebKit
 
 /// Process-scoped owner of the two merge-request list controllers, built on
 /// the retained pages from `CodeHostWebSessionStore`.
@@ -46,5 +47,45 @@ final class MergeRequestListSession {
             if !busy { return }
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
+    }
+
+    /// The scheduled reviews-requested scan cycle used by
+    /// `MRReviewScanScheduler`.
+    ///
+    /// The user's browsing of the retained GitLab page always wins over the
+    /// timer: when the page has been navigated away from the configured list
+    /// URL (an MR detail page, say) or is mid-navigation, the cycle defers
+    /// its forced reload and only resumes pending work. Sign-in recovery is
+    /// respected by the controller itself (`startOrRefresh` never reloads
+    /// while a sign-in round trip is in progress).
+    func refreshReviewsList(timeout: TimeInterval = 10) async {
+        let controller = controller(for: .reviewsRequested)
+        guard !Task.isCancelled, !retainedReviewsPageIsAwayFromList,
+              !controller.wantsAuthenticationObservation, !controller.isRefreshing else { return }
+        controller.startOrRefresh()
+        let generation = controller.currentGeneration
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if Task.isCancelled { break }
+            if !controller.isRefreshing { return }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        // Only cancel the extraction this scan started, never newer user work.
+        if controller.currentGeneration == generation {
+            controller.cancelPendingWork()
+        }
+    }
+
+    /// True when the retained reviews page is interactive somewhere other
+    /// than the configured list URL. Query-only differences count too —
+    /// pagination and sorting are user state worth preserving.
+    private var retainedReviewsPageIsAwayFromList: Bool {
+        let page = CodeHostWebSessionStore.shared.page(for: .reviewsRequested)
+        if page.isLoading { return true }
+        guard let current = page.url else { return false }
+        guard let configured = ListURLNormalization.url(
+            from: CodeHostConfiguration.effectiveURLString(for: .reviewsRequested)
+        ) else { return false }
+        return current.absoluteString != configured.absoluteString
     }
 }

@@ -69,7 +69,7 @@ final class ClaudeSessionLauncher: SessionProcessLaunching {
         let environmentEntries = environment.map { "\($0.key)=\($0.value)" }.sorted()
         terminalView.startProcess(
             executable: "/bin/zsh",
-            args: ["--login"],
+            args: ["--login", "-i"],
             environment: environmentEntries,
             execName: "zsh",
             currentDirectory: workingDirectory
@@ -114,6 +114,12 @@ final class SessionTerminalCoordinator: NSObject, LocalProcessTerminalViewDelega
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
 
     func processTerminated(source: TerminalView, exitCode: Int32?) {
-        store?.handleProcessTerminated(sessionID: sessionID)
+        // LocalProcess calls its delegate BEFORE childStopped(). Starting a
+        // replacement here either fails the running guard or has its monitor
+        // cancelled by the old child's cleanup. Hop past the callback first.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.store?.handleProcessTerminated(sessionID: self.sessionID)
+        }
     }
 }

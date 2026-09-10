@@ -145,11 +145,6 @@ final class MenuBarManager: NSObject {
         settingsItem.image = NSImage(systemSymbolName: "gear", accessibilityDescription: "Settings")
         menu.addItem(settingsItem)
 
-        if UserDefaults.standard.bool(forKey: "enableCommandLogging") {
-            menu.addItem(.separator())
-            addLoggingSection(to: menu)
-        }
-
         #if DEBUG
         menu.addItem(.separator())
 
@@ -249,25 +244,6 @@ final class MenuBarManager: NSObject {
         DeveloperModeManager.shared.toggleDeveloperMode()
     }
     #endif
-
-    private func addLoggingSection(to menu: NSMenu) {
-        if let vm = viewModel, !vm.recentLogs.isEmpty {
-            let last = vm.recentLogs[0]
-            let lastText = "\(last.statusEmoji) \(last.matchedCommand ?? last.strippedTranscript)"
-            let lastItem = NSMenuItem(title: "Last: \(lastText)", action: nil, keyEquivalent: "")
-            lastItem.isEnabled = false
-            menu.addItem(lastItem)
-
-            let recentFailures = vm.recentLogs.prefix(5).filter {
-                $0.executionResult == .failed || $0.executionResult == .noMatch
-            }.count
-            if recentFailures > 0 {
-                let failItem = NSMenuItem(title: "⚠ \(recentFailures) recent failure\(recentFailures == 1 ? "" : "s")", action: nil, keyEquivalent: "")
-                failItem.isEnabled = false
-                menu.addItem(failItem)
-            }
-        }
-    }
 
     // MARK: - Global Hotkey
 

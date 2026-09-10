@@ -227,17 +227,24 @@ struct HomeBoardTicketCard: View {
     }
 }
 
-/// One review-request card: grey dot, normalized author-owes state, project
-/// and identity, title. Grey dot even though the state text is red — red dots
+/// One review-request card: grey dot, normalized state, project and target
+/// version, title. Grey dot even though the state text is red — red dots
 /// are reserved for needs-you sessions; Console cannot confirm who reviewed.
 struct HomeBoardReviewRequestCard: View {
     let item: MergeRequestSummary
-    /// Normalized "Changes requested" / "Discussion" label.
+    /// Host-rendered review state, verbatim or normalized; the view decides.
     let stateLabel: String
     let actionLabel: String
     let action: () -> Void
 
     @State private var hovering = false
+
+    /// Project plus host-rendered target version, so the queue's version
+    /// ordering is legible on the card.
+    private var projectLine: String? {
+        let parts = [item.projectDisplayName, item.targetVersionText].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 
     var body: some View {
         Button(action: action) {
@@ -273,7 +280,7 @@ struct HomeBoardReviewRequestCard: View {
                     .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                if let project = item.projectDisplayName {
+                if let project = projectLine {
                     Text(project)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)

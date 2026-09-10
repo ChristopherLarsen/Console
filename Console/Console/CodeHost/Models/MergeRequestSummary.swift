@@ -40,6 +40,9 @@ struct MergeRequestSummary: Identifiable, Equatable, Sendable {
     let pipelineDisplayState: String?
     let reviewDisplayState: String?
     let updatedText: String?
+    /// Host-rendered target version (GitLab milestone title, e.g. "24.10").
+    /// Nil when the host rendered no milestone in the row.
+    var targetVersionText: String? = nil
     let mergeRequestURL: URL
     let sourceOrder: Int
 }

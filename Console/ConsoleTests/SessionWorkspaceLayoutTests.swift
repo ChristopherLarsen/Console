@@ -38,7 +38,6 @@ final class SessionWorkspaceLayoutTests: XCTestCase {
         XCTAssertTrue(layout.isFocusMode)
         XCTAssertTrue(layout.isListVisible)
         XCTAssertFalse(layout.showsSessionList)
-        XCTAssertFalse(layout.showsCollapsedListRail)
 
         let restored = layout.exitFocusSession()
         XCTAssertEqual(restored?.isListVisible, true)
@@ -54,14 +53,13 @@ final class SessionWorkspaceLayoutTests: XCTestCase {
         layout.isListVisible = false
 
         layout.enterFocusSession(terminalExpanded: false, terminalHeight: 150)
-        XCTAssertFalse(layout.showsCollapsedListRail)
+        XCTAssertFalse(layout.showsSessionList)
 
         let restored = layout.exitFocusSession()
         XCTAssertEqual(restored?.isListVisible, false)
         XCTAssertEqual(restored?.isTerminalExpanded, false)
         XCTAssertEqual(restored?.terminalHeight, 150)
         XCTAssertFalse(layout.showsSessionList)
-        XCTAssertTrue(layout.showsCollapsedListRail)
     }
 
     func testEnterFocusIsIdempotentAndDoesNotCaptureCollapsedDrawer() {

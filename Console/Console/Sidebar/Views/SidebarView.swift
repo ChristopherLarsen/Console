@@ -34,14 +34,6 @@ struct SidebarView: View {
                         }
 
                         SidebarRow(
-                            label: SidebarSelection.next.label,
-                            icon: SidebarSelection.next.icon,
-                            isSelected: selection == .next
-                        ) {
-                            selection = .next
-                        }
-
-                        SidebarRow(
                             label: SidebarSelection.brief.label,
                             icon: SidebarSelection.brief.icon,
                             isSelected: selection == .brief

@@ -45,6 +45,16 @@ enum RelativeAge {
         return "\(days / 365)y"
     }
 
+    /// Approximate date behind a scraped timestamp string, for ordering only.
+    /// Same language as `compact(from:)` — relative ("2 days ago") and
+    /// absolute — with no verbatim fallback: unparseable input yields nil.
+    static func approximateDate(from raw: String?, now: Date = Date()) -> Date? {
+        guard let raw else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return date(from: stripLeadingLabel(trimmed), now: now)
+    }
+
     // MARK: - Parsing
 
     private static func stripLeadingLabel(_ value: String) -> String {

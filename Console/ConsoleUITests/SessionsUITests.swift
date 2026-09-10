@@ -235,9 +235,6 @@ final class SessionsUITests: XCTestCase {
         XCTAssertTrue(list.waitForExistence(timeout: 5), "session list is visible before focus")
         XCTAssertTrue(element("NewSessionButton").exists, "list chrome is present before focus")
 
-        let focusToggle = element("Sessions.FocusToggle")
-        XCTAssertTrue(focusToggle.waitForExistence(timeout: 5), "Focus Session control is present")
-
         let terminalToggle = element("Terminal")
         XCTAssertTrue(terminalToggle.waitForExistence(timeout: 5), "Terminal sidebar item stays mounted")
 
@@ -258,8 +255,9 @@ final class SessionsUITests: XCTestCase {
         )
         XCTAssertFalse(element("NewSessionButton").exists, "list header unmounts with the list")
         XCTAssertFalse(element("Sessions.ShowListButton").exists, "focus mode does not leave a list rail")
+        XCTAssertTrue(element("Sessions.ToggleListButton").waitForExistence(timeout: 5), "toolbar toggle stays available in focus mode")
         XCTAssertTrue(header.waitForExistence(timeout: 5), "selected session terminal remains")
-        XCTAssertTrue(focusToggle.waitForExistence(timeout: 5), "Focus Session toggle stays available")
+        XCTAssertFalse(element("Sessions.FocusToggle").exists, "pane header no longer hosts a Focus Session button")
         XCTAssertTrue(terminalToggle.exists, "Terminal sidebar toggle stays mounted while the drawer is retracted")
 
         toggleFocusSessionChrome()
@@ -295,5 +293,34 @@ final class SessionsUITests: XCTestCase {
         XCTAssertTrue(element("Sessions.List").waitForExistence(timeout: 5))
         XCTAssertTrue(sessionRow(named: "Preview Alpha").waitForExistence(timeout: 5))
         XCTAssertTrue(sessionRow(named: "Preview Beta").waitForExistence(timeout: 5))
+    }
+
+    // MARK: - Session list toolbar toggle
+
+    func testToolbarToggleUnmountsAndRestoresSessionList() throws {
+        launchSessions(preview: true)
+
+        let alphaRow = sessionRow(named: "Preview Alpha")
+        XCTAssertTrue(alphaRow.waitForExistence(timeout: 5), "session list visible before toggle")
+
+        let toggle = element("Sessions.ToggleListButton")
+        XCTAssertTrue(
+            toggle.waitForExistence(timeout: 5),
+            "list toggle lives in the window toolbar. Tree:\n\(app.debugDescription)"
+        )
+
+        toggle.tap()
+        XCTAssertTrue(
+            alphaRow.waitForNonExistence(timeout: 5),
+            "collapsed list unmounts its rows entirely. Tree:\n\(app.debugDescription)"
+        )
+        XCTAssertFalse(element("Sessions.List").exists, "collapsed list leaves no residue on the right")
+
+        toggle.tap()
+        XCTAssertTrue(
+            element("Sessions.List").waitForExistence(timeout: 5),
+            "toggle restores the list. Tree:\n\(app.debugDescription)"
+        )
+        XCTAssertTrue(alphaRow.waitForExistence(timeout: 5), "session rows return after restore")
     }
 }

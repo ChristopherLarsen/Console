@@ -6,7 +6,7 @@ import Foundation
 ///
 /// Navigation is dispatched through `actionExecutor` when set (tests observe
 /// without loading WebViews); otherwise the shared deep-link + navigation
-/// path runs, mirroring `NextButtonModel.execute`.
+/// path runs.
 @MainActor
 @Observable
 final class HomeBoardModel {
@@ -65,9 +65,9 @@ final class HomeBoardModel {
     ) -> HomeBoardSnapshot {
         HomeBoardSnapshot(
             jiraTickets: jiraController.state.tickets,
-            jiraStatus: NextSourceStatus.from(jiraController.state),
+            jiraStatus: HomeSourceStatus.from(jiraController.state),
             reviewItems: reviewsController.state.retainedItems,
-            reviewStatus: NextSourceStatus.from(reviewsController.state)
+            reviewStatus: HomeSourceStatus.from(reviewsController.state)
         )
     }
 
@@ -85,8 +85,8 @@ final class HomeBoardModel {
         perform(.openJiraIssue(url: ticket.issueURL))
     }
 
-    /// Next review and Review column rows: verify against current data, then
-    /// deep-link to the specific merge request.
+    /// Review column rows: verify against current data, then deep-link to
+    /// the specific merge request.
     func openReview(_ item: MergeRequestSummary) {
         let snap = snapshot()
         if snap.reviewStatus.check == .current,

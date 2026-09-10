@@ -26,6 +26,7 @@ final class MergeRequestListExtractorTests: XCTestCase {
               <a href="https://gitlab.example.test/group/console-ios/-/merge_requests/123" class="merge-request-title-text">Fix account recovery navigation crash</a>
               <a class="author_link" href="/chen">Alex Chen</a>
               <span class="ci-status-link ci-status-icon-failed" aria-label="Failed"></span>
+              <a href="https://gitlab.example.test/group/console-ios/-/milestones/12" class="milestone">24.10</a>
               <time datetime="2026-08-22T10:00:00Z">updated 2h ago</time>
             </li>
             <li class="merge-request" data-testid="merge-request">
@@ -228,6 +229,7 @@ final class MergeRequestListExtractorTests: XCTestCase {
         XCTAssertEqual(items[0].authorDisplayName, "Alex Chen")
         XCTAssertEqual(items[0].pipelineDisplayState, "Failed")
         XCTAssertEqual(items[0].updatedText, "updated 2h ago")
+        XCTAssertEqual(items[0].targetVersionText, "24.10")
         XCTAssertFalse(items[0].isDraft)
         XCTAssertEqual(items[0].id.absoluteString, "https://gitlab.example.test/group/console-ios/-/merge_requests/123")
 
@@ -246,6 +248,7 @@ final class MergeRequestListExtractorTests: XCTestCase {
         XCTAssertNil(items[3].authorDisplayName)
         XCTAssertNil(items[3].pipelineDisplayState)
         XCTAssertNil(items[3].updatedText)
+        XCTAssertNil(items[3].targetVersionText)
         XCTAssertFalse(items[3].isDraft)
     }
 
@@ -375,6 +378,7 @@ final class MergeRequestListExtractorTests: XCTestCase {
         XCTAssertNil(item.pipelineDisplayState)
         XCTAssertNil(item.reviewDisplayState)
         XCTAssertNil(item.updatedText)
+        XCTAssertNil(item.targetVersionText)
         XCTAssertFalse(item.isDraft)
     }
 

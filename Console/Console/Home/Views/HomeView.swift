@@ -6,12 +6,13 @@ import SwiftUI
 /// the JIRA and GitLab destinations ("always active" = process-scoped
 /// controllers keeping page, session, and last extraction alive), and Home
 /// reads the controllers' state plus headless extraction results. Sign-in is
-/// never revealed here — the columns show a "Sign in required" button that
-/// opens the owning destination.
+/// never revealed here — the columns show a "Sign in to JIRA" / "Sign in to
+/// GitLab" button that opens the owning destination.
 struct HomeView: View {
     @AppStorage("webViewJiraURL") private var webViewJiraURL: String = ""
     @Environment(SessionStore.self) private var sessionStore: SessionStore?
     @Environment(SessionLaunchCoordinator.self) private var launchCoordinator
+    @Environment(MRReviewScanScheduler.self) private var reviewScanScheduler: MRReviewScanScheduler?
 
     @State private var sources: HomeSourcesCoordinator
     @State private var model: HomeBoardModel
@@ -69,28 +70,26 @@ struct HomeView: View {
 
     // MARK: Next
 
-    /// Next has two independent slot states: the story slot follows Jira
-    /// health, the review slot follows GitLab health. The column itself
-    /// always renders content; each slot owns its state presentation.
+    /// Next holds one slot: the story slot follows Jira health. The column
+    /// itself always renders content; the slot owns its state presentation.
     private func nextColumn(_ board: HomeBoard) -> some View {
         HomeBoardColumn(
             title: "Next",
-            detail: "JIRA · GitLab",
+            detail: "JIRA",
             health: .ready,
             content: {
                 nextStorySlot(board)
-                nextReviewSlot(board)
             },
             accessory: {
                 Button {
-                    sources.refreshAll()
+                    sources.refreshJira()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 18, weight: .regular))
                         .frame(minWidth: 28, minHeight: 28)
                         .contentShape(Rectangle())
                 }
-                .help("Refresh Next sources")
+                .help("Refresh Jira")
                 .accessibilityIdentifier("HomeNextRefreshButton")
             }
         )
@@ -135,49 +134,6 @@ struct HomeView: View {
         case .signedOut:
             // Sign-in is surfaced only in the Next column.
             recoveryCard(.signInJira)
-        }
-    }
-
-    @ViewBuilder
-    private func nextReviewSlot(_ board: HomeBoard) -> some View {
-        switch board.reviewHealth {
-        case .ready:
-            if let item = board.nextReview {
-                HomeBoardReviewRequestCard(
-                    item: item,
-                    stateLabel: AttentionChannel.awaitingAuthorReviewState(item.reviewDisplayState)?.label
-                        ?? "Review requested",
-                    actionLabel: "Open review"
-                ) {
-                    model.openReview(item)
-                }
-                .accessibilityIdentifier("HomeNextReviewCard")
-            } else {
-                HomeBoardPlaceholderCard(
-                    title: "Nothing to review",
-                    detail: "You are all caught up.",
-                    accessibilityIdentifier: "HomeNextNothingToReviewPlaceholder"
-                )
-            }
-        case .updating, .stale:
-            if let item = board.nextReview {
-                HomeBoardReviewRequestCard(
-                    item: item,
-                    stateLabel: AttentionChannel.awaitingAuthorReviewState(item.reviewDisplayState)?.label
-                        ?? "Review requested",
-                    actionLabel: "Open review"
-                ) {
-                    model.openReview(item)
-                }
-                .accessibilityIdentifier("HomeNextReviewCard")
-            }
-        case .loading:
-            HomeSkeletonCard()
-        case .unconfigured, .unavailable:
-            recoveryCard(gitLabRecovery(for: board.reviewHealth))
-        case .signedOut:
-            // Sign-in is surfaced only in the Next column.
-            recoveryCard(.signInGitLab)
         }
     }
 
@@ -275,19 +231,20 @@ struct HomeView: View {
             recovery: gitLabRecovery(for: board.reviewHealth),
             onRecovery: { recover(gitLabRecovery(for: board.reviewHealth)) },
             content: {
-                if board.awaitingAuthorRequests.isEmpty {
+                if board.reviewQueue.isEmpty {
                     if board.reviewHealth == .ready {
                         HomeBoardPlaceholderCard(
-                            title: "No review requests with changes or discussion",
+                            title: "No merge requests to review",
                             accessibilityIdentifier: "HomeReviewEmptyPlaceholder"
                         )
                     }
                 } else {
-                    ForEach(Array(board.awaitingAuthorRequests.enumerated()), id: \.element.id) { index, item in
+                    ForEach(Array(board.reviewQueue.enumerated()), id: \.element.id) { index, item in
                         HomeBoardReviewRequestCard(
                             item: item,
                             stateLabel: AttentionChannel.awaitingAuthorReviewState(item.reviewDisplayState)?.label
-                                ?? "Changes requested",
+                                ?? item.reviewDisplayState
+                                ?? "Review requested",
                             actionLabel: "Open review"
                         ) {
                             model.openReview(item)
@@ -300,7 +257,7 @@ struct HomeView: View {
                 HStack(spacing: 6) {
                     reviewInfoButton
                     Button {
-                        sources.refreshReviews()
+                        reviewScanScheduler?.scanNow()
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 18, weight: .regular))
@@ -317,12 +274,13 @@ struct HomeView: View {
 
     private func reviewDetail(_ board: HomeBoard) -> String? {
         guard board.reviewHealth.retainsContent else { return "GitLab" }
-        return "GitLab · \(board.awaitingAuthorRequests.count)"
+        return "GitLab · \(board.reviewQueue.count)"
     }
 
-    /// Discloses the Review column's approximation: Console sees the host's
+    /// Discloses the Review column's approximations: Console sees the host's
     /// review state but cannot confirm who reviewed or whether the author
-    /// has responded since.
+    /// has responded since, and the urgency order reads the host-rendered
+    /// timestamp and target version.
     private var reviewInfoButton: some View {
         Image(systemName: "info.circle")
             .font(.system(size: 11))
@@ -333,7 +291,8 @@ struct HomeView: View {
     }
 
     static let reviewProvenanceText =
-        "Shows review requests marked \u{201C}Changes requested\u{201D} or \u{201C}Discussion\u{201D}. "
+        "Shows every merge request in your review queue, most urgent first: "
+        + "re-reviews before first reviews, lower target versions before higher, older before newer. "
         + "Console cannot confirm who reviewed them or whether the author has responded."
 
     // MARK: - Source recovery
@@ -349,7 +308,7 @@ struct HomeView: View {
     private func jiraRecovery(for health: HomeBoardHealth) -> HomeBoardRecovery? {
         switch health {
         case .unconfigured: return .setUpJira
-        case .signedOut: return nil // sign-in lives only in the Next column
+        case .signedOut: return nil // JIRA sign-in is surfaced by the Next story slot
         case .unavailable: return .openJira
         case .ready, .updating, .stale, .loading: return nil
         }
@@ -358,7 +317,7 @@ struct HomeView: View {
     private func gitLabRecovery(for health: HomeBoardHealth) -> HomeBoardRecovery? {
         switch health {
         case .unconfigured: return .setUpGitLab
-        case .signedOut: return nil // sign-in lives only in the Next column
+        case .signedOut: return .signInGitLab // Next no longer shows GitLab; Review owns sign-in
         case .unavailable: return .openGitLab
         case .ready, .updating, .stale, .loading: return nil
         }

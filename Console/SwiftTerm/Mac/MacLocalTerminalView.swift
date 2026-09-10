@@ -181,6 +181,13 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
      */
     public func startProcess(executable: String = "/bin/bash", args: [String] = [], environment: [String]? = nil, execName: String? = nil, currentDirectory: String? = nil)
     {
+        // An exited PTY can still deliver EOF/read callbacks. Reusing its
+        // LocalProcess lets those callbacks invalidate the replacement child.
+        // Keep the terminal buffer, but isolate every new child from old I/O.
+        if !process.running && process.shellPid != 0 {
+            process.delegate = nil
+            process = LocalProcess(delegate: self)
+        }
         // A nil environment keeps the LocalProcess default (TERM=xterm-256color);
         // hosts that want options.termName in the child's environment pass
         // Terminal.getEnvironmentVariables(termName:) explicitly

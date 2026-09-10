@@ -5,6 +5,7 @@ import SwiftData
 enum CommandsHubTab: String, CaseIterable, Identifiable {
     case triggers
     case commands
+    case config
 
     var id: String { rawValue }
 
@@ -12,6 +13,7 @@ enum CommandsHubTab: String, CaseIterable, Identifiable {
         switch self {
         case .triggers: return "Triggers"
         case .commands: return "Commands"
+        case .config: return "Config"
         }
     }
 }
@@ -40,6 +42,8 @@ struct CommandsHubView: View {
                 TriggersView()
             case .commands:
                 CommandListView()
+            case .config:
+                CommandConfigView()
             }
         }
     }

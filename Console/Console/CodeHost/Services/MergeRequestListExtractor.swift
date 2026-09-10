@@ -57,6 +57,7 @@ enum MergeRequestListExtractor {
             case isDraft
             case pipeline
             case review
+            case target
             case updated
         }
 
@@ -68,6 +69,7 @@ enum MergeRequestListExtractor {
         var isDraft: Bool
         var pipeline: String?
         var review: String?
+        var target: String?
         var updated: String?
 
         init(
@@ -79,6 +81,7 @@ enum MergeRequestListExtractor {
             isDraft: Bool = false,
             pipeline: String? = nil,
             review: String? = nil,
+            target: String? = nil,
             updated: String? = nil
         ) {
             self.url = url
@@ -89,6 +92,7 @@ enum MergeRequestListExtractor {
             self.isDraft = isDraft
             self.pipeline = pipeline
             self.review = review
+            self.target = target
             self.updated = updated
         }
 
@@ -105,6 +109,7 @@ enum MergeRequestListExtractor {
             isDraft = try container.decodeIfPresent(Bool.self, forKey: .isDraft) ?? false
             pipeline = try container.decodeIfPresent(String.self, forKey: .pipeline)
             review = try container.decodeIfPresent(String.self, forKey: .review)
+            target = try container.decodeIfPresent(String.self, forKey: .target)
             updated = try container.decodeIfPresent(String.self, forKey: .updated)
         }
     }
@@ -161,6 +166,7 @@ enum MergeRequestListExtractor {
                     pipelineDisplayState: row.pipeline.flatMap(nonEmpty),
                     reviewDisplayState: row.review.flatMap(nonEmpty),
                     updatedText: row.updated.flatMap(nonEmpty),
+                    targetVersionText: row.target.flatMap(nonEmpty),
                     mergeRequestURL: url,
                     sourceOrder: results.count
                 )

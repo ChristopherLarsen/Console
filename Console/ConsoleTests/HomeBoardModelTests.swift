@@ -85,7 +85,7 @@ final class HomeBoardModelTests: XCTestCase {
         let ticket = makeTicket()
         let model = makeModel(snapshot: HomeBoardSnapshot(
             jiraTickets: [ticket],
-            jiraStatus: NextSourceStatus(check: .stale, failureReason: "refresh failed")
+            jiraStatus: HomeSourceStatus(check: .stale, failureReason: "refresh failed")
         ))
         model.openStory(ticket)
         XCTAssertEqual(actions, [.openJiraIssue(url: ticket.issueURL)])
@@ -151,7 +151,7 @@ final class HomeBoardModelTests: XCTestCase {
         let ticket = makeTicket(key: "PROJ-9")
         let model = makeModel(snapshot: HomeBoardSnapshot(
             jiraTickets: [ticket],
-            jiraStatus: NextSourceStatus(check: .stale, failureReason: "refresh failed")
+            jiraStatus: HomeSourceStatus(check: .stale, failureReason: "refresh failed")
         ))
         await model.continueTicket(ticket, sessions: [])
         XCTAssertTrue(launchedKeys.isEmpty)
@@ -174,7 +174,7 @@ final class HomeBoardModelTests: XCTestCase {
         )
         let model = makeModel(snapshot: HomeBoardSnapshot(
             jiraTickets: [ticket],
-            jiraStatus: NextSourceStatus(check: .stale, failureReason: "refresh failed")
+            jiraStatus: HomeSourceStatus(check: .stale, failureReason: "refresh failed")
         ))
         await model.continueTicket(ticket, sessions: [session])
         XCTAssertEqual(actions, [.selectSession(session.id)])

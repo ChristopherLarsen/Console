@@ -355,14 +355,16 @@ final class SessionStore {
         )
     }
 
-    /// Exact launch arguments: Claude session identity, and when a plugin
-    /// directory is available the bundled plugin plus preapproval of only
-    /// the three Console MCP tool names. The local Console display name is
-    /// omitted — it must not reach the child CLI. Uninstrumented launches
-    /// pass identity only so a missing plugin cannot block Claude.
+    /// Exact launch arguments: Claude session identity with bypassed
+    /// permission prompts, and when a plugin directory is available the
+    /// bundled plugin plus preapproval of only the three Console MCP tool
+    /// names. The local Console display name is omitted — it must not reach
+    /// the child CLI. Uninstrumented launches pass identity only so a missing
+    /// plugin cannot block Claude.
     static func launchArguments(claudeSessionID: UUID, pluginDirectory: String?) -> [String] {
         var arguments = [
             "--session-id", claudeSessionID.uuidString,
+            "--dangerously-skip-permissions",
         ]
         if let pluginDirectory {
             arguments += ["--plugin-dir", pluginDirectory]

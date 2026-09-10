@@ -81,12 +81,14 @@ struct ConsoleApp: App {
     @State private var wakeWordManager: WakeWordManager?
     @State private var updateManager: UpdateManager
     @State private var sessionStore: SessionStore
-    @State private var nextButtonModel: NextButtonModel
     @State private var workspaceStore: SessionWorkspaceStore
     @State private var iosProfileStore: IOSProjectProfileStore
     @State private var iosBuildCoordinator: IOSBuildCoordinator
     @State private var launchCoordinator: SessionLaunchCoordinator
     @State private var managedClaudeService = ManagedClaudeService()
+    @State private var mrReviewScanScheduler = MRReviewScanScheduler(
+        performer: { await MergeRequestListSession.shared.refreshReviewsList() }
+    )
     @State private var sessionWorkspaceLayout = SessionWorkspaceLayoutController()
     @State private var developerActions: DeveloperActionRunner
     private var syntheticTranscriptSource: SyntheticTranscriptSource?
@@ -112,7 +114,9 @@ struct ConsoleApp: App {
             "showErrorPopups": false,
             "popupDurationSeconds": 3,
             "listenOnStartup": true,
-            "visualFeedbackEnabled": true
+            "visualFeedbackEnabled": true,
+            AppSettings.mrScanIntervalMinutesKey: AppSettings.mrScanIntervalMinutesDefault,
+            AppSettings.mrScanModelKey: AppSettings.mrScanModelDefault
         ])
 
         let workspaceStore = SessionWorkspaceStore()
@@ -245,8 +249,6 @@ struct ConsoleApp: App {
 
         let sessionStore = SessionStore()
         _sessionStore = State(initialValue: sessionStore)
-        let nextButtonModel = NextButtonModel()
-        _nextButtonModel = State(initialValue: nextButtonModel)
         let coordinator = SessionLaunchCoordinator(store: sessionStore, workspaceStore: workspaceStore)
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-uiTestSessionLaunchFailure") {
@@ -260,10 +262,10 @@ struct ConsoleApp: App {
             MenuBarManager.shared.installStatusItem()
 
             let activeSessionStore = sessionStore
-            let activeNextModel = nextButtonModel
             let activeBuildCoordinator = iosBuildCoordinator
             let activeCommandExecutor = localCommandExecutor
             let activeManagedClaudeService = managedClaudeService
+            let activeMRReviewScanScheduler = mrReviewScanScheduler
             // Cancel any in-flight update check or clone when the app terminates.
             NotificationCenter.default.addObserver(
                 forName: NSApplication.willTerminateNotification,
@@ -272,7 +274,6 @@ struct ConsoleApp: App {
             ) { [weak updates] _ in
                 MainActor.assumeIsolated {
                     updates?.cancelAll()
-                    activeNextModel.cancel()
                     // Console-owned iOS build/test children must not outlive
                     // the app.
                     activeBuildCoordinator.cancelAll()
@@ -286,6 +287,9 @@ struct ConsoleApp: App {
                     // app either. There is no eternal process; this covers an
                     // in-flight call only.
                     activeManagedClaudeService.cleanupForAppQuit()
+                    // The scan scheduler owns no child processes; stopping it
+                    // only cancels its timer loop and defaults observation.
+                    activeMRReviewScanScheduler.stop()
                 }
             }
         }
@@ -313,18 +317,12 @@ struct ConsoleApp: App {
         if ProcessInfo.processInfo.arguments.contains("-uiTestSelectGitLab") {
             UserDefaults.standard.set(SidebarSelection.mergeRequests.rawValue, forKey: ConsoleNavigation.sidebarKey)
         }
-        if ProcessInfo.processInfo.arguments.contains("-uiTestSelectNext") {
-            UserDefaults.standard.set(SidebarSelection.next.rawValue, forKey: ConsoleNavigation.sidebarKey)
-        }
         if ProcessInfo.processInfo.arguments.contains("-uiTestSelectTriggers") {
             // Synthesized clicks on custom sidebar rows race window settling
             // under automation; wake-word UI tests navigate via this flag.
             // Triggers lives inside the consolidated Commands hub now.
             UserDefaults.standard.set(SidebarSelection.commands.rawValue, forKey: ConsoleNavigation.sidebarKey)
             UserDefaults.standard.set(CommandsHubTab.triggers.rawValue, forKey: ConsoleNavigation.commandsHubTabKey)
-        }
-        if ProcessInfo.processInfo.arguments.contains("-uiTestNextSyntheticSources") {
-            nextButtonModel.installSyntheticUITestSources()
         }
         if ProcessInfo.processInfo.arguments.contains("-uiTestSessionsPreview") {
             sessionStore.injectUITestPreviewSessions()
@@ -433,12 +431,12 @@ struct ConsoleApp: App {
             .environment(menuBarViewModel)
             .environment(updateManager)
             .environment(sessionStore)
-            .environment(nextButtonModel)
             .environment(workspaceStore)
             .environment(iosProfileStore)
             .environment(iosBuildCoordinator)
             .environment(launchCoordinator)
             .environment(managedClaudeService)
+            .environment(mrReviewScanScheduler)
             .environment(sessionWorkspaceLayout)
             .environment(developerActions)
             #if DEBUG
@@ -512,18 +510,6 @@ struct ConsoleApp: App {
                 }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
                 .disabled(sessionStore.selectedSession == nil && !sessionWorkspaceLayout.isFocusMode)
-                #if DEBUG
-                Divider()
-                Button("Refresh Next Task") {
-                    nextButtonModel.check(
-                        sessionStore: sessionStore,
-                        jiraController: JiraWebSession.shared.panelController
-                    )
-                }
-                Button("Open Next Task") {
-                    _ = nextButtonModel.performOpen(sessionStore: sessionStore)
-                }
-                #endif
             }
         }
         .commands {
@@ -688,10 +674,6 @@ struct ConsoleApp: App {
         AppDependencies.shared.menuBarViewModel = menuBarViewModel
         AppDependencies.shared.aiProviderManager = aiProviderManager
         AppDependencies.shared.localCommandExecutor = localCommandExecutor
-
-        #if DEBUG
-        LogCleanupService.shared.startBackgroundCleanup()
-        #endif
     }
 
     private func handleListenOnStartup() {
@@ -723,6 +705,15 @@ struct ConsoleApp: App {
         runStartupUpdateCheckIfNeeded()
         sessionStore.startBridgeIfNeeded()
         prepareMorningBriefIfNeeded()
+        startMRReviewScansIfNeeded()
+    }
+
+    /// Automated MR review scans: process-scoped cadence, started once per
+    /// launch. The scheduler itself no-ops until the user enables scans and
+    /// configures the GitLab reviews URL in Settings.
+    private func startMRReviewScansIfNeeded() {
+        guard !Self.isRunningUnitTests else { return }
+        mrReviewScanScheduler.start()
     }
 
     /// Prepares today's Morning Brief at launch so the report is ready

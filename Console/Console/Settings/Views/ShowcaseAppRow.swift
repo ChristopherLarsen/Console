@@ -3,8 +3,6 @@ import SwiftUI
 struct ShowcaseAppRow: View {
     let app: ShowcaseApp
 
-    @State private var appIcon: NSImage?
-    @State private var isInstalled: Bool = true
     @State private var isHovered: Bool = false
 
     var body: some View {
@@ -14,7 +12,6 @@ struct ShowcaseAppRow: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .opacity(isInstalled ? 1.0 : 0.6)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color(nsColor: .controlBackgroundColor))
@@ -25,12 +22,10 @@ struct ShowcaseAppRow: View {
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(rowAccessibilityLabel)
-        .task { await loadIcon() }
     }
 
     private var rowAccessibilityLabel: String {
         var parts = [app.name]
-        if !isInstalled { parts.append("not installed") }
         parts.append("\(app.showcaseCommands.count) voice commands")
         parts.append(contentsOf: app.showcaseCommands)
         return parts.joined(separator: ", ")
@@ -39,22 +34,12 @@ struct ShowcaseAppRow: View {
     // MARK: - Icon
 
     private var iconView: some View {
-        Group {
-            if let appIcon {
-                Image(nsImage: appIcon)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-            } else {
-                Image(systemName: app.iconName)
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .frame(width: 48, height: 48)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
-        .accessibilityLabel("\(app.name) icon")
+        Image(systemName: app.iconName)
+            .font(.title2)
+            .foregroundStyle(.secondary)
+            .frame(width: 48, height: 48)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            .accessibilityLabel("\(app.name) icon")
     }
 
     // MARK: - Commands
@@ -69,15 +54,7 @@ struct ShowcaseAppRow: View {
                 Text(app.name)
                     .font(.callout.weight(.semibold))
 
-                if !isInstalled {
-                    Text("Not Installed")
-                        .font(.caption2)
-                        .foregroundStyle(.red.opacity(0.8))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Color.red.opacity(0.1), in: Capsule())
-                        .accessibilityLabel("Not installed")
-                } else if let count = catalogPatternCount, count > 0 {
+                if let count = catalogPatternCount, count > 0 {
                     Text("\(count)")
                         .font(.caption2)
                         .fontWeight(.semibold)
@@ -106,16 +83,5 @@ struct ShowcaseAppRow: View {
                 }
             }
         }
-    }
-
-    private func loadIcon() async {
-        let bundleID = app.bundleID
-        let (icon, installed) = await Task.detached(priority: .background) {
-            let installed = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) != nil
-            let icon = await AppIconResolver.shared.getIcon(for: bundleID, size: 48)
-            return (icon, installed)
-        }.value
-        appIcon = icon
-        isInstalled = installed
     }
 }

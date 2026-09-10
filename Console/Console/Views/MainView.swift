@@ -248,8 +248,6 @@ struct MainView: View {
         switch sidebarSelection {
         case .home:
             HomeView()
-        case .next:
-            NextView(selection: $sidebarSelection)
         case .brief:
             BriefView(workspacesProvider: {
                 workspaceStore.availableWorkspaces.map(BriefWorkspaceSnapshot.init)
@@ -265,7 +263,7 @@ struct MainView: View {
         case .sessions:
             SessionsView()
         case .settings:
-            SettingsView(modelContext: modelContext)
+            SettingsView()
         }
     }
 
@@ -292,7 +290,6 @@ struct MainView: View {
 #Preview {
     MainView()
         .environment(SessionStore())
-        .environment(NextButtonModel())
         .environment(SessionWorkspaceStore())
         .environment(IOSProjectProfileStore())
         .environment(IOSBuildCoordinator(processRunner: SystemProcessRunner()))

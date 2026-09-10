@@ -44,44 +44,6 @@ enum CommandExporter {
         return object as? [String: Any]
     }
 
-    // Full-fidelity serialization for developer round-tripping
-    static func toFullJSON(_ command: Command) -> [String: Any] {
-        var json = toJSON(command)
-        json["shortSummary"] = command.shortSummary
-        json["actionDescription"] = command.actionDescription
-        json["isEnabled"] = command.isEnabled
-        json["isConsole"] = command.isConsole
-        json["isProtected"] = command.isProtected
-        json["executionCount"] = command.executionCount
-        if let catalogVersion = command.catalogVersion {
-            json["catalogVersion"] = catalogVersion
-        }
-        if let lastExecuted = command.lastExecutedAt {
-            json["lastExecutedAt"] = ISO8601DateFormatter().string(from: lastExecuted)
-        }
-        return json
-    }
-
-    private static let developerCommandsDirectory: URL = {
-        URL(fileURLWithPath: "/Users/christopherlarsen/Workspace/Console/DeveloperCommands", isDirectory: true)
-    }()
-
-    static let developerCommandsFile: URL = {
-        developerCommandsDirectory.appendingPathComponent("developer_commands.json")
-    }()
-
-    @discardableResult
-    static func exportAllToFile(_ commands: [Command]) throws -> Int {
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: developerCommandsDirectory.path) {
-            try fm.createDirectory(at: developerCommandsDirectory, withIntermediateDirectories: true)
-        }
-        let payload = commands.map { toFullJSON($0) }
-        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: developerCommandsFile, options: .atomic)
-        return commands.count
-    }
-
     // Copies one or more commands as JSON to the clipboard
     static func copyToClipboard(_ commands: [Command]) -> Bool {
         let payload: Any

@@ -115,6 +115,7 @@ final class SessionsPackagingTests: XCTestCase {
 
         XCTAssertTrue(args.elementsEqual([
             "--session-id", "11111111-2222-3333-4444-555555555555",
+            "--dangerously-skip-permissions",
             "--plugin-dir", "/tmp/plugins/console-bridge",
             "--allowedTools",
             "mcp__plugin_console-bridge_console__report_attention",
@@ -134,6 +135,7 @@ final class SessionsPackagingTests: XCTestCase {
 
         XCTAssertEqual(args, [
             "--session-id", "11111111-2222-3333-4444-555555555555",
+            "--dangerously-skip-permissions",
         ])
         XCTAssertFalse(args.contains("--plugin-dir"))
         XCTAssertFalse(args.contains("--allowedTools"))

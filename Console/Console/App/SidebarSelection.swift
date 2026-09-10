@@ -3,7 +3,6 @@ import SwiftUI
 /// Sidebar navigation selection for the main window.
 enum SidebarSelection: String, CaseIterable, Identifiable {
     case home
-    case next
     case brief
     case jira
     case mergeRequests
@@ -17,7 +16,6 @@ enum SidebarSelection: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .home: return "Home"
-        case .next: return "Next"
         case .brief: return "Brief"
         case .jira: return "JIRA"
         case .mergeRequests: return "GitLab"
@@ -31,7 +29,6 @@ enum SidebarSelection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .home: return "house"
-        case .next: return "arrow.forward.circle"
         case .brief: return "sun.max"
         case .jira: return "j.square"
         case .mergeRequests: return "arrow.triangle.merge"

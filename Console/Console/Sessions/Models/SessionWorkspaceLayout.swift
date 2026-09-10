@@ -7,7 +7,6 @@ enum SessionWorkspaceLayout {
     static let listMinWidth: CGFloat = 180
     static let listIdealWidth: CGFloat = 260
     static let listMaxWidth: CGFloat = 360
-    static let listCollapsedRailWidth: CGFloat = 28
     static let detailMinWidth: CGFloat = 320
 
     /// Clamp a proposed list width to the bounded range, shrinking the max
@@ -45,7 +44,6 @@ final class SessionWorkspaceLayoutController {
     private var notedTerminalHeight: CGFloat = 250
 
     var showsSessionList: Bool { isListVisible && !isFocusMode }
-    var showsCollapsedListRail: Bool { !isListVisible && !isFocusMode }
 
     func applyListWidth(_ proposed: CGFloat, availableWidth: CGFloat) {
         preferredListWidth = min(

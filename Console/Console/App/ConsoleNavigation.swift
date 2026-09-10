@@ -22,6 +22,10 @@ enum ConsoleNavigation {
             UserDefaults.standard.set(SidebarSelection.home.rawValue, forKey: sidebarKey)
             setTerminalExpanded(true)
         }
+        // The removed Next sidebar item folded into Home.
+        if UserDefaults.standard.string(forKey: sidebarKey) == "next" {
+            UserDefaults.standard.set(SidebarSelection.home.rawValue, forKey: sidebarKey)
+        }
     }
 
     /// Show a primary sidebar destination.
@@ -33,7 +37,7 @@ enum ConsoleNavigation {
             UserDefaults.standard.set(TabSelection.myCommands.rawValue, forKey: tabKey)
         case .settings:
             UserDefaults.standard.set(TabSelection.settings.rawValue, forKey: tabKey)
-        case .sessions, .home, .next, .brief, .aiProvider, .jira, .mergeRequests:
+        case .sessions, .home, .brief, .aiProvider, .jira, .mergeRequests:
             break
         }
         UserDefaults.standard.synchronize()
@@ -96,7 +100,7 @@ enum ConsoleNavigation {
     /// Sidebar destinations addressed by ⌃1…⌃9 (plus ⌃0 when a tenth exists),
     /// in visible sidebar order. Settings deliberately has no number.
     static let sidebarHotkeyDestinations: [SidebarSelection] = [
-        .home, .next, .brief, .jira,
+        .home, .brief, .jira,
         .sessions, .mergeRequests, .commands,
         .aiProvider
     ]

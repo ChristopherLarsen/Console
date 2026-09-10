@@ -1,11 +1,9 @@
 import SwiftUI
 
-/// Compact launcher: a session-folder header, four intent rows, and a
-/// collapsed Customize area. Sessions always start in the single Session
-/// Folder (Settings → Claude); a fresh install can pick it inline here.
+/// Compact launcher: four intent rows and a collapsed Customize area.
+/// Sessions always start in the single Session Folder (Settings → Claude).
 struct SessionIntentPickerView: View {
     @Environment(SessionStore.self) private var store
-    @Environment(SessionWorkspaceStore.self) private var workspaceStore
     @Environment(SessionLaunchCoordinator.self) private var coordinator
     @Environment(\.dismiss) private var dismiss
 
@@ -26,17 +24,9 @@ struct SessionIntentPickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            folderHeader
-            Divider()
-
             switch step {
             case .intents:
                 intentRows
-                Text(StarterPromptBuilder.developerContextNotice)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("Sessions.Launcher.ContextNotice")
                 if let draft { customizeArea(draft: draft) }
             case .awaitingJiraContext:
                 jiraContextStep
@@ -71,44 +61,6 @@ struct SessionIntentPickerView: View {
         .accessibilityIdentifier("SessionIntentPicker")
     }
 
-    // MARK: - Folder header
-
-    private var folderHeader: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "folder")
-                .foregroundStyle(.secondary)
-
-            if let folder = workspaceStore.defaultFolder {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(folder.name)
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(1)
-                    Text(folder.directoryPath)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            } else {
-                Text("No Session Folder")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Button {
-                chooseSessionFolder()
-            } label: {
-                Image(systemName: "folder.badge.plus")
-            }
-            .buttonStyle(.plain)
-            .help("Choose Session Folder")
-            .accessibilityLabel("Choose Session Folder")
-            .accessibilityIdentifier("Sessions.Launcher.ChooseFolderButton")
-        }
-    }
-
     // MARK: - Intent rows
 
     private var intentRows: some View {
@@ -135,15 +87,9 @@ struct SessionIntentPickerView: View {
                 .foregroundStyle(Color.accentColor)
                 .frame(width: 24)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(purpose.displayName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
-                Text(purpose.intentDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.leading)
-            }
+            Text(purpose.displayName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
 
             Spacer(minLength: 0)
 
@@ -375,23 +321,6 @@ struct SessionIntentPickerView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-        }
-    }
-
-    // MARK: - Folder choosing
-
-    /// Picks the single Session Folder; on a fresh install the next launch
-    /// uses it immediately.
-    private func chooseSessionFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        panel.prompt = "Choose Folder"
-        panel.beginSheetModal(for: NSApp.keyWindow ?? NSApp.mainWindow!) { response in
-            guard response == .OK, let url = panel.url else { return }
-            workspaceStore.setDefaultFolderPath(url.standardizedFileURL.path)
         }
     }
 }

@@ -17,12 +17,9 @@ final class MenuBarViewModel {
     var modelContext: ModelContext?
     var wakeWordManager: WakeWordManager?
 
-    private(set) var recentLogs: [CommandExecutionLog] = []
-
     // MARK: - Dependencies
 
     private let settings = AppSettings()
-    private let logManager = CommandLogFileManager.shared
     private var commandMode: CommandListeningMode?
     private var localCommandExecutor: (any CommandRunning)?
     private var aiProviderManager: AIProviderManager?
@@ -37,8 +34,7 @@ final class MenuBarViewModel {
     /// Bumped on every start/stop so a late start task cannot resurrect a stopped session.
     @ObservationIgnored private var listeningGeneration = 0
 
-    // Logging context captured across the voice pipeline
-    private var lastDetectedWakeWord: String?
+    // Transcript context captured across the voice pipeline
     private var lastRawTranscript: String?
     private(set) var lastStrippedTranscript: String = ""
     private(set) var lastMatchResult: String = ""
@@ -321,13 +317,7 @@ final class MenuBarViewModel {
     // MARK: - ConsoleCommand Handlers
 
     func showSettings() async {
-        let triggerWord = lastDetectedWakeWord ?? ""
-        let rawTranscript = lastRawTranscript ?? ""
-        let strippedTranscript = lastStrippedTranscript
-
         lastMatchResult = "Built-in: Settings"
-        logBuiltIn(triggerWord: triggerWord, rawTranscript: rawTranscript,
-                   strippedTranscript: strippedTranscript, command: "[Built-in] Settings")
 
         bringMainWindowToFront()
         ConsoleNavigation.showSettings()
@@ -335,13 +325,7 @@ final class MenuBarViewModel {
     }
 
     func showRecentCommands() async {
-        let triggerWord = lastDetectedWakeWord ?? ""
-        let rawTranscript = lastRawTranscript ?? ""
-        let strippedTranscript = lastStrippedTranscript
-
         lastMatchResult = "Built-in: Recent Commands"
-        logBuiltIn(triggerWord: triggerWord, rawTranscript: rawTranscript,
-                   strippedTranscript: strippedTranscript, command: "[Built-in] Recent Commands")
 
         let allCommands = fetchEnabledCommands()
         let activeWakeWords = wakeWordManager?.wakeWords.map(\.word) ?? []
@@ -354,13 +338,7 @@ final class MenuBarViewModel {
     }
 
     func disableSoundFeedback() async {
-        let triggerWord = lastDetectedWakeWord ?? ""
-        let rawTranscript = lastRawTranscript ?? ""
-        let strippedTranscript = lastStrippedTranscript
-
         lastMatchResult = "Built-in: Be Quiet"
-        logBuiltIn(triggerWord: triggerWord, rawTranscript: rawTranscript,
-                   strippedTranscript: strippedTranscript, command: "[Built-in] Be Quiet")
 
         UserDefaults.standard.set(false, forKey: "soundFeedbackEnabled")
         UserDefaults.standard.synchronize()
@@ -368,13 +346,7 @@ final class MenuBarViewModel {
     }
 
     func enableSoundFeedback() async {
-        let triggerWord = lastDetectedWakeWord ?? ""
-        let rawTranscript = lastRawTranscript ?? ""
-        let strippedTranscript = lastStrippedTranscript
-
         lastMatchResult = "Built-in: Make Some Noise"
-        logBuiltIn(triggerWord: triggerWord, rawTranscript: rawTranscript,
-                   strippedTranscript: strippedTranscript, command: "[Built-in] Make Some Noise")
 
         UserDefaults.standard.set(true, forKey: "soundFeedbackEnabled")
         UserDefaults.standard.synchronize()
@@ -383,13 +355,7 @@ final class MenuBarViewModel {
     }
 
     func showNewCommandCreation() async {
-        let triggerWord = lastDetectedWakeWord ?? ""
-        let rawTranscript = lastRawTranscript ?? ""
-        let strippedTranscript = lastStrippedTranscript
-
         lastMatchResult = "Built-in: New Command"
-        logBuiltIn(triggerWord: triggerWord, rawTranscript: rawTranscript,
-                   strippedTranscript: strippedTranscript, command: "[Built-in] New Command")
 
         bringMainWindowToFront()
         ConsoleNavigation.showTerminal(tab: .myCommands)
@@ -485,7 +451,6 @@ final class MenuBarViewModel {
         guard listeningState != .off else { return }
         guard !AuthorizationManager.shared.isShowingDialog else { return }
         lastDetectedTrigger = wakeWord
-        lastDetectedWakeWord = wakeWord
         lastStrippedTranscript = ""
         lastMatchResult = ""
         fuzzyMatchInputText = ""
@@ -564,8 +529,6 @@ final class MenuBarViewModel {
 
                 _ = await match.command.handler()
                 if self.listeningState != .off { self.listeningState = .passive }
-                // Logging happens inside the handler's logBuiltIn path; a
-                // second log here would double-record every built-in.
             }
             return true
         }
@@ -589,15 +552,6 @@ final class MenuBarViewModel {
         return disabledConsoleActionPayloads().contains(action.rawValue)
     }
 
-    private func logBuiltIn(triggerWord: String, rawTranscript: String, strippedTranscript: String, command: String) {
-        logCommandExecution(
-            triggerWord: triggerWord, rawTranscript: rawTranscript,
-            strippedTranscript: strippedTranscript, matchedCommand: command,
-            confidence: 1.0, result: .success, duration: 0, error: nil,
-            commandType: .console
-        )
-    }
-
     private func bringMainWindowToFront() {
         ConsoleWindowManager.bringToFront("main")
     }
@@ -613,114 +567,21 @@ final class MenuBarViewModel {
         let levelRaw = UserDefaults.standard.string(forKey: "confidenceLevel") ?? "normal"
         let threshold = AppSettings.ConfidenceLevel(rawValue: levelRaw)?.threshold ?? 0.75
         let matcher = CommandMatcher(confidenceThreshold: threshold)
-        let triggerWord = lastDetectedWakeWord ?? ""
-        let rawTranscript = lastRawTranscript ?? text
 
         if let match = matcher.bestMatch(for: text, in: commands) {
             lastMatchResult = "Matched: \(match.command.name) (\(Int(match.confidence * 100))%)"
             SoundFeedbackService.shared.play(.commandIdentified)
             VisualFeedbackService.shared.show(.commandRecognized(match.command.name))
-            let executionStart = Date()
             RecentCommandsController.shared.dismiss()
             Task {
                 guard self.listeningState != .off else { return }
-                let run = await self.executeLocalCommand(match.command)
-                self.recordVoiceExecutionLog(
-                    run: run,
-                    triggerWord: triggerWord,
-                    rawTranscript: rawTranscript,
-                    strippedTranscript: text,
-                    matchedCommand: match.command.name,
-                    confidence: match.confidence,
-                    duration: Date().timeIntervalSince(executionStart)
-                )
+                _ = await self.executeLocalCommand(match.command)
             }
         } else {
             lastMatchResult = "No match found"
-            logCommandExecution(
-                triggerWord: triggerWord,
-                rawTranscript: rawTranscript,
-                strippedTranscript: text,
-                matchedCommand: nil,
-                confidence: nil,
-                result: .noMatch,
-                duration: nil,
-                error: nil
-            )
             SoundFeedbackService.shared.play(.commandNotRecognized)
             VisualFeedbackService.shared.show(.commandNotRecognized)
             if listeningState != .off { listeningState = .passive }
         }
-    }
-
-    // MARK: - Logging
-
-    @discardableResult
-    func recordVoiceExecutionLog(
-        run: CommandRun,
-        triggerWord: String,
-        rawTranscript: String,
-        strippedTranscript: String,
-        matchedCommand: String,
-        confidence: Double,
-        duration: TimeInterval
-    ) -> Bool {
-        guard !run.result.alreadyRunning else { return false }
-
-        let logResult: CommandLogResult
-        let errorMsg: String?
-        if run.result.authorizationDenied {
-            logResult = .failed
-            errorMsg = "Authorization denied"
-        } else if run.result.wasCancelled {
-            logResult = .cancelled
-            errorMsg = "Cancelled"
-        } else {
-            logResult = run.result.overallSuccess ? .success : .failed
-            errorMsg = run.result.failedSteps.first?.message
-        }
-        logCommandExecution(
-            triggerWord: triggerWord,
-            rawTranscript: rawTranscript,
-            strippedTranscript: strippedTranscript,
-            matchedCommand: matchedCommand,
-            confidence: confidence,
-            result: logResult,
-            duration: duration,
-            error: errorMsg
-        )
-        return true
-    }
-
-    private func logCommandExecution(
-        triggerWord: String,
-        rawTranscript: String,
-        strippedTranscript: String,
-        matchedCommand: String?,
-        confidence: Double?,
-        result: CommandLogResult,
-        duration: TimeInterval?,
-        error: String?,
-        commandType: CommandType = .user
-    ) {
-        guard settings.enableCommandLogging else { return }
-
-        let log = CommandExecutionLog(
-            id: UUID(),
-            commandType: commandType,
-            timestamp: Date(),
-            triggerWord: triggerWord,
-            rawTranscript: rawTranscript,
-            strippedTranscript: strippedTranscript,
-            matchedCommand: matchedCommand,
-            matchConfidence: confidence,
-            executionResult: result,
-            executionDuration: duration,
-            errorMessage: error
-        )
-        logManager.saveLog(log)
-
-        recentLogs.insert(log, at: 0)
-        if recentLogs.count > 10 { recentLogs.removeLast() }
     }
 }

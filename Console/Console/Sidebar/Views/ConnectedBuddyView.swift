@@ -71,7 +71,8 @@ struct ConnectedBuddyView: View {
                     .fontWeight(.medium)
                     .foregroundStyle(.white)
                     .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-                    .lineLimit(1)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
                     .padding(.horizontal, 8)
                     .padding(.bottom, 10)
             }

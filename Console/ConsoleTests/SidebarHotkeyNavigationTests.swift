@@ -62,12 +62,12 @@ final class SidebarHotkeyNavigationTests: XCTestCase {
 
     func testSidebarHotkeysMapInSidebarOrder() {
         let expected: [SidebarSelection] = [
-            .home, .next, .brief, .jira,
+            .home, .brief, .jira,
             .sessions, .mergeRequests, .commands,
             .aiProvider
         ]
-        // ⌃1…⌃9 across the nine sidebar destinations.
-        let hotkeyNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        // ⌃1…⌃9 across the eight sidebar destinations.
+        let hotkeyNumbers = [1, 2, 3, 4, 5, 6, 7, 8]
         for (index, destination) in expected.enumerated() {
             XCTAssertEqual(
                 ConsoleNavigation.sidebarDestination(hotkeyNumber: hotkeyNumbers[index]),

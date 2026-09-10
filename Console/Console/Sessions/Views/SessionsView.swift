@@ -1,9 +1,10 @@
 import SwiftUI
 
 /// The Sessions destination: selected terminal on the left, compact session
-/// list filling the right edge. The list is collapsible and resizable; Focus
-/// Session hides it together with the global drawer without killing either
-/// terminal process.
+/// list filling the right edge. The list is resizable and toggled from the
+/// window toolbar; when hidden it unmounts completely so the terminal gets
+/// the full width. Focus Session hides it together with the global drawer
+/// without killing either terminal process.
 struct SessionsView: View {
     @Environment(SessionStore.self) private var store
     @Environment(SessionWorkspaceLayoutController.self) private var layout
@@ -23,8 +24,6 @@ struct SessionsView: View {
                     listResizeHandle(availableWidth: geometry.size.width)
                     listColumn
                         .frame(width: layout.listWidth)
-                } else if layout.showsCollapsedListRail {
-                    collapsedListRail
                 }
             }
             .animation(TerminalPanelView.collapseAnimation, value: layout.showsSessionList)
@@ -37,6 +36,11 @@ struct SessionsView: View {
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                toggleListButton
+            }
+        }
         .popover(isPresented: $showingIntentPicker, arrowEdge: .leading) {
             SessionIntentPickerView()
         }
@@ -112,37 +116,25 @@ struct SessionsView: View {
             .accessibilityIdentifier("NewSessionButton")
 
             Spacer(minLength: 8)
-
-            Button {
-                layout.isListVisible = false
-            } label: {
-                Image(systemName: "sidebar.trailing")
-            }
-            .buttonStyle(.plain)
-            .help("Hide Session List")
-            .accessibilityLabel("Hide Session List")
-            .accessibilityIdentifier("Sessions.HideListButton")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
     }
 
-    private var collapsedListRail: some View {
+    /// Window-toolbar toggle for the session list. Mounted only while the
+    /// Sessions destination is active, so it never clutters other pages.
+    private var toggleListButton: some View {
         Button {
-            layout.isListVisible = true
+            layout.isListVisible.toggle()
         } label: {
             Image(systemName: "sidebar.trailing")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-                .padding(.top, 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .contentShape(Rectangle())
+                .foregroundStyle(layout.showsSessionList ? Color.accentColor : .secondary)
         }
-        .buttonStyle(.plain)
-        .frame(width: SessionWorkspaceLayout.listCollapsedRailWidth)
-        .help("Show Session List")
-        .accessibilityLabel("Show Session List")
-        .accessibilityIdentifier("Sessions.ShowListButton")
+        .disabled(layout.isFocusMode)
+        .help(layout.showsSessionList ? "Hide Session List" : "Show Session List")
+        .accessibilityLabel(layout.showsSessionList ? "Hide Session List" : "Show Session List")
+        .accessibilityValue(layout.showsSessionList ? "On" : "Off")
+        .accessibilityIdentifier("Sessions.ToggleListButton")
     }
 
     private func listResizeHandle(availableWidth: CGFloat) -> some View {
@@ -214,8 +206,6 @@ struct SessionsView: View {
                     activity: session.activity,
                     attention: session.attention
                 ),
-                isFocusMode: layout.isFocusMode,
-                onToggleFocus: toggleFocusSession,
                 onTerminate: { requestTerminate(session) }
             )
             .id(session.id)
@@ -227,12 +217,6 @@ struct SessionsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-    }
-
-    private func toggleFocusSession() {
-        guard store.selectedSession != nil || layout.isFocusMode else { return }
-        layout.toggleFocusSession()
-        store.focusSelectedTerminal()
     }
 
     // MARK: - Terminate flow

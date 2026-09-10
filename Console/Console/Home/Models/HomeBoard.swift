@@ -5,13 +5,13 @@ import Foundation
 /// the board is unit-testable.
 struct HomeBoardSnapshot: Equatable, Sendable {
     var jiraTickets: [JiraTicketSummary] = []
-    var jiraStatus = NextSourceStatus(check: .unconfigured)
+    var jiraStatus = HomeSourceStatus(check: .unconfigured)
     var reviewItems: [MergeRequestSummary] = []
-    var reviewStatus = NextSourceStatus(check: .unconfigured)
+    var reviewStatus = HomeSourceStatus(check: .unconfigured)
 }
 
 /// One presentation health for a whole column (or one Next slot). Derived
-/// only from `NextSourceStatus`; retained data upgrades pending/failed to
+/// only from `HomeSourceStatus`; retained data upgrades pending/failed to
 /// keep-last-known instead of showing a false zero.
 enum HomeBoardHealth: Equatable, Sendable {
     /// Last extraction succeeded; empty states are genuine.
@@ -67,33 +67,33 @@ enum HomeBoardSource: String, Equatable, Sendable {
 
     var signInCopy: String {
         switch self {
-        case .jira, .gitlab: return "Sign in required"
+        case .jira: return "Sign in to JIRA"
+        case .gitlab: return "Sign in to GitLab"
         }
     }
 }
 
-/// The three-column Home board: one decided story, one decided review, the
-/// in-progress stories, and the review requests where the author owes
-/// changes. Selection and filtering are pure; the view only renders.
+/// The three-column Home board: one decided story, the in-progress stories,
+/// and the review queue ordered most-urgent-first. Selection, filtering, and
+/// ordering are pure; the view only renders.
 struct HomeBoard: Equatable, Sendable {
     var jiraHealth = HomeBoardHealth.unconfigured
     var reviewHealth = HomeBoardHealth.unconfigured
 
     /// The one parked story the user should start next.
     var nextStory: JiraTicketSummary?
-    /// The one review-request row the user should review next.
-    var nextReview: MergeRequestSummary?
+    /// Every review-request row, most urgent first. The most urgent row is
+    /// the "next MR to review".
+    var reviewQueue: [MergeRequestSummary] = []
     /// Stories whose host status is actively in progress, source order.
     var inProgressTickets: [JiraTicketSummary] = []
-    /// Review-request rows whose review state means the author owes changes.
-    var awaitingAuthorRequests: [MergeRequestSummary] = []
 }
 
 enum HomeBoardBuilder {
     /// Column/slot health from one source status. Retained data (a non-empty
     /// last extraction) upgrades pending and failed states to keep-last-known;
     /// only a real empty current list produces a true empty state.
-    static func health(for status: NextSourceStatus, hasRetained: Bool) -> HomeBoardHealth {
+    static func health(for status: HomeSourceStatus, hasRetained: Bool) -> HomeBoardHealth {
         switch status.check {
         case .current:
             return .ready
@@ -122,8 +122,7 @@ enum HomeBoardBuilder {
             }
         }
         if board.reviewHealth.retainsContent {
-            board.nextReview = snapshot.reviewItems.min { $0.sourceOrder < $1.sourceOrder }
-            board.awaitingAuthorRequests = awaitingAuthorRequests(in: snapshot.reviewItems)
+            board.reviewQueue = reviewQueue(in: snapshot.reviewItems)
         }
         return board
     }
@@ -137,17 +136,117 @@ enum HomeBoardBuilder {
             .min { $0.sourceOrder < $1.sourceOrder }
     }
 
-    /// Review-request rows whose review state means the author owes changes
-    /// ("Changes requested" or "Discussion"), host order preserved. Console
-    /// cannot confirm who left the review — this is a disclosed approximation.
-    static func awaitingAuthorRequests(in items: [MergeRequestSummary]) -> [MergeRequestSummary] {
-        items.filter { AttentionChannel.awaitingAuthorReviewState($0.reviewDisplayState) != nil }
+    /// The Review column's queue: every review-request row, most urgent
+    /// first. Urgency cascade, in order:
+    ///   1. Rows the user has already reviewed — the host shows "Changes
+    ///      requested" / "Discussion" — mean a re-review is coming, so they
+    ///      outrank rows not yet reviewed. Console reads host-rendered states
+    ///      only and cannot confirm who reviewed; this tiering is a disclosed
+    ///      approximation.
+    ///   2. Lower target versions first, numerically ("1.9" before "1.10");
+    ///      a row with no target version sorts last.
+    ///   3. Older rows first (by the host-rendered timestamp).
+    ///   4. Host order breaks remaining ties.
+    static func reviewQueue(
+        in items: [MergeRequestSummary],
+        now: Date = Date()
+    ) -> [MergeRequestSummary] {
+        items.sorted { lhs, rhs in
+            let lhsAwaiting = AttentionChannel.awaitingAuthorReviewState(lhs.reviewDisplayState) != nil
+            let rhsAwaiting = AttentionChannel.awaitingAuthorReviewState(rhs.reviewDisplayState) != nil
+            if lhsAwaiting != rhsAwaiting { return lhsAwaiting }
+
+            switch compareTargetVersions(lhs.targetVersionText, rhs.targetVersionText) {
+            case .orderedAscending: return true
+            case .orderedDescending: return false
+            case .orderedSame: break
+            }
+
+            switch olderFirst(lhs.updatedText, rhs.updatedText, now: now) {
+            case .orderedAscending: return true
+            case .orderedDescending: return false
+            case .orderedSame: break
+            }
+
+            return lhs.sourceOrder < rhs.sourceOrder
+        }
+    }
+
+    /// Older first by the host-rendered timestamp; an unparseable or missing
+    /// timestamp is less urgent than a known one, and two unknowns tie.
+    private static func olderFirst(
+        _ lhs: String?,
+        _ rhs: String?,
+        now: Date
+    ) -> ComparisonResult {
+        let lhsDate = RelativeAge.approximateDate(from: lhs, now: now)
+        let rhsDate = RelativeAge.approximateDate(from: rhs, now: now)
+        switch (lhsDate, rhsDate) {
+        case let (l?, r?):
+            if l == r { return .orderedSame }
+            return l < r ? .orderedAscending : .orderedDescending
+        case (_?, nil): return .orderedAscending
+        case (nil, _?): return .orderedDescending
+        case (nil, nil): return .orderedSame
+        }
+    }
+
+    /// Urgency order for host-rendered target versions: lower first,
+    /// numerically aware so "1.10" sorts after "1.9" and "24.10" after
+    /// "24.9". Unparseable segments fall back to case-insensitive text
+    /// order; a missing target version sorts last.
+    static func compareTargetVersions(_ lhs: String?, _ rhs: String?) -> ComparisonResult {
+        switch (lhs.flatMap(nonEmpty), rhs.flatMap(nonEmpty)) {
+        case (nil, nil): return .orderedSame
+        case (_, nil): return .orderedAscending
+        case (nil, _): return .orderedDescending
+        case let (l?, r?): return compareVersionTexts(l, r)
+        }
+    }
+
+    private static func compareVersionTexts(_ lhs: String, _ rhs: String) -> ComparisonResult {
+        let lhsParts = versionComponents(lhs)
+        let rhsParts = versionComponents(rhs)
+        for index in 0..<max(lhsParts.count, rhsParts.count) {
+            let lhsPart = index < lhsParts.count ? lhsParts[index] : nil
+            let rhsPart = index < rhsParts.count ? rhsParts[index] : nil
+            switch (lhsPart, rhsPart) {
+            case (nil, nil): continue
+            case (nil, _): return .orderedAscending
+            case (_, nil): return .orderedDescending
+            case let (l?, r?):
+                if let lNumber = Int(l), let rNumber = Int(r), lNumber != rNumber {
+                    return lNumber < rNumber ? .orderedAscending : .orderedDescending
+                }
+                if l.caseInsensitiveCompare(r) != .orderedSame {
+                    return l.caseInsensitiveCompare(r)
+                }
+            }
+        }
+        return .orderedSame
+    }
+
+    /// Splits "v24.10" into ["24", "10"]; "M120" stays one text segment.
+    private static func versionComponents(_ raw: String) -> [String] {
+        var body = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let first = body.first, first == "v" || first == "V" {
+            body = String(body.dropFirst())
+        }
+        return body
+            .split(whereSeparator: { $0 == "." || $0 == "-" })
+            .map(String.init)
+            .filter { !$0.isEmpty }
+    }
+
+    private static func nonEmpty(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// Starting a brand-new session requires current Jira data; retained
     /// (stale) data may open existing sessions but must never launch work
     /// against a possibly-moved story.
-    static func canStartSession(jiraStatus: NextSourceStatus) -> Bool {
+    static func canStartSession(jiraStatus: HomeSourceStatus) -> Bool {
         jiraStatus.check == .current
     }
 }

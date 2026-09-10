@@ -34,7 +34,7 @@ struct ShowcaseApp: Identifiable {
 
 final class CuratedAppShowcase {
 
-    // Curated list of 20 popular macOS apps with representative commands
+    // Curated list of 13 popular macOS apps with representative commands
     static let apps: [ShowcaseApp] = [
         // Rank 1-5
         ShowcaseApp(
@@ -76,92 +76,48 @@ final class CuratedAppShowcase {
             ], popularityRank: 6, category: .browsers
         ),
         ShowcaseApp(
-            id: "slack", name: "Slack", bundleID: "com.tinyspeck.slackmacgap",
-            iconName: "number", showcaseCommands: [
-                "Open channel", "Send message", "Set status",
-            ], popularityRank: 7, category: .communication
-        ),
-        ShowcaseApp(
             id: "spotify", name: "Spotify", bundleID: "com.spotify.client",
             iconName: "music.note", showcaseCommands: [
                 "Play", "Pause", "Next track", "Previous track", "Now playing",
-            ], popularityRank: 8, category: .creative
+            ], popularityRank: 7, category: .creative
         ),
         ShowcaseApp(
             id: "notes", name: "Notes", bundleID: "com.apple.Notes",
             iconName: "note.text", showcaseCommands: [
                 "Create note", "Open notes",
-            ], popularityRank: 9, category: .productivity
+            ], popularityRank: 8, category: .productivity
         ),
         ShowcaseApp(
             id: "zoom", name: "Zoom", bundleID: "us.zoom.xos",
             iconName: "video", showcaseCommands: [
                 "Start meeting", "Join meeting", "Mute microphone",
-            ], popularityRank: 10, category: .communication
-        ),
-
-        // Rank 11-15
-        ShowcaseApp(
-            id: "notion", name: "Notion", bundleID: "notion.id",
-            iconName: "doc.text", showcaseCommands: [
-                "Create page", "Open workspace", "Search",
-            ], popularityRank: 11, category: .productivity
-        ),
-        ShowcaseApp(
-            id: "vscode", name: "VS Code", bundleID: "com.microsoft.VSCode",
-            iconName: "chevron.left.forwardslash.chevron.right", showcaseCommands: [
-                "Open file", "New terminal", "Toggle sidebar",
-            ], popularityRank: 12, category: .development
+            ], popularityRank: 9, category: .communication
         ),
         ShowcaseApp(
             id: "terminal", name: "Terminal", bundleID: "com.apple.Terminal",
             iconName: "terminal", showcaseCommands: [
                 "Run command", "Open new window", "Run in current session",
-            ], popularityRank: 13, category: .development
+            ], popularityRank: 10, category: .development
         ),
+
+        // Rank 11-13
         ShowcaseApp(
             id: "word", name: "Microsoft Word", bundleID: "com.microsoft.Word",
             iconName: "doc.richtext", showcaseCommands: [
                 "New document", "Open file", "Save document",
-            ], popularityRank: 14, category: .productivity
+            ], popularityRank: 11, category: .productivity
         ),
         ShowcaseApp(
             id: "excel", name: "Microsoft Excel", bundleID: "com.microsoft.Excel",
             iconName: "tablecells", showcaseCommands: [
                 "New spreadsheet", "Open workbook", "Save workbook",
-            ], popularityRank: 15, category: .productivity
-        ),
-
-        // Rank 16-20
-        ShowcaseApp(
-            id: "photoshop", name: "Photoshop", bundleID: "com.adobe.Photoshop",
-            iconName: "paintbrush", showcaseCommands: [
-                "Open image", "Export as PNG", "New document",
-            ], popularityRank: 16, category: .creative
+            ], popularityRank: 12, category: .productivity
         ),
         ShowcaseApp(
             id: "figma", name: "Figma", bundleID: "com.figma.Desktop",
             iconName: "pencil.and.ruler", showcaseCommands: [
                 "Open file", "Create frame", "Export selection",
-            ], popularityRank: 17, category: .creative
-        ),
-        ShowcaseApp(
-            id: "discord", name: "Discord", bundleID: "com.hnc.Discord",
-            iconName: "bubble.left.and.bubble.right", showcaseCommands: [
-                "Open server", "Join voice channel", "Send message",
-            ], popularityRank: 18, category: .communication
-        ),
-        ShowcaseApp(
-            id: "1password", name: "1Password", bundleID: "com.1password.1password",
-            iconName: "lock.shield", showcaseCommands: [
-                "Search vault", "Copy password", "Lock vault",
-            ], popularityRank: 19, category: .productivity
-        ),
-        ShowcaseApp(
-            id: "docker", name: "Docker", bundleID: "com.docker.docker",
-            iconName: "shippingbox", showcaseCommands: [
-                "Start container", "Stop container", "List containers",
-            ], popularityRank: 20, category: .development
+            ], popularityRank: 12 + 1, category: .creative
         ),
     ]
 

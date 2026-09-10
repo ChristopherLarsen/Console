@@ -16,6 +16,16 @@ class AppSettings {
     static let webViewGitLabMyMergeRequestsURLKey = "webViewGitLabMyMergeRequestsURL"
     static let webViewMergeRequestsURLLegacyKey = "webViewMergeRequestsURL"
 
+    // MR Review scan settings (Home Review column automated scans)
+    static let mrScanEnabledKey = "mrScanEnabled"
+    static let mrScanIntervalMinutesKey = "mrScanIntervalMinutes"
+    static let mrScanModelKey = "mrScanModel"
+    static let mrScanIntervalMinutesDefault = 15
+    static let mrScanModelDefault = "haiku"
+    /// Interval choices surfaced in Settings; the stored value is always one
+    /// of these so the scheduler never sees an arbitrary value.
+    static let mrScanIntervalChoices = [5, 10, 15, 30, 60]
+
     // Terminal drawer settings
     /// Folder where new Terminal sessions start. Supports "~" for the home
     /// directory. Defaults to the user's home directory.
@@ -119,9 +129,9 @@ class AppSettings {
 
         var displayName: String {
             switch self {
-            case .fishListening: return "Fish Listening"
-            case .happyFish: return "Happy Fish"
-            case .sadFish: return "Sad Fish"
+            case .fishListening: return "Buddy Listening"
+            case .happyFish: return "Happy Buddy"
+            case .sadFish: return "Sad Buddy"
             case .tap: return "Tap"
             case .chime: return "Chime"
             case .bell: return "Bell"
