@@ -115,6 +115,51 @@ final class SessionLifecycleReducerTests: XCTestCase {
         XCTAssertEqual(state.activity, .exited)
     }
 
+    func testSessionStartAfterSessionEndRevivesTracking() {
+        var state = fresh
+        state.apply(.promptSubmitted)
+        state.apply(.attentionReported(.question, message: "old conversation"))
+        state.apply(.sessionEnded)
+        XCTAssertEqual(state.activity, .exited)
+
+        // In-session `/resume`: Claude ends the old conversation and starts
+        // the resumed one in the same terminal.
+        state.apply(.sessionStarted)
+
+        XCTAssertEqual(state.activity, .idle)
+        XCTAssertEqual(state.attention, .none)
+        XCTAssertNil(state.summary)
+        XCTAssertEqual(state.displayedState, .idle)
+
+        // The revived conversation tracks normally again.
+        state.apply(.promptSubmitted)
+        XCTAssertEqual(state.activity, .working)
+        XCTAssertEqual(state.displayedState, .working)
+    }
+
+    func testSessionStartAfterProcessTerminationRevivesTracking() {
+        var state = fresh
+        state.apply(.sessionStarted)
+        state.apply(.sessionEnded)
+        state.apply(.processTerminated)
+
+        state.apply(.sessionStarted)
+
+        XCTAssertEqual(state.activity, .idle)
+        XCTAssertEqual(state.displayedState, .idle)
+    }
+
+    func testRepeatedEndStartCyclesKeepTracking() {
+        var state = fresh
+        for _ in 0..<3 {
+            state.apply(.sessionEnded)
+            XCTAssertEqual(state.activity, .exited)
+            state.apply(.sessionStarted)
+            XCTAssertEqual(state.activity, .idle)
+        }
+        XCTAssertEqual(state.displayedState, .idle)
+    }
+
     func testExitedBeatsHighAttentionInDisplayedState() {
         XCTAssertEqual(displayed(.exited, .permission), .exited)
         XCTAssertEqual(displayed(.exited, .question), .exited)

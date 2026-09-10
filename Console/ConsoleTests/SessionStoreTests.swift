@@ -523,4 +523,34 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(store.session(withID: id)?.bridgeStatus, .unavailable)
         XCTAssertEqual(store.session(withID: id)?.activity, .starting)
     }
+
+    func testSessionStartEnvelopeRevivesExitedRowAfterResume() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Resumed", workingDirectory: tmpDirectory("Resumed"))
+        let token = try XCTUnwrap(store.debugSessionToken(id))
+
+        func envelope(_ event: BridgeProtocol.LifecycleEventKind, _ eventID: String) -> BridgeEnvelope {
+            BridgeEnvelope(
+                sessionID: id.uuidString,
+                token: token,
+                eventID: eventID,
+                kind: .lifecycle,
+                lifecycleEvent: event
+            )
+        }
+
+        store.debugReceiveEnvelope(envelope(.sessionStarted, "evt-start-1"))
+        store.debugReceiveEnvelope(envelope(.sessionEnded, "evt-end-1"))
+        XCTAssertEqual(store.session(withID: id)?.activity, .exited)
+
+        // In-session `/resume`: the same instrumented PTY starts a new Claude
+        // conversation; the row must follow instead of staying Exited.
+        store.debugReceiveEnvelope(envelope(.sessionStarted, "evt-start-2"))
+
+        XCTAssertEqual(store.session(withID: id)?.activity, .idle)
+        XCTAssertEqual(store.displayedState(for: id), .idle)
+
+        store.debugReceiveEnvelope(envelope(.promptSubmitted, "evt-prompt-2"))
+        XCTAssertEqual(store.session(withID: id)?.activity, .working)
+    }
 }

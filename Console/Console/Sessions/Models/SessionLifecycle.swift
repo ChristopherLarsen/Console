@@ -45,11 +45,18 @@ struct SessionLifecycleState: Equatable, Sendable {
     }
 
     mutating func apply(_ event: SessionLifecycleEvent) {
-        // Exit is terminal. Async hook reordering can deliver a late
-        // prompt/turn/completion after `sessionEnded`; those must not
-        // resurrect a dead session's activity, attention, or summary.
+        // Exit suppresses async hook reordering: a late prompt/turn/completion
+        // after `sessionEnded` must not fake liveness for a dead row. A fresh
+        // `sessionStarted` is the opposite signal — a live Claude conversation
+        // exists in this terminal again (an in-session `/resume`, or any
+        // restart of an instrumented Claude in the same PTY), so tracking
+        // restarts from a clean slate instead of staying frozen at Exited.
         if activity == .exited {
             switch event {
+            case .sessionStarted:
+                activity = .idle
+                attention = .none
+                summary = nil
             case .sessionEnded, .processTerminated:
                 activity = .exited
             default:
