@@ -64,6 +64,8 @@ private struct WindowCloseInterceptor: NSViewRepresentable {
 
 @main
 struct ConsoleApp: App {
+    @NSApplicationDelegateAdaptor(SessionQuitGuard.self) private var quitGuard
+
     @Environment(\.openWindow) private var openWindow
     @Environment(\.scenePhase) private var scenePhase
 
@@ -257,6 +259,13 @@ struct ConsoleApp: App {
         #endif
         _launchCoordinator = State(initialValue: coordinator)
         _developerActions = State(initialValue: DeveloperActionRunner())
+
+        // Quit confirmation: any live (non-exited) session blocks a silent
+        // quit behind a confirmation dialog. Suppressed in test hosts, where
+        // UI tests inject fake live sessions and terminate at teardown.
+        quitGuard.sessionsProvider = { [weak sessionStore] in sessionStore?.sessions ?? [] }
+        quitGuard.isSuppressed = ConsoleApp.isRunningUnitTests
+            || ProcessInfo.processInfo.arguments.contains { $0.hasPrefix("-uiTest") }
 
         if !Self.isRunningUnitTests {
             MenuBarManager.shared.installStatusItem()
