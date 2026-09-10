@@ -136,16 +136,19 @@ final class SharedCheckoutWarningTests: XCTestCase {
     }
 
     @discardableResult
-    private func addWorkspace(_ stack: Stack, named name: String) throws -> SessionWorkspace {
+    private func useSessionFolder(_ stack: Stack, named name: String, git: Bool = false) throws -> SessionWorkspace {
         let directory = tmpRoot.appendingPathComponent(name, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return stack.workspaces.add(name: name, directoryURL: directory)
+        if git {
+            try runGit(["init", "-q"], in: directory)
+        }
+        stack.workspaces.setDefaultFolderPath(directory.path)
+        return try XCTUnwrap(stack.workspaces.defaultFolder)
     }
 
-    private func generalDraft(_ stack: Stack, workspaceID: UUID, name: String = "General") -> SessionDraft {
+    private func generalDraft(_ stack: Stack, name: String = "General") -> SessionDraft {
         var draft = stack.coordinator.draft(purpose: .general, source: nil)
         draft.name = name
-        draft.workspaceID = workspaceID
         return draft
     }
 
@@ -233,12 +236,12 @@ final class SharedCheckoutWarningTests: XCTestCase {
 
     func testTwoEditingSessionsOnOneCanonicalDirectoryWarnAndDoNotLaunch() async throws {
         let stack = makeStack()
-        let home = try addWorkspace(stack, named: "Home")
-        let first = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id, name: "First"))
+        let home = try useSessionFolder(stack, named: "Home")
+        let first = try await stack.coordinator.launch(draft: generalDraft(stack, name: "First"))
         XCTAssertNotNil(first)
         XCTAssertEqual(stack.launcher.launchCount, 1)
 
-        let second = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id, name: "Second"))
+        let second = try await stack.coordinator.launch(draft: generalDraft(stack, name: "Second"))
         XCTAssertNil(second, "second editing session must wait on the warning")
         XCTAssertEqual(stack.launcher.launchCount, 1)
         XCTAssertEqual(stack.store.sessions.count, 1)
@@ -256,13 +259,12 @@ final class SharedCheckoutWarningTests: XCTestCase {
 
     func testSymbolicLinkAliasMatchesTheSameCheckout() async throws {
         let stack = makeStack()
-        let real = try addWorkspace(stack, named: "RealCheckout")
+        let real = try useSessionFolder(stack, named: "RealCheckout")
         let aliasURL = tmpRoot.appendingPathComponent("AliasCheckout")
         try FileManager.default.createSymbolicLink(at: aliasURL, withDestinationURL: real.directoryURL)
-        let alias = stack.workspaces.add(name: "AliasCheckout", directoryURL: aliasURL)
 
-        _ = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: real.id, name: "OnReal"))
-        let second = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: alias.id, name: "OnAlias"))
+        _ = try await stack.coordinator.launch(draft: generalDraft(stack, name: "OnReal"))
+        let second = try await stack.coordinator.launch(draft: generalDraft(stack, name: "OnAlias"))
 
         XCTAssertNil(second)
         XCTAssertEqual(stack.launcher.launchCount, 1)
@@ -273,39 +275,15 @@ final class SharedCheckoutWarningTests: XCTestCase {
         )
     }
 
-    func testLinkedWorktreesAreDistinctCheckouts() async throws {
-        let stack = makeStack()
-        let main = tmpRoot.appendingPathComponent("MainCheckout", isDirectory: true)
-        try runGit(["init", "-q"], in: main)
-        try runGit(["commit", "--allow-empty", "-q", "-m", "init"], in: main)
-        let linked = tmpRoot.appendingPathComponent("LinkedWorktree", isDirectory: true)
-        try runGit(["worktree", "add", "--detach", "-q", linked.path], in: main)
-
-        XCTAssertNotEqual(CheckoutPath.canonical(main), CheckoutPath.canonical(linked))
-
-        let mainWorkspace = stack.workspaces.add(name: "Main", directoryURL: main)
-        let linkedWorkspace = stack.workspaces.add(name: "Linked", directoryURL: linked)
-
-        let first = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: mainWorkspace.id, name: "MainSession"))
-        let second = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: linkedWorkspace.id, name: "LinkedSession"))
-
-        XCTAssertNotNil(first)
-        XCTAssertNotNil(second, "linked worktrees share a repo but not a checkout")
-        XCTAssertNil(stack.coordinator.pendingCollision)
-        XCTAssertEqual(stack.launcher.launchCount, 2)
-        XCTAssertEqual(stack.store.sessions.count, 2)
-        XCTAssertTrue(stack.gitInspector.inspectPaths.isEmpty, "no collision means no Git inspect")
-    }
-
     func testExitedSessionDoesNotBlockANewLaunch() async throws {
         let stack = makeStack()
-        let home = try addWorkspace(stack, named: "Home")
-        let firstLaunch = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id, name: "Done"))
+        let home = try useSessionFolder(stack, named: "Home")
+        let firstLaunch = try await stack.coordinator.launch(draft: generalDraft(stack, name: "Done"))
         let firstID = try XCTUnwrap(firstLaunch)
         stack.store.stopSession(id: firstID)
         XCTAssertEqual(stack.store.session(withID: firstID)?.activity, .exited)
 
-        let second = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id, name: "Next"))
+        let second = try await stack.coordinator.launch(draft: generalDraft(stack, name: "Next"))
         XCTAssertNotNil(second)
         XCTAssertNil(stack.coordinator.pendingCollision)
         XCTAssertEqual(stack.launcher.launchCount, 2)
@@ -313,17 +291,14 @@ final class SharedCheckoutWarningTests: XCTestCase {
 
     func testReviewLaunchWarnsOnASharedCheckout() async throws {
         let stack = makeStack()
-        let home = try addWorkspace(stack, named: "ReviewHome")
-        try runGit(["init", "-q"], in: home.directoryURL)
+        let home = try useSessionFolder(stack, named: "ReviewHome", git: true)
         var first = stack.coordinator.draft(purpose: .review, source: nil)
         first.name = "Review A"
-        first.workspaceID = home.id
         let firstID = try await stack.coordinator.launch(draft: first)
         XCTAssertNotNil(firstID)
 
         var second = stack.coordinator.draft(purpose: .review, source: nil)
         second.name = "Review B"
-        second.workspaceID = home.id
         let result = try await stack.coordinator.launch(draft: second)
 
         XCTAssertNil(result, "reviews are classified as editing")
@@ -335,12 +310,12 @@ final class SharedCheckoutWarningTests: XCTestCase {
 
     func testFocusExistingSessionLaunchesNothing() async throws {
         let stack = makeStack()
-        let home = try addWorkspace(stack, named: "Home")
-        let firstLaunch = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id, name: "Keep"))
+        let home = try useSessionFolder(stack, named: "Home")
+        let firstLaunch = try await stack.coordinator.launch(draft: generalDraft(stack, name: "Keep"))
         let firstID = try XCTUnwrap(firstLaunch)
         let sidebarBefore = UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey)
 
-        _ = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id, name: "Skip"))
+        _ = try await stack.coordinator.launch(draft: generalDraft(stack, name: "Skip"))
         XCTAssertNotNil(stack.coordinator.pendingCollision)
 
         stack.store.select(sessionID: UUID())
@@ -360,12 +335,12 @@ final class SharedCheckoutWarningTests: XCTestCase {
 
     func testContinueRequiresExplicitChoiceAndPreservesUncommittedFiles() async throws {
         let stack = makeStack()
-        let home = try addWorkspace(stack, named: "DirtyHome")
+        let home = try useSessionFolder(stack, named: "DirtyHome")
         let dirtyFile = home.directoryURL.appendingPathComponent("uncommitted.txt")
         try "keep-me".write(to: dirtyFile, atomically: true, encoding: .utf8)
 
-        _ = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id, name: "First"))
-        let blocked = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id, name: "Second"))
+        _ = try await stack.coordinator.launch(draft: generalDraft(stack, name: "First"))
+        let blocked = try await stack.coordinator.launch(draft: generalDraft(stack, name: "Second"))
         XCTAssertNil(blocked)
         XCTAssertEqual(stack.launcher.launchCount, 1)
 
@@ -384,10 +359,10 @@ final class SharedCheckoutWarningTests: XCTestCase {
 
     func testCancelLeavesTheExistingSessionAlone() async throws {
         let stack = makeStack()
-        let home = try addWorkspace(stack, named: "Home")
-        let firstLaunch = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id))
+        let home = try useSessionFolder(stack, named: "Home")
+        let firstLaunch = try await stack.coordinator.launch(draft: generalDraft(stack))
         let firstID = try XCTUnwrap(firstLaunch)
-        _ = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id, name: "Nope"))
+        _ = try await stack.coordinator.launch(draft: generalDraft(stack, name: "Nope"))
 
         stack.coordinator.cancelSharedCheckoutWarning()
 
@@ -398,12 +373,12 @@ final class SharedCheckoutWarningTests: XCTestCase {
 
     func testPendingWarningBlocksAThirdLaunch() async throws {
         let stack = makeStack()
-        let home = try addWorkspace(stack, named: "Home")
-        _ = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id, name: "One"))
-        _ = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id, name: "Two"))
+        let home = try useSessionFolder(stack, named: "Home")
+        _ = try await stack.coordinator.launch(draft: generalDraft(stack, name: "One"))
+        _ = try await stack.coordinator.launch(draft: generalDraft(stack, name: "Two"))
         XCTAssertNotNil(stack.coordinator.pendingCollision)
 
-        let third = try await stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id, name: "Three"))
+        let third = try await stack.coordinator.launch(draft: generalDraft(stack, name: "Three"))
         XCTAssertNil(third)
         XCTAssertEqual(stack.store.sessions.count, 1)
         XCTAssertEqual(stack.launcher.launchCount, 1)
@@ -414,10 +389,10 @@ final class SharedCheckoutWarningTests: XCTestCase {
         let gate = ParkingRecheckGate()
         let inspector = RecordingGitInspector()
         let stack = makeStack(gitInspector: inspector, recheckGate: { await gate.pause() })
-        let home = try addWorkspace(stack, named: "RaceHome")
+        let home = try useSessionFolder(stack, named: "RaceHome")
 
-        async let first = stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id, name: "RaceA"))
-        async let second = stack.coordinator.launch(draft: generalDraft(stack, workspaceID: home.id, name: "RaceB"))
+        async let first = stack.coordinator.launch(draft: generalDraft(stack, name: "RaceA"))
+        async let second = stack.coordinator.launch(draft: generalDraft(stack, name: "RaceB"))
         await gate.waitUntilParked(count: 2)
         gate.releaseAll()
         let id1 = try await first

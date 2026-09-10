@@ -1,37 +1,50 @@
 import CryptoKit
 import Foundation
 
-/// Persists user-configured workspace folders, defaults, last-used choices,
-/// and opaque workspace-routing associations through UserDefaults.
+/// Single-folder workspace store.
 ///
-/// Privacy boundary: only folder names/paths the user picked themselves,
-/// UUIDs, and SHA-256 hashes of normalized routing identities are persisted.
-/// Ticket titles, MR titles, source URLs, and raw project identifiers are
-/// never stored.
+/// Console works on exactly one workspace: the Session Folder chosen in
+/// Settings → Claude. Claude sessions always start there. This type is now a
+/// thin compatibility adapter that exposes that one folder as a
+/// `SessionWorkspace` (stable UUID) so Morning Brief and the iOS build
+/// profiles keep their workspace-ID contracts.
+///
+/// Privacy boundary: only the folder path the user picked themselves and a
+/// UUID are persisted. Ticket titles, MR titles, and source URLs are never
+/// stored.
 @MainActor
 @Observable
 final class SessionWorkspaceStore {
+    /// Authoritative setting. Empty means unset.
+    private(set) var defaultFolderPath: String = ""
+
+    /// Zero or one entry: the configured Session Folder while it exists.
     private(set) var workspaces: [SessionWorkspace] = []
     private(set) var defaultWorkspaceID: UUID?
-
-    private var lastUsedByPurpose: [String: UUID] = [:]
-    private var associationsByHash: [String: UUID] = [:]
 
     private let defaults: UserDefaults
 
     private enum Key {
+        static let folderPath = "sessions.defaultFolderPath"
+        static let folderWorkspaceID = "sessions.defaultFolderWorkspaceID"
+        static let migrated = "sessionWorkspaces.migratedToDefaultFolder"
         static let workspaces = "sessionWorkspaces.list"
         static let defaultID = "sessionWorkspaces.defaultID"
-        static func lastUsed(_ purpose: SessionPurpose) -> String { "sessionWorkspaces.lastUsed.\(purpose.rawValue)" }
-        static let associations = "sessionWorkspaces.associations"
     }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        migrateLegacyDataIfNeeded()
         load()
     }
 
     // MARK: - Queries
+
+    /// The configured Session Folder entry, or nil when unset. Availability
+    /// (folder exists and is readable) is checked separately.
+    var defaultFolder: SessionWorkspace? {
+        workspaces.first
+    }
 
     var availableWorkspaces: [SessionWorkspace] {
         workspaces.filter { isAvailable($0) }
@@ -43,8 +56,6 @@ final class SessionWorkspaceStore {
     }
 
     /// A workspace is available while its folder still exists and is readable.
-    /// Unavailable entries stay visible (Settings/chooser) but are ignored
-    /// during resolution until repaired or removed.
     func isAvailable(_ workspace: SessionWorkspace) -> Bool {
         Self.isAccessibleDirectory(atPath: workspace.directoryPath)
     }
@@ -58,9 +69,8 @@ final class SessionWorkspaceStore {
         return FileManager.default.isReadableFile(atPath: path)
     }
 
-    /// Review workspaces must be valid Git repositories; New Ticket,
-    /// Existing Ticket, and General may use any accessible directory. No
-    /// network access happens here.
+    /// Review launches require the folder to be a valid Git repository.
+    /// No network access happens here.
     static func meetsRequirement(for workspace: SessionWorkspace?, purpose: SessionPurpose) -> Bool {
         guard let workspace, isAccessibleDirectory(atPath: workspace.directoryPath) else { return false }
         switch purpose {
@@ -76,162 +86,118 @@ final class SessionWorkspaceStore {
         return FileManager.default.fileExists(atPath: dotGit.path)
     }
 
-    /// Saved folders usable for a purpose, in saved order.
-    func resolvableWorkspaces(purpose: SessionPurpose) -> [SessionWorkspace] {
-        availableWorkspaces.filter { Self.meetsRequirement(for: $0, purpose: purpose) }
-    }
-
-    /// True when the session directory lives inside the workspace folder.
-    /// Both paths are symlink-resolved so a workspace and a session working
-    /// directory that are aliases of the same physical checkout match.
-    static func contains(_ workspace: SessionWorkspace, directory: URL) -> Bool {
-        let candidate = CheckoutPath.canonical(directory)
-        let root = CheckoutPath.canonical(workspace.directoryURL)
-        return candidate == root || candidate.hasPrefix(root + "/")
-    }
-
     // MARK: - Mutation
 
-    /// Adds a workspace for a chosen folder. The first workspace ever added
-    /// becomes the default automatically. Adding an existing folder again is
-    /// a no-op returning the saved entry — path aliases (symlinks) of one
-    /// physical checkout collapse to the saved canonical entry.
-    @discardableResult
-    func add(name: String, directoryURL: URL) -> SessionWorkspace {
-        let path = CheckoutPath.canonical(directoryURL)
-        if let existing = workspaces.first(where: { CheckoutPath.canonical($0.directoryURL) == path }) {
-            return existing
-        }
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let baseName = trimmedName.isEmpty ? "/" : trimmedName
-        let workspace = SessionWorkspace(
-            name: uniquedName(baseName),
-            directoryPath: path
-        )
-        workspaces.append(workspace)
-        if defaultWorkspaceID == nil {
-            defaultWorkspaceID = workspace.id
-        }
-        persist()
-        return workspace
-    }
-
-    private func uniquedName(_ base: String) -> String {
-        let taken = Set(workspaces.map(\.name))
-        guard taken.contains(base) else { return base }
-        var counter = 2
-        while taken.contains("\(base) \(counter)") {
-            counter += 1
-        }
-        return "\(base) \(counter)"
-    }
-
-    func rename(id: UUID, to newName: String) {
-        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let index = workspaces.firstIndex(where: { $0.id == id }), !trimmed.isEmpty else {
-            return
-        }
-        workspaces[index].name = trimmed
-        persist()
-    }
-
-    func setDefault(id: UUID?) {
-        guard let id, workspaces.contains(where: { $0.id == id }) else {
+    /// Sets (or clears) the single Session Folder. A stable UUID is kept for
+    /// the same canonical path so iOS build profiles survive a restart; a
+    /// different folder gets a fresh identity, which orphans its profiles.
+    func setDefaultFolderPath(_ rawPath: String?) {
+        guard let rawPath, !rawPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            defaultFolderPath = ""
+            workspaces = []
             defaultWorkspaceID = nil
             persist()
             return
         }
-        defaultWorkspaceID = id
-        persist()
-    }
-
-    /// Removes a workspace plus everything learned about it: the default
-    /// marker, per-purpose last-used entries, and routing associations. The
-    /// folder itself is never touched.
-    func remove(id: UUID) {
-        workspaces.removeAll(where: { $0.id == id })
-        if defaultWorkspaceID == id {
-            defaultWorkspaceID = nil
+        let path = CheckoutPath.canonical(URL(fileURLWithPath: rawPath, isDirectory: true))
+        let existing = workspaces.first
+        if let existing, existing.directoryPath == path {
+            defaultFolderPath = path
+            persist()
+            return
         }
-        lastUsedByPurpose = lastUsedByPurpose.filter { $0.value != id }
-        associationsByHash = associationsByHash.filter { $0.value != id }
+        let workspace = SessionWorkspace(
+            id: defaultWorkspaceIDForNewFolder(at: path),
+            name: URL(fileURLWithPath: path, isDirectory: true).lastPathComponent,
+            directoryPath: path
+        )
+        workspaces = [workspace]
+        defaultWorkspaceID = workspace.id
+        defaultFolderPath = path
         persist()
     }
 
-    // MARK: - Last used per purpose
-
-    func lastUsedWorkspaceID(for purpose: SessionPurpose) -> UUID? {
-        lastUsedByPurpose[purpose.rawValue]
+    /// Same canonical path re-chosen keeps its identity; anything else gets a
+    /// fresh one.
+    private func defaultWorkspaceIDForNewFolder(at path: String) -> UUID {
+        if let existing = workspaces.first, existing.directoryPath == path {
+            return existing.id
+        }
+        return UUID()
     }
 
-    func noteUse(workspaceID: UUID, purpose: SessionPurpose) {
-        lastUsedByPurpose[purpose.rawValue] = workspaceID
-        persist()
-    }
-
-    // MARK: - Learned routing associations
-
-    /// Opaque lookup: SHA-256(normalized routing identity) → workspace UUID.
-    func associatedWorkspaceID(forRoutingIdentity identity: String) -> UUID? {
-        associationsByHash[Self.routingHash(identity)]
-    }
-
-    func rememberAssociation(routingIdentity: String, workspaceID: UUID) {
-        associationsByHash[Self.routingHash(routingIdentity)] = workspaceID
-        persist()
-    }
-
-    var associationCount: Int { associationsByHash.count }
-
-    /// Clears learned routing without removing workspaces, defaults, or
-    /// last-used choices.
-    func clearLearnedAssociations() {
-        associationsByHash.removeAll()
-        persist()
-    }
-
-    static func routingHash(_ identity: String) -> String {
-        let digest = SHA256.hash(data: Data(identity.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
-    }
-
-    // MARK: - Persistence
+    // MARK: - Migration + persistence
 
     private func load() {
-        if let data = defaults.data(forKey: Key.workspaces),
-           let decoded = try? JSONDecoder().decode([SessionWorkspace].self, from: data) {
-            workspaces = decoded
-        }
-        if let idString = defaults.string(forKey: Key.defaultID) {
-            defaultWorkspaceID = UUID(uuidString: idString)
-        }
-        for purpose in SessionPurpose.allCases {
-            if let idString = defaults.string(forKey: Key.lastUsed(purpose)) {
-                lastUsedByPurpose[purpose.rawValue] = UUID(uuidString: idString)
+        if let path = defaults.string(forKey: Key.folderPath) {
+            defaultFolderPath = path
+            let id = (defaults.string(forKey: Key.folderWorkspaceID)).flatMap(UUID.init(uuidString:)) ?? UUID()
+            if Self.isAccessibleDirectory(atPath: path) {
+                let workspace = SessionWorkspace(
+                    id: id,
+                    name: URL(fileURLWithPath: path, isDirectory: true).lastPathComponent,
+                    directoryPath: path
+                )
+                workspaces = [workspace]
+                defaultWorkspaceID = workspace.id
             }
         }
-        if let stored = defaults.dictionary(forKey: Key.associations) as? [String: String] {
-            associationsByHash = stored.compactMapValues(UUID.init(uuidString:))
+    }
+
+    /// One-time adoption of the previous default workspace (or the sole
+    /// legacy entry) as the Session Folder. Ambiguous legacy data (several
+    /// folders, no default) is left unset rather than guessed. Legacy keys
+    /// are always removed, and never re-imported after the user clears the
+    /// folder.
+    private func migrateLegacyDataIfNeeded() {
+        guard defaults.object(forKey: Key.migrated) == nil else { return }
+        defer { defaults.set(true, forKey: Key.migrated) }
+
+        guard defaults.string(forKey: Key.folderPath) == nil else {
+            clearLegacyData()
+            return
+        }
+        guard let data = defaults.data(forKey: "sessionWorkspaces.list"),
+              let legacy = try? JSONDecoder().decode([SessionWorkspace].self, from: data),
+              !legacy.isEmpty
+        else {
+            clearLegacyData()
+            return
+        }
+
+        let defaultID = defaults.string(forKey: "sessionWorkspaces.defaultID").flatMap(UUID.init(uuidString:))
+        let candidates = defaultID.flatMap { id in legacy.first(where: { $0.id == id }) }.map { [$0] } ?? legacy
+        guard candidates.count == 1, let chosen = candidates.first else {
+            clearLegacyData()
+            return
+        }
+
+        defaultFolderPath = chosen.directoryPath
+        defaultWorkspaceID = chosen.id
+        workspaces = [chosen]
+        defaults.set(chosen.directoryPath, forKey: Key.folderPath)
+        defaults.set(chosen.id.uuidString, forKey: Key.folderWorkspaceID)
+        clearLegacyData()
+    }
+
+    private func clearLegacyData() {
+        defaults.removeObject(forKey: "sessionWorkspaces.list")
+        defaults.removeObject(forKey: "sessionWorkspaces.defaultID")
+        defaults.removeObject(forKey: "sessionWorkspaces.associations")
+        for purpose in SessionPurpose.allCases {
+            defaults.removeObject(forKey: "sessionWorkspaces.lastUsed.\(purpose.rawValue)")
         }
     }
 
     private func persist() {
-        if let data = try? JSONEncoder().encode(workspaces) {
-            defaults.set(data, forKey: Key.workspaces)
-        }
-        if let id = defaultWorkspaceID {
-            defaults.set(id.uuidString, forKey: Key.defaultID)
+        if defaultFolderPath.isEmpty {
+            defaults.removeObject(forKey: Key.folderPath)
+            defaults.removeObject(forKey: Key.folderWorkspaceID)
         } else {
-            defaults.removeObject(forKey: Key.defaultID)
-        }
-        for purpose in SessionPurpose.allCases {
-            let key = Key.lastUsed(purpose)
-            if let id = lastUsedByPurpose[purpose.rawValue] {
-                defaults.set(id.uuidString, forKey: key)
-            } else {
-                defaults.removeObject(forKey: key)
+            defaults.set(defaultFolderPath, forKey: Key.folderPath)
+            if let id = defaultWorkspaceID {
+                defaults.set(id.uuidString, forKey: Key.folderWorkspaceID)
             }
         }
-        defaults.set(associationsByHash.mapValues(\.uuidString), forKey: Key.associations)
     }
 }

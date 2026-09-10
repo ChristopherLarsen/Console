@@ -54,6 +54,7 @@ extension View {
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(Color(nsColor: .controlBackgroundColor))
+                    .shadow(color: .black.opacity(0.10), radius: 4, x: 0, y: 2)
             )
             .overlay {
                 let inset: Color?
@@ -167,6 +168,7 @@ struct HomeSkeletonCard: View {
         .background(
             RoundedRectangle(cornerRadius: HomeCardMetrics.cornerRadius)
                 .fill(Color(nsColor: .controlBackgroundColor))
+                .shadow(color: .black.opacity(0.10), radius: 4, x: 0, y: 2)
         )
     }
 }

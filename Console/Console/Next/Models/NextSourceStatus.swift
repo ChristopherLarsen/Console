@@ -109,6 +109,5 @@ enum NextOpenTarget: Equatable, Sendable {
     case mergeRequest(url: URL, list: CodeHostListKind)
     case jiraIssue(key: String, url: URL)
     case session(id: UUID)
-    case ticketWorkflow(workflowID: UUID, stepID: UUID)
     case source(NextSourceKind)
 }

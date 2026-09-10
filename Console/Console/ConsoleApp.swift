@@ -88,8 +88,6 @@ struct ConsoleApp: App {
     @State private var launchCoordinator: SessionLaunchCoordinator
     @State private var sessionWorkspaceLayout = SessionWorkspaceLayoutController()
     @State private var developerActions: DeveloperActionRunner
-    @State private var ticketWorkflowStore: TicketWorkflowStore
-    @State private var ticketWorkflowCoordinator: TicketWorkflowCoordinator
     private var syntheticTranscriptSource: SyntheticTranscriptSource?
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("tabSelection") private var tabSelection: TabSelection = .triggers
@@ -256,20 +254,6 @@ struct ConsoleApp: App {
         #endif
         _launchCoordinator = State(initialValue: coordinator)
         _developerActions = State(initialValue: DeveloperActionRunner())
-
-        let ticketStore = TicketWorkflowStore(
-            identityKeyManager: TicketIdentityKeyProvider(),
-            fileStore: TicketWorkflowFileStore()
-        )
-        let ticketCoordinator = TicketWorkflowCoordinator(store: ticketStore)
-        ticketCoordinator.buildCoordinator = iosBuildCoordinator
-        ticketCoordinator.profileStore = iosProfileStore
-        ticketCoordinator.workspaceStore = workspaceStore
-        _ticketWorkflowStore = State(initialValue: ticketStore)
-        _ticketWorkflowCoordinator = State(initialValue: ticketCoordinator)
-        _ = sessionStore.addLifecycleSubscriber { sessionID, event in
-            ticketCoordinator.handleSessionLifecycle(sessionID: sessionID, event: event)
-        }
 
         if !Self.isRunningUnitTests {
             MenuBarManager.shared.installStatusItem()
@@ -450,8 +434,6 @@ struct ConsoleApp: App {
             .environment(launchCoordinator)
             .environment(sessionWorkspaceLayout)
             .environment(developerActions)
-            .environment(ticketWorkflowStore)
-            .environment(ticketWorkflowCoordinator)
             #if DEBUG
             .environment(developerModeManager)
             #endif
@@ -734,12 +716,6 @@ struct ConsoleApp: App {
         runStartupUpdateCheckIfNeeded()
         sessionStore.startBridgeIfNeeded()
         prepareMorningBriefIfNeeded()
-        Task { @MainActor in
-            await ticketWorkflowStore.loadProgress()
-            if ticketWorkflowStore.persistenceState == .ready {
-                ticketWorkflowStore.applyCoordinatorRestartHooks()
-            }
-        }
     }
 
     /// Prepares today's Morning Brief at launch so the report is ready

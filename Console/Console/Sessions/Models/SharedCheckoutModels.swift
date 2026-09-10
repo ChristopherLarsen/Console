@@ -89,8 +89,6 @@ struct PendingSharedCheckoutWarning: Identifiable, Equatable {
     let id: UUID
     let claimID: UUID
     let draft: SessionDraft
-    let workspaceID: UUID
-    let rememberingAssociation: Bool
     let canonicalPath: String
     var occupants: [SharedCheckoutOccupant]
     var gitState: LocalGitWorkingCopyState

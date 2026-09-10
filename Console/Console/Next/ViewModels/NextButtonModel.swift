@@ -55,15 +55,13 @@ final class NextButtonModel {
     /// never created.
     func check(
         sessionStore: SessionStore?,
-        jiraController: JiraPanelController,
-        ticketWorkflowStore: TicketWorkflowStore? = nil
+        jiraController: JiraPanelController
     ) {
         let refresh = refreshHandler ?? { await MergeRequestListSession.shared.refreshBoth() }
         let snapshot = snapshotHandler ?? {
             Self.gatherSnapshot(
                 sessionStore: sessionStore,
-                jiraController: jiraController,
-                ticketWorkflowStore: ticketWorkflowStore
+                jiraController: jiraController
             )
         }
         check(refresh: refresh, snapshot: snapshot)
@@ -135,15 +133,13 @@ final class NextButtonModel {
     /// referenced session disappeared or left an actionable state.
     func checkIfNeeded(
         sessionStore: SessionStore?,
-        jiraController: JiraPanelController,
-        ticketWorkflowStore: TicketWorkflowStore? = nil
+        jiraController: JiraPanelController
     ) {
         let refresh = refreshHandler ?? { await MergeRequestListSession.shared.refreshBoth() }
         let snapshot = snapshotHandler ?? {
             Self.gatherSnapshot(
                 sessionStore: sessionStore,
-                jiraController: jiraController,
-                ticketWorkflowStore: ticketWorkflowStore
+                jiraController: jiraController
             )
         }
         checkIfNeeded(refresh: refresh, snapshot: snapshot, sessionStore: sessionStore)
@@ -186,8 +182,7 @@ final class NextButtonModel {
     /// silently allocating a placeholder store.
     static func gatherSnapshot(
         sessionStore: SessionStore?,
-        jiraController: JiraPanelController,
-        ticketWorkflowStore: TicketWorkflowStore? = nil
+        jiraController: JiraPanelController
     ) -> NextContextSnapshot {
         let session = MergeRequestListSession.shared
         let reviewsController = session.controller(for: .reviewsRequested)
@@ -205,36 +200,15 @@ final class NextButtonModel {
         } else {
             sessions = []
         }
-        let workflowSteps = ticketWorkflowStore.map(Self.workflowSteps(from:)) ?? []
         return NextContextSnapshot(
             reviewItems: reviewsController.state.retainedItems,
             authoredItems: authoredController.state.retainedItems,
             sessions: sessions,
             tickets: jiraController.state.tickets,
-            workflowSteps: workflowSteps,
             reviewsStatus: NextSourceStatus.from(reviewsController.state),
             authoredStatus: NextSourceStatus.from(authoredController.state),
             ticketsStatus: NextSourceStatus.from(jiraController.state)
         )
-    }
-
-    private static func workflowSteps(
-        from store: TicketWorkflowStore
-    ) -> [NextContextSnapshot.WorkflowStepInfo] {
-        store.workflows.values
-            .filter { $0.lifecycle == .active || $0.lifecycle == .blocked }
-            .compactMap { record -> NextContextSnapshot.WorkflowStepInfo? in
-                let detail = store.detailSnapshot(id: record.id)
-                guard let next = detail?.nextAction, let stepID = next.stepID else { return nil }
-                return NextContextSnapshot.WorkflowStepInfo(
-                    workflowID: record.id,
-                    stepID: stepID,
-                    stageDisplayName: record.currentStage.displayName,
-                    stepTitle: next.title,
-                    isBlocked: record.lifecycle == .blocked
-                )
-            }
-            .sorted { $0.workflowID.uuidString < $1.workflowID.uuidString }
     }
 
     private func resolvedSnapshot(

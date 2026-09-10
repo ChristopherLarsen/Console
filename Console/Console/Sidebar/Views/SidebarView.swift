@@ -58,15 +58,6 @@ struct SidebarView: View {
                         }
 
                         SidebarRow(
-                            label: SidebarSelection.ticketWork.label,
-                            icon: SidebarSelection.ticketWork.icon,
-                            isSelected: selection == .ticketWork
-                        ) {
-                            selection = .ticketWork
-                        }
-                        .accessibilityIdentifier(TicketWorkflowAccessibility.sidebarItem)
-
-                        SidebarRow(
                             label: SidebarSelection.sessions.label,
                             icon: SidebarSelection.sessions.icon,
                             isSelected: selection == .sessions
@@ -105,7 +96,7 @@ struct SidebarView: View {
                 SidebarSeparator()
 
                 SidebarRow(
-                    label: "Main Terminal",
+                    label: "Terminal",
                     icon: "rectangle.bottomthird.inset.filled",
                     isSelected: false
                 ) {
@@ -114,6 +105,7 @@ struct SidebarView: View {
                     }
                 }
                 .help(isTerminalExpanded ? "Retract Terminal" : "Expand Terminal")
+                .padding(.horizontal, 8)
 
                 SidebarRow(
                     label: SidebarSelection.settings.label,

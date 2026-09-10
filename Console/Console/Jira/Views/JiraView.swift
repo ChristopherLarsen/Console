@@ -92,10 +92,7 @@ extension JiraWebSession: JiraPageServicing {
 struct JiraView: View {
     @AppStorage("webViewJiraURL") private var webViewJiraURL: String = ""
     @Environment(SessionLaunchCoordinator.self) private var launchCoordinator
-    @Environment(TicketWorkflowCoordinator.self) private var ticketWorkflowCoordinator
-    @Environment(TicketWorkflowStore.self) private var ticketWorkflowStore
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
-    @State private var isIssueTracked = false
     /// A WebPage may be presented in only one WebView at a time on macOS 26.
     /// Mounting this WebView in the same transaction that dismantles the Home
     /// quadrant's WebView over the same shared page traps in WebKit. Deferring
@@ -139,25 +136,16 @@ struct JiraView: View {
                     if let pending = JiraDeepLink.shared.consume() {
                         JiraWebSession.shared.tabStore.select(JiraWebSession.shared.tabStore.tabs[0].id)
                         JiraWebSession.shared.navigate(to: pending)
-                        refreshTrackedState()
                         return
                     }
                     loadIfNeeded(url: url, force: false)
-                    refreshTrackedState()
                 }
                 .onChange(of: webViewJiraURL) { _, newValue in
                     guard let updated = Self.normalizedURL(from: newValue) else { return }
                     loadIfNeeded(url: updated, force: true)
-                    refreshTrackedState()
                 }
                 .onChange(of: JiraWebSession.shared.tabStore.activeTabID) { _, _ in
                     remountWebViewForTabSwitch()
-                }
-                .onChange(of: page.url) { _, _ in
-                    refreshTrackedState()
-                }
-                .onChange(of: page.isLoading) { _, loading in
-                    if !loading { refreshTrackedState() }
                 }
             } else {
                 emptyState
@@ -201,22 +189,6 @@ struct JiraView: View {
 
             // One-click session launch when the retained page displays an issue.
             if case let .jira(key, title, url) = currentIssueContext, let url {
-                TicketWorkTrackButton(isTracked: isIssueTracked) {
-                    Task {
-                        await TicketWorkTracking.track(
-                            coordinator: ticketWorkflowCoordinator,
-                            store: ticketWorkflowStore,
-                            key: key,
-                            title: title,
-                            status: nil,
-                            issueURL: url,
-                            workspaceID: workspaceStore.defaultWorkspaceID
-                        )
-                        isIssueTracked = true
-                    }
-                }
-                .controlSize(.small)
-
                 Button {
                     Task {
                         await launchCoordinator.beginJiraTicketLaunch(key: key, title: title, url: url)
@@ -230,13 +202,8 @@ struct JiraView: View {
                 .accessibilityIdentifier("Jira.StartSessionButton")
             }
 
-            Text(page.url?.absoluteString ?? page.title)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            BrowserURLField(page: page, accessibilityIdentifier: "Jira.URLField")
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .help(page.url?.absoluteString ?? "")
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 12)
@@ -256,20 +223,6 @@ struct JiraView: View {
             return nil
         }
         return .jira(key: key, title: page.title, url: url)
-    }
-
-    private func refreshTrackedState() {
-        guard case let .jira(key, _, url) = currentIssueContext, let url else {
-            isIssueTracked = false
-            return
-        }
-        Task {
-            isIssueTracked = await TicketWorkTracking.isTracked(
-                store: ticketWorkflowStore,
-                key: key,
-                issueURL: url
-            )
-        }
     }
 
     private var emptyState: some View {

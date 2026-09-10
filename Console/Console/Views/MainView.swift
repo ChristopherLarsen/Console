@@ -17,7 +17,6 @@ struct MainView: View {
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
     @Environment(SessionStore.self) private var sessionStore
     @Environment(SessionWorkspaceLayoutController.self) private var sessionWorkspaceLayout
-    @Environment(TicketWorkflowCoordinator.self) private var ticketWorkflowCoordinator
 
     private static let terminalMinExpandedHeight: CGFloat = 150
     private static let terminalDefaultExpandedHeight: CGFloat = 250
@@ -44,13 +43,8 @@ struct MainView: View {
             SharedCheckoutWarningSheet(warning: warning)
                 .frame(minWidth: 460, maxWidth: 460, minHeight: 280, maxHeight: 480)
         }
-        .sheet(item: choiceSheetBinding) { choice in
-            WorkspaceChoiceSheet(choice: choice)
-            .frame(minWidth: 420, maxWidth: 420, minHeight: 300, maxHeight: 420)
-        }
         .overlay(alignment: .top) {
             if let failure = launchCoordinator.lastFailure,
-               !launchCoordinator.presentsChoiceSheet,
                !launchCoordinator.presentsCollisionSheet {
                 SessionLaunchErrorBanner(
                     failure: failure,
@@ -65,7 +59,7 @@ struct MainView: View {
                 sessionWorkspaceLayout.toggleFocusSession()
             }
             if newValue != .settings {
-                launchCoordinator.restoreChoiceSheetIfNeeded()
+                launchCoordinator.restoreCollisionSheetIfNeeded()
             }
         }
         .onChange(of: isTerminalExpanded) { _, expanded in
@@ -114,17 +108,6 @@ struct MainView: View {
                 }
             }
         }
-    }
-
-    private var choiceSheetBinding: Binding<PendingWorkspaceChoice?> {
-        Binding(
-            get: { launchCoordinator.presentsChoiceSheet ? launchCoordinator.pendingChoice : nil },
-            set: { newValue in
-                if newValue == nil, launchCoordinator.presentsChoiceSheet {
-                    launchCoordinator.cancelWorkspaceChoice()
-                }
-            }
-        )
     }
 
     private var collisionSheetBinding: Binding<PendingSharedCheckoutWarning?> {
@@ -273,8 +256,6 @@ struct MainView: View {
             })
         case .jira:
             JiraView()
-        case .ticketWork:
-            TicketWorkRootView(handlers: ticketWorkflowCoordinator.actionHandlers)
         case .mergeRequests:
             MergeRequestsView()
         case .commands:
@@ -309,7 +290,6 @@ struct MainView: View {
 }
 
 #Preview {
-    let ticketStore = TicketWorkflowStore()
     MainView()
         .environment(SessionStore())
         .environment(NextButtonModel())
@@ -318,7 +298,5 @@ struct MainView: View {
         .environment(IOSBuildCoordinator(processRunner: SystemProcessRunner()))
         .environment(SessionLaunchCoordinator(store: SessionStore(), workspaceStore: SessionWorkspaceStore()))
         .environment(SessionWorkspaceLayoutController())
-        .environment(ticketStore)
-        .environment(TicketWorkflowCoordinator(store: ticketStore))
         .modelContainer(for: [Command.self, WakeWord.self], inMemory: true)
 }

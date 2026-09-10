@@ -33,6 +33,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.defaultTerminalFolderKey) private var defaultTerminalFolder: String = AppSettings.defaultTerminalFolderDefault
     
     @Environment(InfoManager.self) private var infoManager
+    @Environment(SessionWorkspaceStore.self) private var workspaceStore
     @Environment(PermissionBackgroundObserver.self) private var permissionObserver: PermissionBackgroundObserver?
     @Environment(UpdateManager.self) private var updateManager
     @State private var showHotkeyRecorder = false
@@ -57,7 +58,6 @@ struct SettingsView: View {
             Form {
                 generalSection
                 claudeSection
-                SessionsSettingsSection()
                 terminalSection
                 urlsSection
                 popupsSection
@@ -285,12 +285,69 @@ struct SettingsView: View {
                     .textSelection(.enabled)
                     .accessibilityIdentifier("Settings.Claude.PathText")
             }
+
+            Divider()
+
+            sessionFolderRow
         } header: {
             Text("Claude")
-        } footer: {
-            Text("Console launches Claude sessions with this executable. Automatic resolution checks common install locations and your login shell.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// The single Session Folder every Claude session starts in. Replaces
+    /// the deleted multi-workspace management.
+    private var sessionFolderRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                Text("Session Folder")
+
+                Spacer()
+
+                if workspaceStore.defaultFolderPath.isEmpty {
+                    Text("Not set — sessions cannot start")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+
+                Button("Choose…") { chooseSessionFolder() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    .accessibilityIdentifier("Settings.Claude.SessionFolderChoose")
+
+                if !workspaceStore.defaultFolderPath.isEmpty {
+                    Button("Clear") { workspaceStore.setDefaultFolderPath(nil) }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityIdentifier("Settings.Claude.SessionFolderClear")
+                }
+            }
+
+            Text(workspaceStore.defaultFolderPath.isEmpty
+                 ? "Every Claude session starts in this folder."
+                 : workspaceStore.defaultFolderPath)
+                .font(.caption.monospaced())
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .foregroundStyle(
+                    workspaceStore.defaultFolderPath.isEmpty ? .secondary
+                    : (workspaceStore.defaultFolder == nil ? Color.orange : .secondary)
+                )
+                .textSelection(.enabled)
+                .accessibilityIdentifier("Settings.Claude.SessionFolderPath")
+        }
+    }
+
+    private func chooseSessionFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose Folder"
+        panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory())
+        panel.beginSheetModal(for: NSApp.keyWindow ?? NSApp.mainWindow!) { response in
+            guard response == .OK, let url = panel.url else { return }
+            workspaceStore.setDefaultFolderPath(url.standardizedFileURL.path)
         }
     }
 

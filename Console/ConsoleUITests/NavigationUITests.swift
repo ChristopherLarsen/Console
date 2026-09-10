@@ -172,8 +172,8 @@ final class NavigationUITests: XCTestCase {
         app.launchArguments += ["-uiTestExpandTerminal", "-uiTestAutoToggleTerminal"]
         app.launch()
 
-        let mainTerminalItem = app.buttons["Main Terminal"].firstMatch
-        XCTAssertTrue(mainTerminalItem.waitForExistence(timeout: 5), "Main Terminal sidebar item should be visible above Settings")
+        let mainTerminalItem = app.buttons["Terminal"].firstMatch
+        XCTAssertTrue(mainTerminalItem.waitForExistence(timeout: 5), "Terminal sidebar item should be visible above Settings")
 
         let drawer = app.descendants(matching: .any).matching(identifier: "MainTerminalDrawer").firstMatch
         XCTAssertTrue(drawer.waitForExistence(timeout: 5), "Drawer content should be visible when expanded")
@@ -188,8 +188,8 @@ final class NavigationUITests: XCTestCase {
         app.terminate()
         app.launchArguments = ["-uiTestExpandTerminal"]
         app.launch()
-        let mainTerminalItem2 = app.buttons["Main Terminal"].firstMatch
-        XCTAssertTrue(mainTerminalItem2.waitForExistence(timeout: 5), "Main Terminal sidebar item persists across launches")
+        let mainTerminalItem2 = app.buttons["Terminal"].firstMatch
+        XCTAssertTrue(mainTerminalItem2.waitForExistence(timeout: 5), "Terminal sidebar item persists across launches")
         let drawer2 = app.descendants(matching: .any).matching(identifier: "MainTerminalDrawer").firstMatch
         XCTAssertTrue(drawer2.waitForExistence(timeout: 5), "Drawer should expand again on a later launch")
     }

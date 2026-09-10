@@ -100,7 +100,19 @@ struct SessionsView: View {
         HStack {
             Text("Sessions")
                 .font(.headline)
-            Spacer()
+
+            Button {
+                showingIntentPicker = true
+            } label: {
+                Image(systemName: "plus")
+            }
+            .buttonStyle(.plain)
+            .help("New Session")
+            .accessibilityLabel("New Session")
+            .accessibilityIdentifier("NewSessionButton")
+
+            Spacer(minLength: 8)
+
             Button {
                 layout.isListVisible = false
             } label: {
@@ -110,14 +122,6 @@ struct SessionsView: View {
             .help("Hide Session List")
             .accessibilityLabel("Hide Session List")
             .accessibilityIdentifier("Sessions.HideListButton")
-            Button {
-                showingIntentPicker = true
-            } label: {
-                Image(systemName: "plus")
-            }
-            .buttonStyle(.plain)
-            .help("New Session")
-            .accessibilityIdentifier("NewSessionButton")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -171,7 +175,7 @@ struct SessionsView: View {
             Image(systemName: "terminal")
                 .font(.system(size: 28))
                 .foregroundStyle(.tertiary)
-            Text("No Claude Sessions")
+            Text("No Sessions")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("Sessions.EmptyState")
@@ -220,8 +224,6 @@ struct SessionsView: View {
                 Image(systemName: "terminal")
                     .font(.system(size: 36))
                     .foregroundStyle(.tertiary)
-                Text("Start a Claude session to begin")
-                    .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }

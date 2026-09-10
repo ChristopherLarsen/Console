@@ -1,45 +1,16 @@
 import Foundation
 import WebKit
 
-/// A prepared launch: automatic local display name and an optional explicit
-/// workspace. Views may edit name/workspaceID before handing the draft back
-/// to the coordinator's `launch(draft:)`. Source metadata stays local.
+/// A prepared launch: automatic local display name. Source metadata stays
+/// local.
 struct SessionDraft: Equatable {
     let purpose: SessionPurpose
     let source: SessionLaunchSource?
     var name: String
-    var workspaceID: UUID?
 }
 
-/// One launch awaiting its one-time workspace choice. Hosted as a sheet at
-/// MainView so Jira, GitLab, Home cards, and Sessions share one flow.
-/// `selectedWorkspaceID` is kept across failed Start attempts and a Settings
-/// round-trip so retry does not lose the folder.
-struct PendingWorkspaceChoice: Identifiable, Equatable {
-    let id: UUID
-    let purpose: SessionPurpose
-    let name: String
-    let source: SessionLaunchSource?
-    var selectedWorkspaceID: UUID?
-
-    init(
-        purpose: SessionPurpose,
-        name: String,
-        source: SessionLaunchSource?,
-        selectedWorkspaceID: UUID? = nil,
-        id: UUID = UUID()
-    ) {
-        self.id = id
-        self.purpose = purpose
-        self.name = name
-        self.source = source
-        self.selectedWorkspaceID = selectedWorkspaceID
-    }
-}
-
-/// Actionable failure from a contextual launch or chooser Start. Views
-/// present `message` and, when `offersSettingsRoute` is true, a control
-/// that opens Settings → Sessions / Claude Executable.
+/// Actionable failure from a contextual launch. Views present `message` and,
+/// when `offersSettingsRoute` is true, a control that opens Settings.
 struct SessionLaunchFailure: Equatable {
     let message: String
     let offersSettingsRoute: Bool
@@ -51,47 +22,34 @@ struct SessionLaunchFailure: Equatable {
 }
 
 /// Central launch entry point for intent-aware session creation. Builds
-/// drafts from four intents, resolves workspaces through the documented
-/// order, hosts unresolved choices at MainView, creates sessions, and
-/// navigates to Sessions.
+/// drafts from four intents, validates the single Session Folder
+/// (Settings → Claude), creates sessions in it, and navigates to Sessions.
 ///
 /// WebView-derived ticket/MR fields are local routing and display data.
-/// Contextual launches may choose a folder and open an idle session; they
+/// Contextual launches open an idle session in the configured folder; they
 /// never generate or send a source-derived prompt. The developer types work
 /// context into Claude explicitly.
-///
-/// Resolution order:
-/// 1. Explicit workspace override (Customize).
-/// 2. Remembered source-to-workspace association.
-/// 3. For merge-request reviews, a unique remote match for the MR project.
-/// 4. For New Ticket / General, the selected session's containing workspace.
-/// 5. Last workspace used for that purpose.
-/// 6. Global default workspace.
-/// 7. Ask once and remember.
 @MainActor
 @Observable
 final class SessionLaunchCoordinator {
     enum LaunchError: LocalizedError, Equatable {
-        case workspaceUnavailable
-        case workspaceNotAGitRepository
+        case sessionFolderMissing
+        case sessionFolderUnavailable
+        case sessionFolderNotAGitRepository
 
         var errorDescription: String? {
             switch self {
-            case .workspaceUnavailable:
-                return "That workspace folder is no longer available. Choose another in Settings → Sessions."
-            case .workspaceNotAGitRepository:
-                return "Review sessions need a Git repository. Choose a folder that contains a Git checkout, or add one in Settings → Sessions."
+            case .sessionFolderMissing:
+                return "Choose a Session Folder in Settings → Claude."
+            case .sessionFolderUnavailable:
+                return "The Session Folder is no longer available. Choose another in Settings → Claude."
+            case .sessionFolderNotAGitRepository:
+                return "Review sessions need a Git repository. Choose a Session Folder that contains a Git checkout in Settings → Claude."
             }
         }
     }
 
-    private(set) var pendingChoice: PendingWorkspaceChoice?
-    /// True while the one-time chooser sheet should be visible. Cleared when
-    /// opening Settings so the sheet does not cover the destination; restored
-    /// when the user leaves Settings if the draft is still pending.
-    private(set) var presentsChoiceSheet = false
-    /// Contextual-launch / chooser-Start failure. MainView presents it when
-    /// the chooser is hidden; the chooser presents it while the sheet is up.
+    /// Contextual-launch failure. MainView presents it.
     private(set) var lastFailure: SessionLaunchFailure?
     /// Shown when an editing launch would share a live checkout. Continue is
     /// required; Focus selects an occupant and launches nothing.
@@ -103,7 +61,6 @@ final class SessionLaunchCoordinator {
 
     @ObservationIgnored private let store: SessionStore
     @ObservationIgnored private let workspaceStore: SessionWorkspaceStore
-    @ObservationIgnored private let resolver: RepositoryIdentityResolver
     @ObservationIgnored private let gitInspector: any LocalGitInspecting
     @ObservationIgnored private let recheckGate: (@MainActor () async -> Void)?
     /// Canonical paths claimed by in-flight launches or pending warnings so
@@ -118,7 +75,6 @@ final class SessionLaunchCoordinator {
     ) {
         self.store = store
         self.workspaceStore = workspaceStore
-        self.resolver = RepositoryIdentityResolver()
         self.gitInspector = gitInspector ?? LocalGitWorkingCopyInspector()
         self.recheckGate = recheckGate
     }
@@ -129,8 +85,7 @@ final class SessionLaunchCoordinator {
         SessionDraft(
             purpose: purpose,
             source: source,
-            name: purpose.defaultName(source: source),
-            workspaceID: nil
+            name: purpose.defaultName(source: source)
         )
     }
 
@@ -144,7 +99,7 @@ final class SessionLaunchCoordinator {
 
     /// Source parsed from the retained Jira WebView's current URL, if it is
     /// displaying an issue. Memory-only; nothing is fetched. Used to name
-    /// the local session and route a workspace — never sent to Claude.
+    /// the local session — never sent to Claude.
     func retainedJiraSource() -> SessionLaunchSource? {
         guard let url = JiraWebSession.shared.page.url,
               let key = JiraSourceContext.parseIssueKey(fromURL: url) else {
@@ -181,9 +136,8 @@ final class SessionLaunchCoordinator {
 
     // MARK: - Launch
 
-    /// Resolves and launches a draft. Returns the new session ID, or nil when
-    /// a one-time workspace choice or shared-checkout warning is now pending
-    /// at MainView.
+    /// Validates the Session Folder and launches. Returns the new session
+    /// ID, or nil when a shared-checkout warning is now pending at MainView.
     ///
     /// Does not record `lastFailure` — the intent picker surfaces thrown
     /// errors itself. Contextual toolbar/card launches go through
@@ -191,63 +145,26 @@ final class SessionLaunchCoordinator {
     @discardableResult
     func launch(draft: SessionDraft) async throws -> UUID? {
         lastFailure = nil
-        pendingChoice = nil
-        presentsChoiceSheet = false
         clearCollision(releasingClaim: true)
 
-        // 1. Explicit override wins and skips association learning.
-        if let overrideID = draft.workspaceID {
-            return try await performLaunch(draft: draft, workspaceID: overrideID, rememberingAssociation: false)
-        }
-
-        if let resolved = await resolveWorkspace(purpose: draft.purpose, source: draft.source) {
-            return try await performLaunch(
-                draft: draft,
-                workspaceID: resolved.workspace.id,
-                rememberingAssociation: resolved.remembersAssociation
-            )
-        }
-
-        // 7. Ask once and remember.
-        pendingChoice = PendingWorkspaceChoice(
-            purpose: draft.purpose,
-            name: draft.name,
-            source: draft.source,
-            selectedWorkspaceID: draft.workspaceID
-        )
-        presentsChoiceSheet = true
-        return nil
+        let folder = try validatedSessionFolder(purpose: draft.purpose)
+        return try await performLaunch(draft: draft, folder: folder)
     }
 
-    /// Confirms the one-time choice; the association is remembered so later
-    /// launches of the same source are one click. The pending draft and
-    /// selected folder stay until this succeeds or the user cancels.
-    @discardableResult
-    func confirmWorkspaceChoice(workspaceID: UUID) async throws -> UUID? {
-        guard var choice = pendingChoice else { return nil }
-        choice.selectedWorkspaceID = workspaceID
-        pendingChoice = choice
-        lastFailure = nil
-
-        let draft = SessionDraft(
-            purpose: choice.purpose,
-            source: choice.source,
-            name: choice.name,
-            workspaceID: workspaceID
-        )
-        do {
-            return try await performLaunch(draft: draft, workspaceID: workspaceID, rememberingAssociation: true)
-        } catch {
-            lastFailure = SessionLaunchFailure(error: error)
-            throw error
+    /// The single Session Folder, validated for this purpose. Refuses —
+    /// never silently falls back to another directory — when unset,
+    /// unavailable, or (for reviews) not a Git repository.
+    private func validatedSessionFolder(purpose: SessionPurpose) throws -> SessionWorkspace {
+        guard let folder = workspaceStore.defaultFolder else {
+            throw LaunchError.sessionFolderMissing
         }
-    }
-
-    func cancelWorkspaceChoice() {
-        pendingChoice = nil
-        presentsChoiceSheet = false
-        lastFailure = nil
-        clearCollision(releasingClaim: true)
+        guard workspaceStore.isAvailable(folder) else {
+            throw LaunchError.sessionFolderUnavailable
+        }
+        if purpose == .review, !SessionWorkspaceStore.isGitRepository(atPath: folder.directoryPath) {
+            throw LaunchError.sessionFolderNotAGitRepository
+        }
+        return folder
     }
 
     /// Focuses a live occupant and launches nothing.
@@ -259,8 +176,6 @@ final class SessionLaunchCoordinator {
         }
         store.select(sessionID: targetID)
         ConsoleNavigation.showSessions()
-        pendingChoice = nil
-        presentsChoiceSheet = false
         lastFailure = nil
         clearCollision(releasingClaim: true)
     }
@@ -274,8 +189,7 @@ final class SessionLaunchCoordinator {
         do {
             return try await performLaunch(
                 draft: pending.draft,
-                workspaceID: pending.workspaceID,
-                rememberingAssociation: pending.rememberingAssociation,
+                folder: validatedSessionFolder(purpose: pending.draft.purpose),
                 acknowledgeSharedCheckout: true,
                 existingClaimID: pending.claimID
             )
@@ -288,9 +202,6 @@ final class SessionLaunchCoordinator {
     func cancelSharedCheckoutWarning() {
         lastFailure = nil
         clearCollision(releasingClaim: true)
-        if pendingChoice != nil {
-            presentsChoiceSheet = true
-        }
     }
 
     func updatePendingCollisionOccupant(_ occupantID: UUID?) {
@@ -303,52 +214,19 @@ final class SessionLaunchCoordinator {
         lastFailure = nil
     }
 
-    /// Hides the chooser without dropping the draft, then opens Settings so
-    /// the user can fix the Claude executable or workspace folders.
+    /// Opens Settings so the user can fix the Claude executable or the
+    /// Session Folder.
     func openSessionsSettings() {
-        presentsChoiceSheet = false
         presentsCollisionSheet = false
         lastFailure = nil
         ConsoleNavigation.showSettings()
     }
 
-    /// Re-shows the chooser after a Settings visit if the user never cancelled.
-    func restoreChoiceSheetIfNeeded() {
-        if pendingCollision != nil {
-            presentsCollisionSheet = true
-            return
-        }
-        guard pendingChoice != nil else { return }
-        presentsChoiceSheet = true
-    }
-
-    func updatePendingWorkspaceSelection(_ workspaceID: UUID?) {
-        guard var choice = pendingChoice else { return }
-        choice.selectedWorkspaceID = workspaceID
-        pendingChoice = choice
-    }
-
-    /// False when nothing is selected or the folder cannot host this purpose.
-    func canConfirmWorkspace(workspaceID: UUID?, purpose: SessionPurpose) -> Bool {
-        guard let workspaceID else { return false }
-        return workspaceBlockingReason(workspaceID: workspaceID, purpose: purpose) == nil
-    }
-
-    /// User-facing reason Start is disabled, or nil when the folder is valid.
-    func workspaceBlockingReason(workspaceID: UUID, purpose: SessionPurpose) -> String? {
-        guard let workspace = workspaceStore.workspace(withID: workspaceID) else {
-            return LaunchError.workspaceUnavailable.errorDescription
-        }
-        if !workspaceStore.isAvailable(workspace) {
-            return LaunchError.workspaceUnavailable.errorDescription
-        }
-        if purpose == .review, !SessionWorkspaceStore.isGitRepository(atPath: workspace.directoryPath) {
-            return LaunchError.workspaceNotAGitRepository.errorDescription
-        }
-        if !SessionWorkspaceStore.meetsRequirement(for: workspace, purpose: purpose) {
-            return LaunchError.workspaceUnavailable.errorDescription
-        }
-        return nil
+    /// Re-shows the shared-checkout warning after a Settings visit if the
+    /// user never cancelled.
+    func restoreCollisionSheetIfNeeded() {
+        guard pendingCollision != nil else { return }
+        presentsCollisionSheet = true
     }
 
     private func startContextualLaunch(_ draft: SessionDraft) async {
@@ -359,31 +237,13 @@ final class SessionLaunchCoordinator {
         }
     }
 
-    private func requireValidWorkspace(_ workspaceID: UUID, purpose: SessionPurpose) throws -> SessionWorkspace {
-        guard let workspace = workspaceStore.workspace(withID: workspaceID) else {
-            throw LaunchError.workspaceUnavailable
-        }
-        guard workspaceStore.isAvailable(workspace) else {
-            throw LaunchError.workspaceUnavailable
-        }
-        if purpose == .review, !SessionWorkspaceStore.isGitRepository(atPath: workspace.directoryPath) {
-            throw LaunchError.workspaceNotAGitRepository
-        }
-        guard SessionWorkspaceStore.meetsRequirement(for: workspace, purpose: purpose) else {
-            throw LaunchError.workspaceUnavailable
-        }
-        return workspace
-    }
-
     private func performLaunch(
         draft: SessionDraft,
-        workspaceID: UUID,
-        rememberingAssociation: Bool,
+        folder: SessionWorkspace,
         acknowledgeSharedCheckout: Bool = false,
         existingClaimID: UUID? = nil
     ) async throws -> UUID? {
-        let workspace = try requireValidWorkspace(workspaceID, purpose: draft.purpose)
-        let canonicalPath = CheckoutPath.canonical(workspace.directoryURL)
+        let canonicalPath = CheckoutPath.canonical(folder.directoryURL)
 
         let claimID = existingClaimID ?? UUID()
         if existingClaimID == nil {
@@ -403,8 +263,6 @@ final class SessionLaunchCoordinator {
         if !acknowledgeSharedCheckout,
            let warning = await warningIfOccupied(
             draft: draft,
-            workspaceID: workspaceID,
-            rememberingAssociation: rememberingAssociation,
             canonicalPath: canonicalPath,
             claimID: claimID
            ) {
@@ -417,8 +275,6 @@ final class SessionLaunchCoordinator {
         if !acknowledgeSharedCheckout,
            let warning = await warningIfOccupied(
             draft: draft,
-            workspaceID: workspaceID,
-            rememberingAssociation: rememberingAssociation,
             canonicalPath: canonicalPath,
             claimID: claimID
            ) {
@@ -429,7 +285,7 @@ final class SessionLaunchCoordinator {
         let request = SessionCreationRequest(
             purpose: draft.purpose,
             name: draft.name,
-            workingDirectory: workspace.directoryURL,
+            workingDirectory: folder.directoryURL,
             source: draft.source
         )
 
@@ -437,14 +293,7 @@ final class SessionLaunchCoordinator {
         created = true
         occupancyClaims.removeValue(forKey: claimID)
 
-        if rememberingAssociation, let identity = draft.source?.routingIdentity {
-            workspaceStore.rememberAssociation(routingIdentity: identity, workspaceID: workspaceID)
-        }
-        workspaceStore.noteUse(workspaceID: workspaceID, purpose: draft.purpose)
-
         lastFailure = nil
-        pendingChoice = nil
-        presentsChoiceSheet = false
         clearCollision(releasingClaim: false)
         ConsoleNavigation.showSessions()
         return sessionID
@@ -452,8 +301,6 @@ final class SessionLaunchCoordinator {
 
     private func warningIfOccupied(
         draft: SessionDraft,
-        workspaceID: UUID,
-        rememberingAssociation: Bool,
         canonicalPath: String,
         claimID: UUID
     ) async -> PendingSharedCheckoutWarning? {
@@ -466,8 +313,6 @@ final class SessionLaunchCoordinator {
             id: UUID(),
             claimID: claimID,
             draft: draft,
-            workspaceID: workspaceID,
-            rememberingAssociation: rememberingAssociation,
             canonicalPath: canonicalPath,
             occupants: second.occupants,
             gitState: gitState,
@@ -493,7 +338,6 @@ final class SessionLaunchCoordinator {
         }
         pendingCollision = warning
         presentsCollisionSheet = true
-        presentsChoiceSheet = false
         lastFailure = nil
     }
 
@@ -505,63 +349,11 @@ final class SessionLaunchCoordinator {
         presentsCollisionSheet = false
     }
 
-    /// Resolved workspace plus whether this resolution step earned a durable
-    /// routing association. Only a remembered association and a unique remote
-    /// match prove the folder fits the source; fallthrough (containment,
-    /// last-used, default) launches without learning so a coincidental
-    /// workspace is never hashed for this routing identity.
-    private func resolveWorkspace(purpose: SessionPurpose, source: SessionLaunchSource?) async -> (workspace: SessionWorkspace, remembersAssociation: Bool)? {
-        // 2. Remembered association for this ticket/MR project.
-        if let identity = source?.routingIdentity,
-           let rememberedID = workspaceStore.associatedWorkspaceID(forRoutingIdentity: identity),
-           let remembered = workspaceStore.workspace(withID: rememberedID),
-           SessionWorkspaceStore.meetsRequirement(for: remembered, purpose: purpose) {
-            return (remembered, true)
-        }
-
-        // 3. Unique code-host remote match for review sources.
-        if case let .mergeRequest(_, _, url) = source,
-           let identity = MergeRequestSourceContext.projectIdentity(inURL: url) {
-            switch await resolver.match(projectIdentity: identity, in: workspaceStore.resolvableWorkspaces(purpose: purpose)) {
-            case let .unique(workspace):
-                return (workspace, true)
-            case .ambiguous, .none:
-                break
-            }
-        }
-
-        // 4. The selected session's containing workspace (New Ticket / General).
-        if purpose == .newTicket || purpose == .general,
-           let selectedDirectory = store.selectedSession?.workingDirectory,
-           let containing = workspaceStore.availableWorkspaces.first(where: {
-               SessionWorkspaceStore.contains($0, directory: selectedDirectory)
-           }) {
-            return (containing, false)
-        }
-
-        // 5. Last workspace used for this purpose.
-        if let lastUsedID = workspaceStore.lastUsedWorkspaceID(for: purpose),
-           let lastUsed = workspaceStore.workspace(withID: lastUsedID),
-           SessionWorkspaceStore.meetsRequirement(for: lastUsed, purpose: purpose) {
-            return (lastUsed, false)
-        }
-
-        // 6. Global default workspace.
-        if let defaultID = workspaceStore.defaultWorkspaceID,
-           let fallback = workspaceStore.workspace(withID: defaultID),
-           SessionWorkspaceStore.meetsRequirement(for: fallback, purpose: purpose) {
-            return (fallback, false)
-        }
-
-        return nil
-    }
-
     #if DEBUG
     /// UI-test seam: present a synthetic launch failure without touching
     /// workspaces, Claude, or UserDefaults.
     func debugPresentSyntheticFailure() {
         lastFailure = SessionLaunchFailure(error: SessionCreationError.claudeNotFound)
-        presentsChoiceSheet = false
     }
     #endif
 }

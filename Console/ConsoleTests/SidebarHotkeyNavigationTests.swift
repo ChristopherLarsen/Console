@@ -62,7 +62,7 @@ final class SidebarHotkeyNavigationTests: XCTestCase {
 
     func testSidebarHotkeysMapInSidebarOrder() {
         let expected: [SidebarSelection] = [
-            .home, .next, .brief, .jira, .ticketWork,
+            .home, .next, .brief, .jira,
             .sessions, .mergeRequests, .commands,
             .aiProvider
         ]

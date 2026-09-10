@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Compact launcher replacing the old Name/Directory sheet: a resolved
-/// workspace header, four intent rows, and a collapsed Customize area.
-/// New Ticket and General launch with one click once workspaces exist.
+/// Compact launcher: a session-folder header, four intent rows, and a
+/// collapsed Customize area. Sessions always start in the single Session
+/// Folder (Settings → Claude); a fresh install can pick it inline here.
 struct SessionIntentPickerView: View {
     @Environment(SessionStore.self) private var store
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
@@ -19,7 +19,6 @@ struct SessionIntentPickerView: View {
     @State private var draft: SessionDraft?
     @State private var isCustomizing = false
     @State private var customName = ""
-    @State private var overrideWorkspaceID: UUID?
     @State private var inlineContext = ""
     @State private var inlineError: String?
     @State private var errorMessage: String?
@@ -27,7 +26,7 @@ struct SessionIntentPickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            workspaceHeader
+            folderHeader
             Divider()
 
             switch step {
@@ -52,7 +51,7 @@ struct SessionIntentPickerView: View {
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
                     if showsSettingsRoute {
-                        Button("Open Sessions Settings") {
+                        Button("Open Settings") {
                             ConsoleNavigation.showSettings()
                         }
                         .buttonStyle(.plain)
@@ -72,52 +71,42 @@ struct SessionIntentPickerView: View {
         .accessibilityIdentifier("SessionIntentPicker")
     }
 
-    // MARK: - Workspace header
+    // MARK: - Folder header
 
-    private var workspaceHeader: some View {
+    private var folderHeader: some View {
         HStack(spacing: 8) {
             Image(systemName: "folder")
                 .foregroundStyle(.secondary)
-            Picker("Workspace", selection: workspaceSelection) {
-                if workspaceStore.availableWorkspaces.isEmpty {
-                    Text("No Workspaces").tag(UUID?.none)
-                } else {
-                    Text("Auto").tag(UUID?.none)
-                    ForEach(workspaceStore.availableWorkspaces) { workspace in
-                        Text("\(workspace.name) — \(activeCount(for: workspace)) active")
-                            .tag(UUID?.some(workspace.id))
-                    }
+
+            if let folder = workspaceStore.defaultFolder {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(folder.name)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                    Text(folder.directoryPath)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
+            } else {
+                Text("No Session Folder")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
-            .labelsHidden()
-            .controlSize(.small)
-            .accessibilityIdentifier("Sessions.Launcher.WorkspacePicker")
 
             Spacer()
 
             Button {
-                chooseNewWorkspaceFolder()
+                chooseSessionFolder()
             } label: {
-                Image(systemName: "plus.folder")
+                Image(systemName: "folder.badge.plus")
             }
             .buttonStyle(.plain)
-            .help("Add Workspace Folder")
-            .accessibilityIdentifier("Sessions.Launcher.AddWorkspaceButton")
+            .help("Choose Session Folder")
+            .accessibilityLabel("Choose Session Folder")
+            .accessibilityIdentifier("Sessions.Launcher.ChooseFolderButton")
         }
-    }
-
-    /// nil selection means "auto" (let resolution decide).
-    private var workspaceSelection: Binding<UUID?> {
-        Binding(
-            get: { overrideWorkspaceID ?? draft?.workspaceID },
-            set: { newValue in
-                overrideWorkspaceID = newValue
-                if var updated = draft {
-                    updated.workspaceID = newValue
-                    draft = updated
-                }
-            }
-        )
     }
 
     // MARK: - Intent rows
@@ -202,7 +191,7 @@ struct SessionIntentPickerView: View {
 
         switch purpose {
         case .newTicket, .general:
-            startCleanLaunch(purpose)
+            launch(purpose: purpose, source: nil)
 
         case .existingTicket:
             if let source = retainedJiraSource {
@@ -224,43 +213,14 @@ struct SessionIntentPickerView: View {
         }
     }
 
-    /// One-click path: resolve (or ask for the first folder), then launch.
-    private func startCleanLaunch(_ purpose: SessionPurpose) {
-        if workspaceStore.availableWorkspaces.isEmpty && overrideWorkspaceID == nil {
-            chooseFirstWorkspaceAndLaunch(purpose: purpose, source: nil)
-            return
-        }
-        launch(purpose: purpose, source: nil)
-    }
-
     private func launch(purpose: SessionPurpose, source: SessionLaunchSource?) {
         var resolvedDraft = coordinator.draft(purpose: purpose, source: source)
         resolvedDraft.name = effectiveName(for: resolvedDraft)
-        if let override = overrideWorkspaceID {
-            resolvedDraft.workspaceID = override
-        }
         draft = resolvedDraft
-
-        if workspaceStore.workspace(withID: resolvedDraft.workspaceID ?? UUID()) == nil,
-           workspaceStore.availableWorkspaces.isEmpty {
-            chooseFirstWorkspaceAndLaunch(purpose: purpose, source: source)
-            return
-        }
 
         Task { @MainActor in
             do {
-                guard try await coordinator.launch(draft: resolvedDraft) != nil else {
-                    // Both pending paths are hosted at MainView: the
-                    // shared-checkout warning and the one-time workspace
-                    // chooser. Dismiss so the popover never fights the sheet.
-                    if coordinator.pendingCollision != nil || coordinator.pendingChoice != nil {
-                        dismiss()
-                        return
-                    }
-                    errorMessage = "Choose a workspace folder to continue."
-                    showsSettingsRoute = true
-                    return
-                }
+                _ = try await coordinator.launch(draft: resolvedDraft)
                 dismiss()
             } catch {
                 let failure = SessionLaunchFailure(error: error)
@@ -283,7 +243,7 @@ struct SessionIntentPickerView: View {
     private var jiraContextStep: some View {
         inlineContextStep(
             title: "Start Existing Ticket",
-            caption: "Enter a Jira issue key or URL to name the session and pick a folder. Type the work into Claude yourself.",
+            caption: "Enter a Jira issue key or URL to name the session. Type the work into Claude yourself.",
             placeholder: "ENG-123",
             purpose: .existingTicket,
             identifierPrefix: "Sessions.Launcher.Jira"
@@ -299,7 +259,7 @@ struct SessionIntentPickerView: View {
     private var mergeRequestContextStep: some View {
         inlineContextStep(
             title: "Start Review",
-            caption: "Paste the GitLab merge-request URL to name the session and pick a folder. Type the review into Claude yourself.",
+            caption: "Paste the GitLab merge-request URL to name the session. Type the review into Claude yourself.",
             placeholder: "https://gitlab.example.com/group/project/-/merge_requests/42",
             purpose: .review,
             identifierPrefix: "Sessions.Launcher.MergeRequest"
@@ -308,8 +268,7 @@ struct SessionIntentPickerView: View {
             guard let info = MergeRequestSourceContext.parse(from: trimmed),
                   let mrURL = URL(string: trimmed) else { return nil }
             // Keep the full MR URL (matching retained-page launches) so
-            // routingIdentity and artifact URLs point at the merge request,
-            // not the project root.
+            // artifact URLs point at the merge request, not the project root.
             return .mergeRequest(iid: info.iid, title: nil, url: mrURL)
         }
     }
@@ -363,13 +322,6 @@ struct SessionIntentPickerView: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(
                     inlineContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || (
-                            overrideWorkspaceID != nil
-                                && !coordinator.canConfirmWorkspace(
-                                    workspaceID: overrideWorkspaceID,
-                                    purpose: purpose
-                                )
-                        )
                 )
                 .accessibilityIdentifier("\(identifierPrefix).StartButton")
             }
@@ -417,20 +369,6 @@ struct SessionIntentPickerView: View {
                         .textFieldStyle(.roundedBorder)
                         .controlSize(.small)
                         .accessibilityIdentifier("Sessions.Launcher.NameField")
-
-                    // Shares the header's binding so "Auto" clears both the
-                    // override and the draft's explicit workspace — otherwise
-                    // the header keeps showing the stale folder.
-                    Picker("", selection: workspaceSelection) {
-                        Text("Auto").tag(UUID?.none)
-                        ForEach(workspaceStore.availableWorkspaces) { workspace in
-                            Text(workspace.name).tag(UUID?.some(workspace.id))
-                        }
-                    }
-                    .labelsHidden()
-                    .controlSize(.small)
-                    .frame(maxWidth: 140)
-                    .accessibilityIdentifier("Sessions.Launcher.CustomWorkspacePicker")
                 }
 
                 Text("Leave the name empty to use “\(coordinator.refreshedName(for: currentDraft))”.")
@@ -442,44 +380,9 @@ struct SessionIntentPickerView: View {
 
     // MARK: - Folder choosing
 
-    /// Fresh-install flow: pick one folder; it becomes the default workspace
-    /// and the session launches immediately.
-    private func chooseFirstWorkspaceAndLaunch(purpose: SessionPurpose, source: SessionLaunchSource?) {
-        chooseFolder { url in
-            let workspace = workspaceStore.add(name: url.lastPathComponent, directoryURL: url)
-            workspaceStore.setDefault(id: workspace.id)
-            var resolvedDraft = coordinator.draft(purpose: purpose, source: source)
-            resolvedDraft.workspaceID = workspace.id
-            resolvedDraft.name = effectiveName(for: resolvedDraft)
-            draft = resolvedDraft
-            Task { @MainActor in
-                do {
-                    guard try await coordinator.launch(draft: resolvedDraft) != nil else {
-                        if coordinator.pendingCollision != nil {
-                            dismiss()
-                            return
-                        }
-                        errorMessage = "The chosen folder could not be used."
-                        showsSettingsRoute = true
-                        return
-                    }
-                    dismiss()
-                } catch {
-                    let failure = SessionLaunchFailure(error: error)
-                    errorMessage = failure.message
-                    showsSettingsRoute = failure.offersSettingsRoute
-                }
-            }
-        }
-    }
-
-    private func chooseNewWorkspaceFolder() {
-        chooseFolder { url in
-            _ = workspaceStore.add(name: url.lastPathComponent, directoryURL: url)
-        }
-    }
-
-    private func chooseFolder(_ completion: @escaping (URL) -> Void) {
+    /// Picks the single Session Folder; on a fresh install the next launch
+    /// uses it immediately.
+    private func chooseSessionFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -488,19 +391,8 @@ struct SessionIntentPickerView: View {
         panel.prompt = "Choose Folder"
         panel.beginSheetModal(for: NSApp.keyWindow ?? NSApp.mainWindow!) { response in
             guard response == .OK, let url = panel.url else { return }
-            completion(url.standardizedFileURL)
+            workspaceStore.setDefaultFolderPath(url.standardizedFileURL.path)
         }
-    }
-
-    // MARK: - Helpers
-
-    private func activeCount(for workspace: SessionWorkspace) -> Int {
-        let rootPath = workspace.directoryPath
-        return store.sessions.filter { session in
-            guard session.activity != .exited else { return false }
-            let sessionPath = session.workingDirectory.standardizedFileURL.path
-            return sessionPath == rootPath || sessionPath.hasPrefix(rootPath + "/")
-        }.count
     }
 }
 

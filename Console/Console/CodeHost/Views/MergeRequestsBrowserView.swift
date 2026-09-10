@@ -74,7 +74,8 @@ struct MergeRequestsNavigationBar: View {
                 .help("Return to native cards")
             }
 
-            Spacer(minLength: 0)
+            BrowserURLField(page: page, accessibilityIdentifier: "MergeRequests.URLField")
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(.borderless)
         .controlSize(.small)

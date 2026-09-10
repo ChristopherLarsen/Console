@@ -45,39 +45,13 @@ page usable and report the limitation. Do not silently broaden the approach.
 sites — that content is invented and is the intended source of committed test
 data (scrub the site hostname from committed HTML).
 
-### 2a. Narrow durable TicketWorkflow progress (approved exception)
+### 2a. Durable TicketWorkflow progress — exception RETIRED
 
-Ticket Work may retain **minimal local progress** so a restart does not erase
-stage/checklist state. This is an explicit, narrow exception to the blanket
-"no persistence" wording above. It does **not** authorize persisting ticket or
-MR content.
-
-**Allowed to persist (dedicated versioned store only):**
-
-- Workflow UUID and an opaque ticket-association token
-- Template identifier and template version
-- Stage and step UUIDs, step outcomes (enum codes), and timestamps
-- Work-cycle number and generic blocker codes (not free-text reasons from Jira)
-- Selected local workspace UUID
-- A bounded history of generic workflow transition codes
-- Separately: generic reusable checklist templates (no ticket fields)
-
-**Opaque ticket association:** a Keychain-held installation secret plus a
-versioned, domain-separated HMAC over the normalized Jira origin host and
-issue key. The existing project-prefix routing hash is insufficient. The HMAC
-digest is what may be stored — never the issue key, title, summary, status
-string, or URL.
-
-**Forbidden in durable TicketWorkflow records (and in job arguments,
-artifact filenames, result metadata, terminal submissions, LLM prompts,
-accessibility identifiers, and logs):**
-
-- Issue keys, titles, descriptions, acceptance text, raw Jira statuses
-- Issue or project URLs, host pathnames that identify company projects
-- MR titles, descriptions, discussion text, pipeline logs
-- Session prompts, summaries, or transcript paths
-- Diagnostic compiler/test message bodies (keep those memory-only / local
-  result bundles, separate from workflow metadata)
+Ticket Work was deleted from the app (2026-09-09), along with its durable
+progress store, HMAC ticket association, and Keychain identity key. No code
+retains this exception anymore. If a future feature reintroduces durable
+progress, write a new approved exception here — do not resurrect §2a as
+historical precedent.
 
 **Failure handling required by this allowance:**
 

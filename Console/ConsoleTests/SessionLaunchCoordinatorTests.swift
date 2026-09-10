@@ -3,8 +3,8 @@ import XCTest
 @testable import Console
 
 /// End-to-end coordinator behavior on top of a fake launcher: typed requests,
-/// the workspace resolution order, one-time choice learning, and proof that
-/// WebView-derived source metadata never reaches Claude.
+/// single Session Folder validation, and proof that WebView-derived source
+/// metadata never reaches Claude.
 @MainActor
 final class SessionLaunchCoordinatorTests: XCTestCase {
 
@@ -152,7 +152,8 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         if let remote {
             try initializeLocalGitRemote(at: directory, remote: remote)
         }
-        return stack.workspaces.add(name: name, directoryURL: directory)
+        stack.workspaces.setDefaultFolderPath(directory.path)
+        return try XCTUnwrap(stack.workspaces.defaultFolder)
     }
 
     private func requireLaunch(_ stack: Stack, draft: SessionDraft) async throws -> UUID {
@@ -293,163 +294,97 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         XCTAssertFalse(joinedArgs.contains("Review GitLab merge request"), "no source-derived prompt body")
     }
 
-    // MARK: - Resolution order
+    // MARK: - Session Folder resolution
 
-    func testExplicitWorkspaceOverrideBeatsRememberedAssociation() async throws {
+    func testUnsetSessionFolderThrowsActionableError() async throws {
         let stack = makeStack()
-        let associated = try addWorkspace(stack, named: "Associated")
-        let override = try addWorkspace(stack, named: "Override")
-        stack.workspaces.rememberAssociation(routingIdentity: "ENG", workspaceID: associated.id)
 
-        var draft = stack.coordinator.draft(purpose: .existingTicket, source: jiraSource())
-        draft.workspaceID = override.id
-        let id = try await requireLaunch(stack, draft: draft)
-
-        XCTAssertEqual(stack.store.session(withID: id)?.workingDirectory.standardizedFileURL.path, override.directoryURL.standardizedFileURL.path)
-        // Overrides do not rewrite what was learned about the source.
-        XCTAssertEqual(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "ENG"), associated.id)
+        do {
+            _ = try await stack.coordinator.launch(draft: stack.coordinator.draft(
+                purpose: .newTicket,
+                source: nil
+            ))
+            XCTFail("expected unset Session Folder to throw")
+        } catch let error as SessionLaunchCoordinator.LaunchError {
+            XCTAssertEqual(error, .sessionFolderMissing)
+            XCTAssertTrue(error.errorDescription?.contains("Settings") == true)
+        }
+        XCTAssertEqual(stack.launcher.launchCount, 0)
+        XCTAssertTrue(stack.store.sessions.isEmpty)
     }
 
-    func testRememberedAssociationLaunchesOneClickWithoutChoiceSheet() async throws {
+    func testContextualLaunchWithUnsetFolderSurfacesFailureWithSettingsRoute() async throws {
         let stack = makeStack()
-        let home = try addWorkspace(stack, named: "Home")
+        let sidebarBefore = UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey)
 
-        // First launch: unresolved → one-time choice.
-        var firstDraft = stack.coordinator.draft(purpose: .existingTicket, source: jiraSource())
-        firstDraft.workspaceID = home.id
-        let firstID = try await requireLaunch(stack, draft: firstDraft)
-        stack.store.stopSession(id: firstID)
+        await stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
 
-        stack.coordinator.cancelWorkspaceChoice()
-
-        // Second launch of the same project resolves through the association.
-        // The first session is exited so occupancy does not mask routing.
-        let second = stack.coordinator.draft(purpose: .existingTicket, source: jiraSource("ENG-456"))
-        let id = try await requireLaunch(stack, draft: second)
-
-        XCTAssertNil(stack.coordinator.pendingChoice, "mapped tickets never ask again")
-        XCTAssertEqual(stack.store.session(withID: id)?.workingDirectory.standardizedFileURL.path, home.directoryURL.standardizedFileURL.path)
-    }
-
-    func testUniqueRemoteMatchResolvesReviewToTheGitRepository() async throws {
-        let stack = makeStack()
-        let repo = try addWorkspace(stack, named: "Repo", gitRemote: "https://gitlab.com/grp/proj.git")
-        try addWorkspace(stack, named: "Plain")
-
-        let id = try await requireLaunch(stack, draft: stack.coordinator.draft(
-            purpose: .review,
-            source: mrSource()
-        ))
-
-        XCTAssertNil(stack.coordinator.pendingChoice)
-        XCTAssertEqual(stack.store.session(withID: id)?.workingDirectory.standardizedFileURL.path, repo.directoryURL.standardizedFileURL.path)
-        // The unique match is remembered for next time.
         XCTAssertEqual(
-            stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "gitlab.com/grp/proj"),
-            repo.id
+            stack.coordinator.lastFailureMessage,
+            SessionLaunchCoordinator.LaunchError.sessionFolderMissing.errorDescription
+        )
+        XCTAssertEqual(stack.coordinator.lastFailure?.offersSettingsRoute, true)
+        XCTAssertEqual(stack.launcher.launchCount, 0)
+        XCTAssertEqual(
+            UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey),
+            sidebarBefore,
+            "failed contextual launches must not navigate as if successful"
         )
     }
 
-    func testAmbiguousRemoteMatchAsksOnceAndConfirmLearns() async throws {
+    func testEveryLaunchStartsInTheConfiguredSessionFolder() async throws {
         let stack = makeStack()
-        let alpha = try addWorkspace(stack, named: "Alpha", gitRemote: "https://gitlab.com/grp/proj.git")
-        let beta = try addWorkspace(stack, named: "Beta", gitRemote: "git@gitlab.com:grp/proj.git")
-        // Remove the automatic first-workspace default so neither repo wins
-        // via the fallback steps; only the ambiguous match is in play.
-        stack.workspaces.setDefault(id: nil)
-
-        let unresolved = try await stack.coordinator.launch(draft: stack.coordinator.draft(
-            purpose: .review,
-            source: mrSource()
-        ))
-        XCTAssertNil(unresolved)
-        let choice = try XCTUnwrap(stack.coordinator.pendingChoice)
-
-        let confirmed = try await stack.coordinator.confirmWorkspaceChoice(workspaceID: beta.id)
-        let confirmedID = try XCTUnwrap(confirmed)
-        XCTAssertNotNil(stack.store.session(withID: confirmedID), "confirmation launches the session")
-        XCTAssertNil(stack.coordinator.pendingChoice)
-        _ = choice
-        stack.store.stopSession(id: confirmedID)
-
-        // Learned: next identical source skips the sheet entirely.
-        _ = try await stack.coordinator.launch(draft: stack.coordinator.draft(purpose: .review, source: mrSource()))
-        XCTAssertNil(stack.coordinator.pendingChoice)
-        XCTAssertEqual(
-            stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "gitlab.com/grp/proj"),
-            beta.id
-        )
-        _ = alpha
-    }
-
-    func testSelectedSessionContainingWorkspaceWinsForGeneralPurpose() async throws {
-        let stack = makeStack()
-        let monorepo = try addWorkspace(stack, named: "Monorepo")
-        let other = try addWorkspace(stack, named: "Other")
-
-        let nestedDirectory = monorepo.directoryURL.appendingPathComponent("Subproject", isDirectory: true)
-        try FileManager.default.createDirectory(at: nestedDirectory, withIntermediateDirectories: true)
-        let baseID = try stack.store.createSession(name: "Base", workingDirectory: nestedDirectory)
-        stack.store.select(sessionID: baseID)
-
-        let id = try await requireLaunch(stack, draft: stack.coordinator.draft(purpose: .general, source: nil))
-
-        XCTAssertEqual(stack.store.session(withID: id)?.workingDirectory.standardizedFileURL.path, monorepo.directoryURL.standardizedFileURL.path)
-        XCTAssertNotEqual(stack.store.session(withID: id)?.workingDirectory.lastPathComponent, other.name)
-    }
-
-    func testLastUsedPerPurposeBeatsGlobalDefault() async throws {
-        let stack = makeStack()
-        let defaultHome = try addWorkspace(stack, named: "DefaultHome")
-        let reviewHome = try addWorkspace(stack, named: "ReviewHome", gitRemote: "https://gitlab.com/elsewhere/repo.git")
-        stack.workspaces.setDefault(id: defaultHome.id)
-        stack.workspaces.noteUse(workspaceID: reviewHome.id, purpose: .review)
-
-        let id = try await requireLaunch(stack, draft: stack.coordinator.draft(
-            purpose: .review,
-            source: mrSource("99") // no association, no remote match
-        ))
-
-        XCTAssertEqual(stack.store.session(withID: id)?.workingDirectory.standardizedFileURL.path, reviewHome.directoryURL.standardizedFileURL.path)
-    }
-
-    func testDefaultWorkspaceIsTheFinalFallbackBeforeAsking() async throws {
-        let stack = makeStack()
-        let fallback = try addWorkspace(stack, named: "Fallback")
-        stack.workspaces.setDefault(id: fallback.id)
+        let folder = try addWorkspace(stack, named: "Home")
 
         let id = try await requireLaunch(stack, draft: stack.coordinator.draft(purpose: .newTicket, source: nil))
 
-        XCTAssertEqual(stack.store.session(withID: id)?.workingDirectory.standardizedFileURL.path, fallback.directoryURL.standardizedFileURL.path)
+        XCTAssertEqual(
+            stack.store.session(withID: id)?.workingDirectory.standardizedFileURL.path,
+            folder.directoryURL.standardizedFileURL.path
+        )
     }
 
-    func testUnavailableDefaultIsSkippedAndChoiceIsPresented() async throws {
+    func testUnavailableSessionFolderThrowsActionableError() async throws {
         let stack = makeStack()
-        let vanished = try addWorkspace(stack, named: "Vanished")
-        stack.workspaces.setDefault(id: vanished.id)
-        try FileManager.default.removeItem(at: vanished.directoryURL)
+        let folder = try addWorkspace(stack, named: "Vanished")
+        try FileManager.default.removeItem(at: folder.directoryURL)
 
-        let result = try await stack.coordinator.launch(draft: stack.coordinator.draft(purpose: .newTicket, source: nil))
-
-        XCTAssertNil(result)
-        XCTAssertEqual(stack.coordinator.pendingChoice?.purpose, .newTicket)
+        do {
+            _ = try await stack.coordinator.launch(draft: stack.coordinator.draft(purpose: .newTicket, source: nil))
+            XCTFail("expected disappearing Session Folder to throw")
+        } catch let error as SessionLaunchCoordinator.LaunchError {
+            XCTAssertEqual(error, .sessionFolderUnavailable)
+            XCTAssertTrue(error.errorDescription?.contains("Settings") == true)
+        }
+        XCTAssertEqual(stack.launcher.launchCount, 0)
     }
 
-    func testReviewSkipsNonGitWorkspacesWhenResolving() async throws {
+    func testNonGitSessionFolderThrowsActionableErrorForReviews() async throws {
         let stack = makeStack()
-        let plain = try addWorkspace(stack, named: "PlainOnly")
-        stack.workspaces.setDefault(id: plain.id)
-        stack.workspaces.noteUse(workspaceID: plain.id, purpose: .review)
+        try addWorkspace(stack, named: "PlainOnly")
 
-        let result = try await stack.coordinator.launch(draft: stack.coordinator.draft(
-            purpose: .review,
-            source: mrSource("7")
-        ))
+        do {
+            _ = try await stack.coordinator.launch(draft: stack.coordinator.draft(
+                purpose: .review,
+                source: mrSource("7")
+            ))
+            XCTFail("expected non-git review folder to throw")
+        } catch let error as SessionLaunchCoordinator.LaunchError {
+            XCTAssertEqual(error, .sessionFolderNotAGitRepository)
+        }
+        XCTAssertEqual(stack.launcher.launchCount, 0)
+    }
 
-        // The non-git folder cannot host reviews, so the chooser appears even
-        // though it is default and last-used for this purpose.
-        XCTAssertNil(result)
-        XCTAssertEqual(stack.coordinator.pendingChoice?.purpose, .review)
+    func testGeneralLaunchWorksInNonGitSessionFolder() async throws {
+        let stack = makeStack()
+        let folder = try addWorkspace(stack, named: "PlainOnly")
+
+        let id = try await requireLaunch(stack, draft: stack.coordinator.draft(purpose: .general, source: nil))
+
+        XCTAssertEqual(
+            stack.store.session(withID: id)?.workingDirectory.standardizedFileURL.path,
+            folder.directoryURL.standardizedFileURL.path
+        )
     }
 
     // MARK: - Source metadata stays local
@@ -605,10 +540,6 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
 
         XCTAssertTrue(stack.coordinator.lastFailureMessage?.contains("Claude") == true)
         XCTAssertEqual(stack.coordinator.lastFailure?.offersSettingsRoute, true)
-        XCTAssertNil(stack.coordinator.pendingChoice)
-        XCTAssertFalse(stack.coordinator.presentsChoiceSheet)
-        XCTAssertNil(stack.workspaces.lastUsedWorkspaceID(for: .existingTicket))
-        XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "ENG"))
         XCTAssertEqual(stack.launcher.launchCount, 0)
         XCTAssertEqual(
             UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey),
@@ -619,41 +550,32 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
 
     func testDisappearingFolderOverrideThrowsActionableError() async throws {
         let stack = makeStack()
-        let vanished = try addWorkspace(stack, named: "Vanished")
-        var draft = stack.coordinator.draft(purpose: .general, source: nil)
-        draft.workspaceID = vanished.id
-        try FileManager.default.removeItem(at: vanished.directoryURL)
+        let folder = try addWorkspace(stack, named: "Vanished")
+        try FileManager.default.removeItem(at: folder.directoryURL)
 
         do {
-            _ = try await stack.coordinator.launch(draft: draft)
+            _ = try await stack.coordinator.launch(draft: stack.coordinator.draft(purpose: .general, source: nil))
             XCTFail("expected disappearing folder to throw")
         } catch let error as SessionLaunchCoordinator.LaunchError {
-            XCTAssertEqual(error, .workspaceUnavailable)
+            XCTAssertEqual(error, .sessionFolderUnavailable)
             XCTAssertTrue(error.errorDescription?.contains("Settings") == true)
         }
-        XCTAssertNil(stack.workspaces.lastUsedWorkspaceID(for: .general))
         XCTAssertEqual(stack.launcher.launchCount, 0)
     }
 
     func testNonGitReviewOverrideThrowsActionableError() async throws {
         let stack = makeStack()
-        let plain = try addWorkspace(stack, named: "PlainOnly")
-        var draft = stack.coordinator.draft(purpose: .review, source: mrSource("7"))
-        draft.workspaceID = plain.id
+        try addWorkspace(stack, named: "PlainOnly")
 
-        XCTAssertFalse(stack.coordinator.canConfirmWorkspace(workspaceID: plain.id, purpose: .review))
-        XCTAssertTrue(
-            stack.coordinator.workspaceBlockingReason(workspaceID: plain.id, purpose: .review)?
-                .contains("Git") == true
-        )
         do {
-            _ = try await stack.coordinator.launch(draft: draft)
-            XCTFail("expected non-git review override to throw")
+            _ = try await stack.coordinator.launch(draft: stack.coordinator.draft(
+                purpose: .review,
+                source: mrSource("7")
+            ))
+            XCTFail("expected non-git review folder to throw")
         } catch let error as SessionLaunchCoordinator.LaunchError {
-            XCTAssertEqual(error, .workspaceNotAGitRepository)
+            XCTAssertEqual(error, .sessionFolderNotAGitRepository)
         }
-        XCTAssertNil(stack.workspaces.lastUsedWorkspaceID(for: .review))
-        XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "gitlab.com/grp/proj"))
     }
 
     func testInjectedLauncherFailureSurfacesErrorWithoutLearningOrNavigating() async throws {
@@ -670,8 +592,6 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(stack.coordinator.lastFailureMessage, "Synthetic launcher failed.")
         XCTAssertEqual(stack.coordinator.lastFailure?.offersSettingsRoute, true)
-        XCTAssertNil(stack.workspaces.lastUsedWorkspaceID(for: .existingTicket))
-        XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "SYN"))
         XCTAssertEqual(
             UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey),
             sidebarBefore
@@ -681,14 +601,13 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         assertSourceMetadataAbsent(from: stack)
     }
 
-    func testSuccessfulRetryAfterLauncherFailureClearsErrorAndRecordsLastUse() async throws {
+    func testSuccessfulRetryAfterLauncherFailureClearsErrorAndLaunches() async throws {
         let stack = makeStack()
         try addWorkspace(stack, named: "Home")
         stack.launcher.errorToThrow = SyntheticLaunchError()
 
         await stack.coordinator.beginJiraTicketLaunch(key: "ENG-123", title: nil, url: nil)
         XCTAssertNotNil(stack.coordinator.lastFailureMessage)
-        XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "ENG"))
         XCTAssertTrue(stack.store.sessions.isEmpty)
 
         stack.launcher.errorToThrow = nil
@@ -697,11 +616,6 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         XCTAssertNil(stack.coordinator.lastFailureMessage)
         XCTAssertNotNil(stack.store.selectedSession)
         XCTAssertEqual(stack.store.sessions.count, 1)
-        // The launch resolved through the default-workspace fallthrough, which
-        // does not earn a durable routing association (H25-F01); the folder is
-        // still recorded as last used for the purpose.
-        XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "ENG"))
-        XCTAssertEqual(stack.workspaces.lastUsedWorkspaceID(for: .existingTicket), stack.workspaces.workspaces.first?.id)
     }
 
     func testRepeatedRetryAfterLauncherFailureCreatesAtMostOneSession() async throws {
@@ -761,27 +675,5 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             .rejected(.sessionNotAcceptingInput)
         )
         assertSourceMetadataAbsent(from: stack)
-        // This launch resolved through the default-workspace fallthrough,
-        // which does not learn a durable routing association (H25-F01).
-        XCTAssertNil(stack.workspaces.associatedWorkspaceID(forRoutingIdentity: "SYN"))
-        XCTAssertEqual(stack.workspaces.lastUsedWorkspaceID(for: .existingTicket), stack.workspaces.workspaces.first?.id)
-    }
-
-    func testCancelClearsPendingChoiceAndFailure() async throws {
-        let stack = makeStack()
-        try addWorkspace(stack, named: "Home")
-        stack.workspaces.setDefault(id: nil)
-
-        let unresolved = try await stack.coordinator.launch(draft: stack.coordinator.draft(
-            purpose: .existingTicket,
-            source: jiraSource()
-        ))
-        XCTAssertNil(unresolved)
-        XCTAssertNotNil(stack.coordinator.pendingChoice)
-        stack.coordinator.cancelWorkspaceChoice()
-
-        XCTAssertNil(stack.coordinator.pendingChoice)
-        XCTAssertFalse(stack.coordinator.presentsChoiceSheet)
-        XCTAssertNil(stack.coordinator.lastFailureMessage)
     }
 }

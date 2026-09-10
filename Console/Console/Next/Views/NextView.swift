@@ -11,7 +11,6 @@ struct NextView: View {
 
     @Environment(SessionStore.self) private var sessionStore: SessionStore?
     @Environment(NextButtonModel.self) private var model
-    @Environment(TicketWorkflowStore.self) private var ticketWorkflowStore
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 12) {
@@ -66,16 +65,14 @@ struct NextView: View {
     private func autoCheckIfNeeded() {
         model.checkIfNeeded(
             sessionStore: sessionStore,
-            jiraController: JiraWebSession.shared.panelController,
-            ticketWorkflowStore: ticketWorkflowStore
+            jiraController: JiraWebSession.shared.panelController
         )
     }
 
     private func runCheck() {
         model.check(
             sessionStore: sessionStore,
-            jiraController: JiraWebSession.shared.panelController,
-            ticketWorkflowStore: ticketWorkflowStore
+            jiraController: JiraWebSession.shared.panelController
         )
     }
 

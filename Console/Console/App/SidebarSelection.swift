@@ -6,7 +6,6 @@ enum SidebarSelection: String, CaseIterable, Identifiable {
     case next
     case brief
     case jira
-    case ticketWork
     case mergeRequests
     case commands
     case aiProvider
@@ -21,7 +20,6 @@ enum SidebarSelection: String, CaseIterable, Identifiable {
         case .next: return "Next"
         case .brief: return "Brief"
         case .jira: return "JIRA"
-        case .ticketWork: return "Ticket Work"
         case .mergeRequests: return "GitLab"
         case .commands: return "Commands"
         case .aiProvider: return "AI Provider"
@@ -36,7 +34,6 @@ enum SidebarSelection: String, CaseIterable, Identifiable {
         case .next: return "arrow.forward.circle"
         case .brief: return "sun.max"
         case .jira: return "j.square"
-        case .ticketWork: return "checklist"
         case .mergeRequests: return "arrow.triangle.merge"
         case .commands: return "list.bullet.rectangle"
         case .aiProvider: return "brain"

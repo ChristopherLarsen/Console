@@ -102,7 +102,7 @@ final class DeveloperActionTests: XCTestCase {
 
     func testNumberedNavigationShortcutsKeepTheirDestinations() {
         let expected: [SidebarSelection] = [
-            .home, .next, .brief, .jira, .ticketWork,
+            .home, .next, .brief, .jira,
             .sessions, .mergeRequests, .commands,
             .aiProvider
         ]
@@ -193,7 +193,7 @@ final class DeveloperActionTests: XCTestCase {
         )
         XCTAssertEqual(
             DeveloperActionCatalog.item(for: .newGeneralSession, in: empty).disabledReason,
-            "Add a workspace folder in Settings → Sessions."
+            "Choose a Session Folder in Settings → Claude."
         )
         XCTAssertEqual(
             DeveloperActionCatalog.item(for: .openWorkspaceInXcode, in: empty).disabledReason,
@@ -495,7 +495,8 @@ final class DeveloperActionTests: XCTestCase {
     private func addWorkspace(_ name: String) -> SessionWorkspace {
         let directory = tmpRoot.appendingPathComponent(name, isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return workspaceStore.add(name: name, directoryURL: directory)
+        workspaceStore.setDefaultFolderPath(directory.path)
+        return workspaceStore.defaultFolder!
     }
 
     private func validProfile(

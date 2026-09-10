@@ -15,7 +15,7 @@ struct IOSProjectSettingsSection: View {
     var body: some View {
         Section {
             if workspaceStore.workspaces.isEmpty {
-                Text("Add a workspace folder under Sessions to save an iOS project profile.")
+                Text("Choose a Session Folder in Settings → Claude to save an iOS project profile.")
                     .foregroundStyle(.secondary)
             } else {
                 workspacePicker

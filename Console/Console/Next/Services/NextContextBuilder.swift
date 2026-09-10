@@ -24,20 +24,10 @@ struct NextContextSnapshot: Equatable, Sendable {
         }
     }
 
-    /// Actionable tracked-workflow steps (UUIDs only in navigation targets).
-    struct WorkflowStepInfo: Equatable, Sendable {
-        let workflowID: UUID
-        let stepID: UUID
-        let stageDisplayName: String
-        let stepTitle: String
-        let isBlocked: Bool
-    }
-
     var reviewItems: [MergeRequestSummary] = []
     var authoredItems: [MergeRequestSummary] = []
     var sessions: [SessionInfo] = []
     var tickets: [JiraTicketSummary] = []
-    var workflowSteps: [WorkflowStepInfo] = []
 
     var reviewsStatus: NextSourceStatus = .current
     var authoredStatus: NextSourceStatus = .current
@@ -46,7 +36,7 @@ struct NextContextSnapshot: Equatable, Sendable {
 
     var isEmpty: Bool {
         reviewItems.isEmpty && authoredItems.isEmpty && sessions.isEmpty
-            && tickets.isEmpty && workflowSteps.isEmpty
+            && tickets.isEmpty
     }
 
     var liveSessionStates: [UUID: DisplayedSessionState] {
@@ -94,17 +84,6 @@ enum NextContextBuilder {
                 sessionName: session.name,
                 sessionID: session.id,
                 openTarget: .session(id: session.id)
-            )
-        }
-
-        if let step = snapshot.workflowSteps.first(where: { !$0.isBlocked }) {
-            return NextTask(
-                kind: .ticketWorkflowStep,
-                headline: "Continue \(step.stageDisplayName)",
-                lines: [step.stepTitle],
-                workflowID: step.workflowID,
-                stepID: step.stepID,
-                openTarget: .ticketWorkflow(workflowID: step.workflowID, stepID: step.stepID)
             )
         }
 

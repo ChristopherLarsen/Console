@@ -97,6 +97,21 @@ enum AttentionChannel: Sendable, Equatable {
         }
     }
 
+    /// Review-column helper: a host-rendered review state meaning the author
+    /// still owes changes, normalized to the two display labels Console
+    /// understands. Console cannot confirm who left the review — callers must
+    /// disclose that limitation, never claim "reviewed by you".
+    static func awaitingAuthorReviewState(
+        _ reviewDisplayState: String?
+    ) -> (label: String, channel: AttentionChannel)? {
+        guard nonEmpty(reviewDisplayState) != nil else { return nil }
+        switch normalized(reviewDisplayState) {
+        case "changes requested": return ("Changes requested", .needsYou)
+        case "discussion": return ("Discussion", .needsYou)
+        default: return nil
+        }
+    }
+
     // MARK: - Red attention badge
 
     /// Whether one JIRA ticket warrants the red badge: High/Highest priority,

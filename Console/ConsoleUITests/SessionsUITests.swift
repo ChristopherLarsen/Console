@@ -238,8 +238,8 @@ final class SessionsUITests: XCTestCase {
         let focusToggle = element("Sessions.FocusToggle")
         XCTAssertTrue(focusToggle.waitForExistence(timeout: 5), "Focus Session control is present")
 
-        let terminalToggle = element("Main Terminal")
-        XCTAssertTrue(terminalToggle.waitForExistence(timeout: 5), "Main Terminal sidebar item stays mounted")
+        let terminalToggle = element("Terminal")
+        XCTAssertTrue(terminalToggle.waitForExistence(timeout: 5), "Terminal sidebar item stays mounted")
 
         app.activate()
         toggleFocusSessionChrome()
@@ -260,7 +260,7 @@ final class SessionsUITests: XCTestCase {
         XCTAssertFalse(element("Sessions.ShowListButton").exists, "focus mode does not leave a list rail")
         XCTAssertTrue(header.waitForExistence(timeout: 5), "selected session terminal remains")
         XCTAssertTrue(focusToggle.waitForExistence(timeout: 5), "Focus Session toggle stays available")
-        XCTAssertTrue(terminalToggle.exists, "Main Terminal sidebar toggle stays mounted while the drawer is retracted")
+        XCTAssertTrue(terminalToggle.exists, "Terminal sidebar toggle stays mounted while the drawer is retracted")
 
         toggleFocusSessionChrome()
 
@@ -279,7 +279,7 @@ final class SessionsUITests: XCTestCase {
         )
         XCTAssertTrue(element("NewSessionButton").waitForExistence(timeout: 5))
         XCTAssertTrue(header.exists, "selected terminal remains after restore")
-        XCTAssertTrue(terminalToggle.exists, "Main Terminal sidebar toggle remains after restore")
+        XCTAssertTrue(terminalToggle.exists, "Terminal sidebar toggle remains after restore")
 
         app.typeKey("2", modifierFlags: .command)
         toggleFocusSessionChrome()

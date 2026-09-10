@@ -78,9 +78,8 @@ final class DeveloperActionRunner {
             hosts.layout.toggleFocusSession()
             hosts.sessionStore.focusSelectedTerminal()
             lastActionMessage = nil
-        case .newGeneralSession(let workspaceID):
-            var draft = hosts.launchCoordinator.draft(purpose: .general, source: nil)
-            draft.workspaceID = workspaceID
+        case .newGeneralSession:
+            let draft = hosts.launchCoordinator.draft(purpose: .general, source: nil)
             do {
                 _ = try await hosts.launchCoordinator.launch(draft: draft)
                 lastActionMessage = nil

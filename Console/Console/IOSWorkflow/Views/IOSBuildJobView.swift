@@ -15,7 +15,7 @@ struct IOSBuildJobView: View {
         @Bindable var simulatorModel = simulatorModel
         Section {
             if workspaceStore.workspaces.isEmpty && coordinator.jobs.isEmpty {
-                Text("Add a workspace and iOS project profile to run Build or Selected Tests.")
+                Text("Choose a Session Folder and iOS project profile to run Build or Selected Tests.")
                     .foregroundStyle(.secondary)
             } else {
                 if !workspaceStore.workspaces.isEmpty {

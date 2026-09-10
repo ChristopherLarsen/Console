@@ -2,51 +2,62 @@
 
 # Session Memory
 
-_Rewritten 2026-09-09 after adding browser-style tabs to the JIRA and GitLab sidebar destinations (uncommitted)._
+_Rewritten 2026-09-09 after the workspace → single Session Folder refactor
+(vx_planner/gpt-6-astra consulted, decisions A–F adopted). Uncommitted._
 
 ## Next Intended Move
 
-No open queue. Tab feature is implemented, built, and unit-tested but NOT
-committed (Christopher did not ask) and not pushed; `main` is still 1 commit
-ahead of `origin/main` from last session. Next: manual verification of tabs
-against the personal fixture sites (⌘T new tab, close, switching, deep links),
-then commit if Christopher asks.
+Manual verification: (1) Home unmounted-WebPage extraction still pending from
+earlier; (2) single Session Folder flow — Settings → Claude → Session Folder
+picker, fresh-install launch, migration from the old multi-workspace data
+(previous default adopted), launch refusal when unset; (3) Review column /
+GitLab flow. Then Christopher's call on committing the whole day's stack.
 
 ## Working Findings
 
-- Tab feature (this session):
-  - `Console/Console/Views/Components/BrowserTabStore.swift` (new): shared
-    `BrowserTab` + `@Observable BrowserTabStore` + `BrowserTabBar`. Pinned
-    tabs first (unclosable), dynamic tabs capped at 8, ⌘T opens, each tab =
-    own `WebPage` on the shared persistent data store, strictly memory-only.
-  - JIRA: `JiraWebSession.tabStore` (lazy) pins `shared.page` as tab 0
-    ("My Tickets"); Home cards + extraction stay bound to that page.
-    `loadIfNeeded` now always targets `session.page` so remounting never
-    yanks a free tab back to the configured list. Deep links select tab 0.
-    New JIRA tabs load the configured URL (UserDefaults read, normalized by
-    `JiraView.normalizedURL`).
-  - GitLab: `CodeHostWebSessionStore.tabStore` (lazy) pins reviews (0) and
-    authored (1) — the old segmented picker was REPLACED by the tab strip.
-    New GitLab tabs load the configured reviews URL. Settings URL changes
-    reload their own list (legacy key → reviews). Deep-link kind hints
-    select the matching pinned tab.
-  - Tab switching remounts the WebView one runloop hop apart (macOS 26:
-    a WebPage attaches to only one live WebView) — same pattern as the
-    existing Home/destination swap; unmount-then-mount in both views.
-  - Accessibility ids preserved: `JiraWebView`, `JiraEmptyState`,
-    `MergeRequestsWebView`, `MergeRequestsEmptyState` (UI tests untouched).
-    `MergeRequestsListSelector` id is GONE (picker removed).
-  - Tests: new `BrowserTabStoreTests` (10 cases) green; full `ConsoleTests`
-    run: 1368 passed, 1 failed, 1 skipped.
-- `EndToEndIntegrationTests.testNormalCommandFlow_EngineRemainsStableAcrossSessions`
-  fails with a 5s "Command received" wait timeout on PRISTINE main too
-  (re-confirmed 2026-09-09 via stash) — pre-existing flake, same family as
-  the documented `testFieldDictation_ActivatesAndReleasesCleanly` flake.
-- overview.md invariant 2 updated for tabs (same-session edit).
-- WebKit SIGTRAP host crashes seen at 14:27/14:37 during test runs
-  (SwiftUI PlatformViewChild.updateValue → WebKit representable); no crash
-  since 14:37 despite repeated runs. Likely the known launch flake family;
-  watch for recurrence.
+- Workspace → Session Folder refactor (this session):
+  - `SessionWorkspaceStore` is now a SINGLE-folder adapter: authoritative
+    keys `sessions.defaultFolderPath` + `sessions.defaultFolderWorkspaceID`;
+    one `SessionWorkspace` entry with stable UUID per canonical path.
+    `setDefaultFolderPath(nil)` clears. One-time migration: previous default
+    workspace (or sole legacy entry) adopted with its UUID preserved;
+    ambiguous legacy data (several entries, no default) left unset; marker
+    `sessionWorkspaces.migratedToDefaultFolder` prevents re-import after a
+    clear. Legacy keys deleted on migration.
+  - Launch: `SessionLaunchCoordinator.launch` = validate single folder →
+    performLaunch. New LaunchErrors: sessionFolderMissing /
+    sessionFolderUnavailable / sessionFolderNotAGitRepository (reviews only;
+    general works in non-git folders). NO home-dir fallback, ever.
+  - DELETED: 5-step resolution chain, learned associations, per-purpose
+    last-used, `PendingWorkspaceChoice`, `WorkspaceChoiceSheet`,
+    `SessionsSettingsSection`, `SessionDraft.workspaceID`,
+    `confirmWorkspaceChoice`/`canConfirmWorkspace`/`workspaceBlockingReason`
+    /`restoreChoiceSheetIfNeeded` (now `restoreCollisionSheetIfNeeded`),
+    `RepositoryIdentityResolver` use in the coordinator (class + tests kept).
+    Shared-checkout collision flow KEPT (PendingSharedCheckoutWarning lost
+    workspaceID/rememberingAssociation fields).
+  - Settings → Claude section now has the Session Folder row (Choose…/Clear,
+    orange validation), id Settings.Claude.SessionFolder{Choose,Clear,Path}.
+  - SessionIntentPickerView: workspace picker/overrides deleted; header shows
+    the one folder + inline Choose button; launcher launches directly, errors
+    surface inline with Settings route.
+  - Brief + iOS keep the workspace-ID contract via the adapter (0/1 entries).
+    Empty-state copy now points at "Settings → Claude". iOS profiles keyed by
+    the folder's stable UUID; different folder = fresh UUID = old profiles
+    orphaned (deliberate invalidation).
+  - Tests: SessionWorkspaceChooserTests deleted; SessionWorkspaceStoreTests
+    rewritten (set/clear/canonical/stable-ID/unavailable + 4 migration
+    tests); SessionLaunchCoordinatorTests rewritten around folder validation
+    (7 new tests replacing the resolution-order suite); SharedCheckoutWarning
+    helpers now `useSessionFolder` (linked-worktree distinctness test DELETED
+    — two workspaces unsupported). Full ConsoleTests: 1269 passed + 1 known
+    pre-existing flake (EndToEndIntegrationTests, fails on pristine main).
+- Home board + Sessions copy + URL fields (earlier this session): covered
+  Home WebViews REMOVED (macOS 26 WebView composites above SwiftUI — never
+  stack covered WebViews under SwiftUI chrome); "Sign in required" buttons;
+  card shadows; BrowserURLField address bars (Jira.URLField /
+  MergeRequests.URLField); "No Sessions"; + button after Sessions title.
+- vx_planner responses: /var/folders/…/opencode/vxplanner*/response.txt.
 
 ## Dead Ends
 
@@ -56,3 +67,9 @@ then commit if Christopher asks.
 - Full UITest suite remains forbidden.
 - WebKit launch SIGTRAP flake can hit test hosts → retry once before
   diagnosing.
+- OpenRouter streaming responses may contain raw control chars — jq chokes;
+  parse with python json fallback.
+- Edit-tool paths in this repo: Console/Console/Console/... (double Console);
+  wrong-depth paths intermittently "not found" but edit tool sometimes
+  auto-locates — verify with rg after edits.
+- Do NOT touch Console/SwiftTerm/ (vendored).

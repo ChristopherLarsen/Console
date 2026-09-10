@@ -188,7 +188,7 @@ enum DeveloperActionCatalog {
             return "Select a session before focusing."
         case .newGeneralSession:
             if snapshot.hasAvailableWorkspace, snapshot.workspaceID != nil { return nil }
-            return "Add a workspace folder in Settings → Sessions."
+            return "Choose a Session Folder in Settings → Claude."
         case .openWorkspaceInXcode:
             guard let path = snapshot.profile?.projectPath, IOSProjectCandidate(path: path) != nil else {
                 return "Choose an Xcode project in the selected workspace's iOS profile."

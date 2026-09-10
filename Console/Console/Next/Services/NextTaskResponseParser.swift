@@ -58,9 +58,6 @@ enum NextTaskResponseParser {
             guard let name = payload.session_name?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !name.isEmpty else { return nil }
             return NextTask(kind: kind, headline: headline, lines: lines, sessionName: name)
-        case .ticketWorkflowStep:
-            // Workflow steps are local-only; AI payloads must not invent UUID targets.
-            return nil
         case .newTicket:
             return NextTask(kind: kind, headline: headline, lines: lines)
         }
