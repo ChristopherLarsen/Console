@@ -32,6 +32,7 @@ struct SessionIntentPickerView: View {
     @State private var errorMessage: String?
     @State private var showsSettingsRoute = false
     @State private var showsPreviousSessions = false
+    @FocusState private var isInlineFieldFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -340,6 +341,7 @@ struct SessionIntentPickerView: View {
 
             TextField(placeholder, text: $inlineContext)
                 .textFieldStyle(.roundedBorder)
+                .focused($isInlineFieldFocused)
                 .onSubmit { submitInlineContext(purpose, parse) }
                 .accessibilityIdentifier("\(identifierPrefix).Field")
 
@@ -361,6 +363,12 @@ struct SessionIntentPickerView: View {
                 )
                 .accessibilityIdentifier("\(identifierPrefix).StartButton")
             }
+        }
+        .onAppear {
+            // The story number is the only input on this step; land the
+            // caret without a click. The async hop lets the popover finish
+            // presenting before focus lands.
+            DispatchQueue.main.async { isInlineFieldFocused = true }
         }
     }
 
