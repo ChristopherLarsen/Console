@@ -47,18 +47,20 @@ enum HomeCardMetrics {
 }
 
 extension View {
-    /// The shared card surface: `controlBackgroundColor` fill, no stroke,
-    /// a persistent one-point inset when `alertInset` is set (needs-you
-    /// sessions), and a one-point accent inset on hover.
+    /// The shared card surface: `controlBackgroundColor` fill unless
+    /// `fill` overrides it, no stroke, a persistent one-point inset when
+    /// `alertInset` is set (needs-you sessions), and a one-point accent
+    /// inset on hover.
     func homeCardSurface(
         hovering: Bool,
         alertInset: Color? = nil,
+        fill: Color? = nil,
         cornerRadius: CGFloat = HomeCardMetrics.cornerRadius
     ) -> some View {
         self
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(Color(nsColor: .controlBackgroundColor))
+                    .fill(fill ?? Color(nsColor: .controlBackgroundColor))
                     .shadow(color: .black.opacity(0.10), radius: 4, x: 0, y: 2)
             )
             .overlay {

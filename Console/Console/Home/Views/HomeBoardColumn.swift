@@ -252,10 +252,16 @@ struct HomeBoardTicketCard: View {
             cardAction?()
         }
         .onHover { hovering = $0 }
-        .homeCardSurface(hovering: hovering)
+        .homeCardSurface(hovering: hovering, fill: surfaceFill)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier("HomeBoardTicketCard")
+    }
+
+    /// Testing cards tint their surface light green (#E5FFE5); every other
+    /// state keeps the shared control-background fill.
+    private var surfaceFill: Color? {
+        channel == .testing ? AttentionChannel.testingCardFill : nil
     }
 
     private var accessibilityLabel: String {

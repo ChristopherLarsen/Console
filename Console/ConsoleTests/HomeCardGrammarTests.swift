@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Console
 
@@ -10,7 +11,8 @@ final class HomeCardGrammarTests: XCTestCase {
 
     func testTicketStatusChannels() {
         XCTAssertEqual(AttentionChannel.forTicketStatus("Blocked"), .needsYou)
-        XCTAssertEqual(AttentionChannel.forTicketStatus("Testing"), .inFlight)
+        XCTAssertEqual(AttentionChannel.forTicketStatus("Testing"), .testing)
+        XCTAssertEqual(AttentionChannel.forTicketStatus("testing"), .testing)
         XCTAssertEqual(AttentionChannel.forTicketStatus("In Review"), .inFlight)
         XCTAssertEqual(AttentionChannel.forTicketStatus("In Progress"), .active)
         XCTAssertEqual(AttentionChannel.forTicketStatus("Done"), .clear)
@@ -19,6 +21,11 @@ final class HomeCardGrammarTests: XCTestCase {
         // Unfamiliar vocabulary parks in grey rather than guessing.
         XCTAssertEqual(AttentionChannel.forTicketStatus("Some Custom Status"), .parked)
         XCTAssertEqual(AttentionChannel.forTicketStatus(nil), .parked)
+    }
+
+    func testTestingChannelUsesDarkGreenDistinctFromClear() {
+        XCTAssertEqual(AttentionChannel.testing.color, AttentionChannel.testingColor)
+        XCTAssertNotEqual(AttentionChannel.testingColor, .green)
     }
 
     // MARK: - Merge-request condition precedence

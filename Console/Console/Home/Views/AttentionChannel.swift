@@ -3,7 +3,7 @@ import SwiftUI
 /// The single attention channel every Home card renders as its 6pt dot and
 /// its tinted state text. One meaning per colour across all four panels
 /// (Design/HomeCards/DESIGN_PROMPT.md §3): red means "needs you", orange "in
-/// flight", blue "active", green "clear", grey "parked".
+/// flight", blue "active", dark green "testing", green "clear", grey "parked".
 ///
 /// This file is the only place a card decides a state colour. The session
 /// column of the table is owned by `DisplayedSessionState` and extended here;
@@ -12,19 +12,29 @@ import SwiftUI
 enum AttentionChannel: Sendable, Equatable {
     case needsYou
     case inFlight
+    case testing
     case active
     case clear
     case parked
+
+    /// Dark green (#006400) for the testing channel; the rest use system
+    /// palette colours.
+    static let testingColor = Color(red: 0, green: 0.392, blue: 0)
 
     var color: Color {
         switch self {
         case .needsYou: return .red
         case .inFlight: return .orange
+        case .testing: return Self.testingColor
         case .active: return .blue
         case .clear: return .green
         case .parked: return .gray
         }
     }
+
+    /// Card-surface fill when the testing channel applies: light green
+    /// (#E5FFE5); nil keeps the shared control-background surface.
+    static let testingCardFill = Color(red: 229.0 / 255.0, green: 1, blue: 229.0 / 255.0)
 
     // MARK: - Ticket status column
 
@@ -34,7 +44,9 @@ enum AttentionChannel: Sendable, Equatable {
         switch normalized(status) {
         case "blocked":
             return .needsYou
-        case "testing", "in review", "code review", "review":
+        case "testing":
+            return .testing
+        case "in review", "code review", "review":
             return .inFlight
         case "in progress", "in development":
             return .active

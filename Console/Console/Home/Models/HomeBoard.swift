@@ -120,7 +120,7 @@ enum HomeBoardBuilder {
             board.nextStory = nextStoryTicket(in: snapshot.jiraTickets)
             board.inProgressTickets = snapshot.jiraTickets.filter {
                 switch AttentionChannel.forTicketStatus($0.status) {
-                case .active, .inFlight: return true
+                case .active, .inFlight, .testing: return true
                 default: return false
                 }
             }

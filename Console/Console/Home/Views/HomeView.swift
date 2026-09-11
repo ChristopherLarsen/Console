@@ -235,7 +235,10 @@ struct HomeView: View {
     ) -> some View {
         let hasLiveSession = HomeStorySessionMatcher.sessionID(for: ticket, in: sessions) != nil
         let isLaunching = model.launchingTicketKeys.contains(ticket.key)
-        let inReview = AttentionChannel.forTicketStatus(ticket.status) == .inFlight
+        // Testing shares the in-review presentation: verbatim state line, no
+        // start-session button, whole-card tap opens the story.
+        let channel = AttentionChannel.forTicketStatus(ticket.status)
+        let inReview = channel == .inFlight || channel == .testing
         let actionLabel: String
         if isLaunching {
             actionLabel = "Starting…"
