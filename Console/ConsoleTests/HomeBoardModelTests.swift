@@ -46,11 +46,7 @@ final class HomeBoardModelTests: XCTestCase {
     private func makeModel(snapshot: HomeBoardSnapshot) -> HomeBoardModel {
         let model = HomeBoardModel(
             jiraController: JiraPanelController(),
-            reviewsController: CodeHostListPanelController(
-                kind: .reviewsRequested,
-                page: JiraWebSession.shared.page,
-                configuredURLStringProvider: { nil }
-            )
+            reviewsController: MRReviewScanController(urlProvider: { "" })
         )
         model.snapshotHandler = { snapshot }
         model.actionExecutor = { [weak self] action in self?.actions.append(action) }
@@ -193,11 +189,7 @@ final class HomeBoardModelTests: XCTestCase {
         let ticket = makeTicket(key: "PROJ-9")
         let model = HomeBoardModel(
             jiraController: JiraPanelController(),
-            reviewsController: CodeHostListPanelController(
-                kind: .reviewsRequested,
-                page: JiraWebSession.shared.page,
-                configuredURLStringProvider: { nil }
-            )
+            reviewsController: MRReviewScanController(urlProvider: { "" })
         )
         model.snapshotHandler = {
             HomeBoardSnapshot(jiraTickets: [ticket], jiraStatus: .current)

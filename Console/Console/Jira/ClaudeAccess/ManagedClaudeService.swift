@@ -178,13 +178,14 @@ final class ManagedClaudeService {
         let build = HeadlessInvocationBuilder.arguments(
             options: HeadlessInvocationBuilder.Options(
                 model: invocation.modelOverride ?? configuration.model,
-                maxTurns: configuration.maxTurns,
+                maxTurns: invocation.maxTurnsOverride ?? configuration.maxTurns,
                 allowedTools: invocation.allowedToolsOverride ?? configuration.allowedTools,
                 sessionID: invocation.sessionID,
                 resume: invocation.resume,
                 ephemeral: invocation.ephemeral,
                 expectedSchemaJSON: invocation.expectedSchemaJSON,
-                mcpConfigPath: nil
+                mcpConfigPath: nil,
+                toolPermissionRules: invocation.toolPermissionRules
             ),
             supportedFlags: flags
         )

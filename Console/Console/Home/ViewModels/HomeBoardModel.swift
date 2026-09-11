@@ -31,7 +31,7 @@ final class HomeBoardModel {
     @ObservationIgnored var refreshJiraHandler: (@MainActor () -> Void)?
 
     private let jiraController: JiraPanelController
-    private let reviewsController: CodeHostListPanelController
+    private let reviewsController: MRReviewScanController
 
     /// Story keys with a launch resolution in flight; the card shows
     /// "Starting…" and duplicate activations are dropped.
@@ -40,7 +40,7 @@ final class HomeBoardModel {
 
     init(
         jiraController: JiraPanelController,
-        reviewsController: CodeHostListPanelController
+        reviewsController: MRReviewScanController
     ) {
         self.jiraController = jiraController
         self.reviewsController = reviewsController
@@ -61,13 +61,13 @@ final class HomeBoardModel {
 
     static func gatherSnapshot(
         jiraController: JiraPanelController,
-        reviewsController: CodeHostListPanelController
+        reviewsController: MRReviewScanController
     ) -> HomeBoardSnapshot {
         HomeBoardSnapshot(
             jiraTickets: jiraController.state.tickets,
             jiraStatus: HomeSourceStatus.from(jiraController.state),
-            reviewItems: reviewsController.state.retainedItems,
-            reviewStatus: HomeSourceStatus.from(reviewsController.state)
+            reviewItems: reviewsController.items,
+            reviewStatus: reviewsController.status
         )
     }
 

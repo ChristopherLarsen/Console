@@ -128,6 +128,7 @@ enum HeadlessInvocationBuilder {
         var ephemeral: Bool
         var expectedSchemaJSON: String?
         var mcpConfigPath: String?
+        var toolPermissionRules: [String] = []
     }
 
     struct BuildResult: Equatable, Sendable {
@@ -158,6 +159,9 @@ enum HeadlessInvocationBuilder {
         }
         // Empty allowedTools disables all built-in tools via "--tools \"\"".
         include("--tools", options.allowedTools.joined(separator: ","))
+        if !options.toolPermissionRules.isEmpty {
+            include("--allowedTools", options.toolPermissionRules.joined(separator: ","))
+        }
         // Never leave headless runs waiting on a permission prompt.
         include("--permission-prompts", "none")
         if options.resume {

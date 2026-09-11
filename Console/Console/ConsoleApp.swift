@@ -88,10 +88,7 @@ struct ConsoleApp: App {
     @State private var iosBuildCoordinator: IOSBuildCoordinator
     @State private var launchCoordinator: SessionLaunchCoordinator
     @State private var managedClaudeService = ManagedClaudeService()
-    @State private var mrReviewScanScheduler = MRReviewScanScheduler(
-        scanPerformer: { trigger in await MergeRequestListSession.shared.refreshReviewsList(trigger: trigger) },
-        dispositions: MergeRequestListSession.shared.dispositions
-    )
+    @State private var mrReviewScanScheduler = MRReviewScanScheduler()
     @State private var sessionWorkspaceLayout = SessionWorkspaceLayoutController()
     @State private var developerActions: DeveloperActionRunner
     private var syntheticTranscriptSource: SyntheticTranscriptSource?
@@ -301,7 +298,6 @@ struct ConsoleApp: App {
                     // The scan scheduler owns no child processes; stopping it
                     // only cancels its timer loop and defaults observation.
                     activeMRReviewScanScheduler.stop()
-                    activeMRReviewScanScheduler.dispositions?.shutdown()
                 }
             }
         }
@@ -729,7 +725,7 @@ struct ConsoleApp: App {
     private func startMRReviewScansIfNeeded() {
         guard !Self.isRunningUnitTests else { return }
         let service = managedClaudeService
-        mrReviewScanScheduler.dispositions?.configure { invocation in
+        mrReviewScanScheduler.source.configure { invocation in
             try await service.perform(invocation)
         }
         mrReviewScanScheduler.start()

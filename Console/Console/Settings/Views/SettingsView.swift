@@ -12,8 +12,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.mrScanEnabledKey) private var mrScanEnabled: Bool = false
     @AppStorage(AppSettings.mrScanIntervalMinutesKey) private var mrScanIntervalMinutes: Int = AppSettings.mrScanIntervalMinutesDefault
     @AppStorage(AppSettings.mrScanModelKey) private var mrScanModel: String = AppSettings.mrScanModelDefault
-    @AppStorage(AppSettings.mrDispositionEnabledKey) private var mrDispositionEnabled: Bool = true
-    @AppStorage(AppSettings.mrDispositionPromptKey) private var mrDispositionPrompt: String = MRDispositionPrompt.defaultText
+    @AppStorage(MRReviewTriagePrompt.settingsKey) private var mrDispositionPrompt: String = MRReviewTriagePrompt.defaultText
     @State private var dispositionPromptDraft = ""
 
     @AppStorage(AppSettings.aiProviderEnabledKey) private var aiProviderEnabled: Bool = false
@@ -302,11 +301,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("MRScanIntervalPicker")
             }
 
-            Toggle("AI Disposition", isOn: $mrDispositionEnabled)
-                .themedToggleStyle()
-                .accessibilityIdentifier("MRDispositionEnabledToggle")
-
-            Text("First Console reads GitLab cards. When enabled, Claude classifies their disposition using the extracted fields. This also applies to manual refreshes when periodic scanning is off.")
+            Text("Claude uses glab to discover and triage MRs within your GitLab reviews URL scope. Reads metadata, approvals, discussions and commit history, never diffs. Home checks stale results on entry; manual refresh works even when periodic scanning is off. Requires glab installed and authenticated for your GitLab host.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -333,21 +328,20 @@ struct SettingsView: View {
                     )
                     .focused($isMRScanModelFocused)
                     .frame(maxWidth: .infinity)
-                    .disabled(!mrDispositionEnabled)
                     .accessibilityIdentifier("MRScanModelField")
                 }
 
                 HStack {
                     Spacer()
-                    Text("Uses managed Claude access; default haiku. Missing evidence produces Unknown.")
+                    Text("Uses managed Claude access; default haiku. Failed or incomplete scans keep previous cards.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            DisclosureGroup("AI Disposition prompt") {
+            DisclosureGroup("MR discovery and triage prompt") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Customize only if necessary. The structured response contract is appended automatically and cannot be changed here. MR fields are sent as data, not instructions.")
+                    Text("The JSON response contract is appended automatically. The former scraped-card prompt is retained in preferences but is no longer used for Home reviews.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     TextEditor(text: $dispositionPromptDraft)
@@ -357,15 +351,15 @@ struct SettingsView: View {
                     HStack {
                         Button("Save Prompt") {
                             let trimmed = dispositionPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                            mrDispositionPrompt = trimmed.isEmpty ? MRDispositionPrompt.defaultText : dispositionPromptDraft
+                            mrDispositionPrompt = trimmed.isEmpty ? MRReviewTriagePrompt.defaultText : dispositionPromptDraft
                             dispositionPromptDraft = mrDispositionPrompt
                         }
                         .disabled(dispositionPromptDraft == mrDispositionPrompt)
                         .accessibilityIdentifier("MRDispositionSavePromptButton")
 
                         Button("Restore Default Prompt") {
-                            mrDispositionPrompt = MRDispositionPrompt.defaultText
-                            dispositionPromptDraft = MRDispositionPrompt.defaultText
+                            mrDispositionPrompt = MRReviewTriagePrompt.defaultText
+                            dispositionPromptDraft = MRReviewTriagePrompt.defaultText
                         }
                         .accessibilityIdentifier("MRDispositionRestorePromptButton")
                     }

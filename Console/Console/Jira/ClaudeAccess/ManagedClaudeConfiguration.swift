@@ -120,6 +120,8 @@ struct ClaudeOperationInvocation: Sendable {
     let ephemeral: Bool
     let modelOverride: String?
     let allowedToolsOverride: [String]?
+    let toolPermissionRules: [String]
+    let maxTurnsOverride: Int?
     let requiredFlags: Set<String>
     let deadline: Date
 
@@ -132,6 +134,8 @@ struct ClaudeOperationInvocation: Sendable {
         ephemeral: Bool = true,
         modelOverride: String? = nil,
         allowedToolsOverride: [String]? = nil,
+        toolPermissionRules: [String] = [],
+        maxTurnsOverride: Int? = nil,
         requiredFlags: Set<String> = [],
         deadline: Date
     ) {
@@ -143,6 +147,8 @@ struct ClaudeOperationInvocation: Sendable {
         self.ephemeral = ephemeral
         self.modelOverride = modelOverride
         self.allowedToolsOverride = allowedToolsOverride
+        self.toolPermissionRules = toolPermissionRules
+        self.maxTurnsOverride = maxTurnsOverride
         self.requiredFlags = requiredFlags
         self.deadline = deadline
     }

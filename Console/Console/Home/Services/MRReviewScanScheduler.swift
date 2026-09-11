@@ -3,8 +3,7 @@ import Foundation
 /// Cadence owner for the Home Review column's automated GitLab scans.
 ///
 /// Fires the scan action on a user-configured interval (default 15 minutes)
-/// when the scans are enabled and the Web View GitLab Reviews URL is set.
-/// Fresh deterministic extractions independently trigger AI Disposition.
+/// when scans are enabled and the GitLab reviews URL is set.
 ///
 /// Guards: never two scans in flight, never a scan while disabled or
 /// unconfigured. A Settings change restarts the loop so a new interval or
@@ -13,8 +12,7 @@ import Foundation
 @Observable
 final class MRReviewScanScheduler {
 
-    /// The scan action. Production refreshes the shared reviews-requested
-    /// list extraction; tests substitute a recorder.
+    /// Production runs the glab AI source; tests substitute a recorder.
     typealias ScanPerformer = @MainActor () async -> Void
     typealias ScanAction = @MainActor (MRReviewScanTrigger) async -> MRReviewScanOutcome
 
@@ -24,13 +22,14 @@ final class MRReviewScanScheduler {
     private(set) var lastScanStartedAt: Date?
     private(set) var lastScanFinishedAt: Date?
     private(set) var lastOutcome: MRReviewScanOutcome?
-    let dispositions: MRReviewDispositionController?
+    let source: MRReviewScanController
 
     // MARK: - Configuration seams
 
     private let defaults: UserDefaults
-    private let reviewsURLProvider: () -> String
+    private let reviewsURLProvider: @MainActor () -> String
     private let performer: ScanAction
+    private let requiresGLabPreflight: Bool
     private let now: () -> Date
     private let sleep: (TimeInterval) async -> Void
     private let notificationCenter: NotificationCenter
@@ -51,26 +50,28 @@ final class MRReviewScanScheduler {
 
     init(
         defaults: UserDefaults = .standard,
-        reviewsURLProvider: @escaping () -> String = { GitLabConfiguration.effectiveReviewsURLString() },
+        reviewsURLProvider: @escaping @MainActor () -> String = { GitLabConfiguration.effectiveReviewsURLString() },
         performer: ScanPerformer? = nil,
         scanPerformer: ScanAction? = nil,
-        dispositions: MRReviewDispositionController? = nil,
+        source: MRReviewScanController? = nil,
         now: @escaping () -> Date = { Date() },
         sleep: @escaping (TimeInterval) async -> Void = { interval in
             try? await Task.sleep(nanoseconds: UInt64(max(0, interval) * 1_000_000_000))
         },
         notificationCenter: NotificationCenter = .default
     ) {
+        let source = source ?? MRReviewScanController.shared
         self.defaults = defaults
         self.reviewsURLProvider = reviewsURLProvider
+        self.requiresGLabPreflight = performer == nil && scanPerformer == nil
         self.performer = scanPerformer ?? { trigger in
             if let performer {
                 await performer()
                 return .refreshed(0)
             }
-            return await MergeRequestListSession.shared.refreshReviewsList(trigger: trigger)
+            return await source.scan(trigger: trigger)
         }
-        self.dispositions = dispositions
+        self.source = source
         self.now = now
         self.sleep = sleep
         self.notificationCenter = notificationCenter
@@ -113,16 +114,23 @@ final class MRReviewScanScheduler {
             return
         }
         lastSettingsSignature = signature
+        source.settingsChanged()
         spawnLoop()
     }
 
     /// Explicit refresh bypasses the timer toggle and browsing deferral.
     func scanNow() {
+        guard !requiresGLabPreflight || source.checkGLabAvailability(manual: true) else {
+            lastOutcome = .failed
+            return
+        }
         beginScanIfEligible(manual: true, trigger: .manual)
     }
 
-    /// Home entry checks are not a timer, but still respect user browsing.
+    /// Home entry checks run only when stale, independently of the timer toggle.
     func scanOnAppearance() {
+        guard HomeSourcesCoordinator.needsAutoRefresh(lastRefreshedAt: source.lastSuccessfulUpdate, now: now())
+                || source.status.check == .stale else { return }
         beginScanIfEligible(manual: true, trigger: .background)
     }
 
@@ -139,11 +147,11 @@ final class MRReviewScanScheduler {
 
     /// True when scans are enabled and the reviews URL is usable.
     var isEligibleToScan: Bool {
-        isScanEnabled && ListURLNormalization.url(from: reviewsURLProvider()) != nil
+        isScanEnabled && MRReviewTriagePrompt.configuredURL(reviewsURLProvider()) != nil
     }
 
     private var settingsSignature: String {
-        "\(isScanEnabled)|\(effectiveIntervalMinutes)|\(reviewsURLProvider())"
+        "\(isScanEnabled)|\(effectiveIntervalMinutes)|\(reviewsURLProvider())|\(source.settingsSignature)"
     }
 
     // MARK: - Loop
@@ -197,7 +205,7 @@ final class MRReviewScanScheduler {
     /// and the second call is observably skipped.
     private func beginScanIfEligible(manual: Bool = false, trigger: MRReviewScanTrigger = .background) {
         guard manual || isScanEnabled else { return }
-        guard ListURLNormalization.url(from: reviewsURLProvider()) != nil else {
+        guard MRReviewTriagePrompt.configuredURL(reviewsURLProvider()) != nil else {
             lastOutcome = .unconfigured
             return
         }

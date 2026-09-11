@@ -45,6 +45,8 @@ struct MergeRequestSummary: Identifiable, Equatable, Sendable {
     var targetVersionText: String? = nil
     let mergeRequestURL: URL
     let sourceOrder: Int
+    var triageCategory: MRReviewCategory? = nil
+    var triageReason: String? = nil
 }
 
 /// Why a manual refresh did not produce fresh cards. Values are fixed,

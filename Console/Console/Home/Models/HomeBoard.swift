@@ -152,6 +152,10 @@ enum HomeBoardBuilder {
         now: Date = Date()
     ) -> [MergeRequestSummary] {
         items.sorted { lhs, rhs in
+            if let left = lhs.triageCategory, let right = rhs.triageCategory {
+                if left != right { return left.priority < right.priority }
+                return lhs.sourceOrder < rhs.sourceOrder
+            }
             let lhsAwaiting = AttentionChannel.awaitingAuthorReviewState(lhs.reviewDisplayState) != nil
             let rhsAwaiting = AttentionChannel.awaitingAuthorReviewState(rhs.reviewDisplayState) != nil
             if lhsAwaiting != rhsAwaiting { return lhsAwaiting }

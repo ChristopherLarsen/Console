@@ -241,105 +241,83 @@ struct HomeBoardTicketCard: View {
     }
 }
 
-/// One review-request card: grey dot, host state or explicitly labelled AI
-/// disposition, project, target version and title. No personal review claim.
+/// AI triage card with separate browser and review-session actions.
 struct HomeBoardReviewRequestCard: View {
     let item: MergeRequestSummary
-    /// Host-rendered state, or an AI-prefixed disposition with host tooltip.
-    let stateLabel: String
-    var disposition: MRReviewDisposition? = nil
-    let actionLabel: String
-    let action: () -> Void
+    let isLaunching: Bool
+    let open: () -> Void
+    let startReview: () -> Void
 
     @State private var hovering = false
 
-    /// Project plus host-rendered target version, so the queue's version
-    /// ordering is legible on the card.
-    private var projectLine: String? {
-        let parts = [item.projectDisplayName, item.targetVersionText].compactMap { $0 }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
     var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: HomeCardMetrics.rowGap) {
-                HStack(spacing: 5) {
-                    HomeCardGlyph(color: .gray, needsYou: false)
+        VStack(alignment: .leading, spacing: HomeCardMetrics.rowGap) {
+            HStack(spacing: 5) {
+                HomeCardGlyph(color: categoryColor, needsYou: item.triageCategory != .alreadyReviewed)
 
-                    if let iid = item.iidText {
-                        Text("!\(iid)")
-                            .font(HomeCardMetrics.identityFont)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-
-                    Text(stateLabel)
-                        .font(HomeCardMetrics.stateFont)
-                        .foregroundStyle(dispositionColor)
-                        .help(disposition == nil ? stateLabel : "AI Disposition. GitLab: \(item.reviewDisplayState ?? "No review state displayed")")
-                        .lineLimit(1)
-
-                    Spacer(minLength: 4)
-
-                    if let age = RelativeAge.compact(from: item.updatedText) {
-                        Text(age)
-                            .font(HomeCardMetrics.ageFont)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-
-                Text(item.title)
-                    .font(HomeCardMetrics.titleFont)
-                    .foregroundStyle(.primary)
-                    .lineLimit(3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                if let project = projectLine {
-                    Text(project)
-                        .font(.system(size: 10))
+                if let iid = item.iidText {
+                    Text("!\(iid)")
+                        .font(HomeCardMetrics.identityFont)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
 
-                HStack(spacing: 3) {
-                    Spacer(minLength: 0)
-                    Text(actionLabel)
-                        .font(.system(size: 10, weight: .medium))
+                Text(item.triageCategory?.title ?? "Review")
+                    .font(HomeCardMetrics.stateFont)
+                    .foregroundStyle(categoryColor)
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                if let age = RelativeAge.compact(from: item.updatedText) {
+                    Text(age)
+                        .font(HomeCardMetrics.ageFont)
                         .foregroundStyle(.secondary)
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
-            .padding(HomeCardMetrics.padding)
-            .frame(maxWidth: .infinity, minHeight: HomeCardMetrics.minHeight, alignment: .leading)
+
+            Text(item.title)
+                .font(HomeCardMetrics.titleFont)
+                .foregroundStyle(.primary)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text([item.projectDisplayName, item.authorDisplayName].compactMap { $0 }.joined(separator: " · "))
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+
+            if let reason = item.triageReason {
+                Text(reason)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .help(reason)
+            }
+
+            HStack(spacing: 12) {
+                Spacer(minLength: 0)
+                Button("Open MR", action: open)
+                Button(isLaunching ? "Starting…" : "Start Review", action: startReview)
+                    .disabled(isLaunching)
+            }
+            .font(.system(size: 10, weight: .medium))
+            .buttonStyle(.borderless)
         }
-        .buttonStyle(.plain)
+        .padding(HomeCardMetrics.padding)
+        .frame(maxWidth: .infinity, minHeight: HomeCardMetrics.minHeight, alignment: .leading)
         .onHover { hovering = $0 }
         .homeCardSurface(hovering: hovering)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityLabel)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("HomeBoardReviewCard")
     }
 
-    private var accessibilityLabel: String {
-        [
-            item.iidText.map { "MR !\($0)" },
-            item.title,
-            stateLabel,
-            actionLabel,
-        ]
-        .compactMap { $0 }
-        .joined(separator: ", ")
-    }
-
-    private var dispositionColor: Color {
-        switch disposition {
-        case .approved, .merged: return AttentionChannel.clear.color
-        case .changesRequested: return AttentionChannel.inFlight.color
-        case .draft, .closed, .unknown: return .secondary
-        case .reviewRequired, nil: return AttentionChannel.needsYou.color
+    private var categoryColor: Color {
+        switch item.triageCategory {
+        case .activeReview: return .orange
+        case .needsReview: return AttentionChannel.needsYou.color
+        case .alreadyReviewed, nil: return .secondary
         }
     }
 }

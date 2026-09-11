@@ -1,13 +1,6 @@
 import SwiftUI
 
-/// The Home work board: Next, In Progress, and Review. Data comes from the
-/// process-scoped Jira panel controller and the reviews-requested MR list.
-/// Home mounts NO WebView of its own: the retained `WebPage`s stay hosted by
-/// the JIRA and GitLab destinations ("always active" = process-scoped
-/// controllers keeping page, session, and last extraction alive), and Home
-/// reads the controllers' state plus headless extraction results. Sign-in is
-/// never revealed here — the columns show a "Sign in to JIRA" / "Sign in to
-/// GitLab" button that opens the owning destination.
+/// Home reads the Jira panel and the memory-only glab AI review queue.
 struct HomeView: View {
     @AppStorage("webViewJiraURL") private var webViewJiraURL: String = ""
     @Environment(SessionStore.self) private var sessionStore: SessionStore?
@@ -16,13 +9,13 @@ struct HomeView: View {
 
     @State private var sources: HomeSourcesCoordinator
     @State private var model: HomeBoardModel
+    @State private var launchingReviews: Set<URL> = []
 
     init() {
         let jiraController = JiraWebSession.shared.panelController
-        let reviewsController = MergeRequestListSession.shared.controller(for: .reviewsRequested)
+        let reviewsController = MRReviewScanController.shared
         _sources = State(initialValue: HomeSourcesCoordinator(
             jiraController: jiraController,
-            reviewsController: reviewsController,
             jiraURLProvider: { UserDefaults.standard.string(forKey: "webViewJiraURL") }
         ))
         _model = State(initialValue: HomeBoardModel(
@@ -43,6 +36,14 @@ struct HomeView: View {
                 sources.jiraURLChanged()
             }
             .accessibilityIdentifier("HomeDashboard")
+            .alert("Review scan unavailable", isPresented: Binding(
+                get: { reviewScanScheduler?.source.manualError != nil },
+                set: { if !$0 { reviewScanScheduler?.source.manualError = nil } }
+            )) {
+                Button("OK") { reviewScanScheduler?.source.manualError = nil }
+            } message: {
+                Text(reviewScanScheduler?.source.manualError ?? "")
+            }
     }
 
     // MARK: - Board
@@ -146,11 +147,10 @@ struct HomeView: View {
 
     // MARK: In Progress
 
-    /// Jira WIP limit: at most six in-progress stories render on the board.
-    private static let maxInProgressStories = 6
+    /// Display limits apply after the full queues have been ordered.
+    static let maxInProgressStories = 9
 
-    /// Review limit: at most six merge requests render on the board.
-    private static let maxReviewRequests = 6
+    static let maxReviewRequests = 9
 
     private func inProgressColumn(_ board: HomeBoard, sessions: [ConsoleSession]) -> some View {
         HomeBoardColumn(
@@ -260,8 +260,8 @@ struct HomeView: View {
             title: "Review",
             detail: reviewDetail(board),
             health: board.reviewHealth,
-            recovery: gitLabRecovery(for: board.reviewHealth),
-            onRecovery: { recover(gitLabRecovery(for: board.reviewHealth)) },
+            recovery: board.reviewHealth == .unconfigured ? .setUpGitLab : nil,
+            onRecovery: { model.openSettings() },
             statusMessage: reviewScanStatus,
             content: {
                 if board.reviewQueue.isEmpty {
@@ -278,12 +278,10 @@ struct HomeView: View {
                     ) { index, item in
                         HomeBoardReviewRequestCard(
                             item: item,
-                            stateLabel: reviewStateLabel(item),
-                            disposition: reviewScanScheduler?.dispositions?.disposition(for: item),
-                            actionLabel: "Open review"
-                        ) {
-                            model.openReview(item)
-                        }
+                            isLaunching: launchingReviews.contains(item.id),
+                            open: { model.openReview(item) },
+                            startReview: { startReview(item) }
+                        )
                         .accessibilityIdentifier("HomeReviewCard.\(index)")
                     }
 
@@ -298,10 +296,10 @@ struct HomeView: View {
             },
             accessory: {
                 HStack(spacing: 6) {
-                    if isReviewRefreshing || reviewScanScheduler?.dispositions?.isClassifying == true {
+                    if isReviewRefreshing {
                         ProgressView()
                             .controlSize(.mini)
-                            .accessibilityLabel(isReviewRefreshing ? "Checking GitLab" : "Classifying review dispositions")
+                            .accessibilityLabel("Triaging GitLab reviews")
                     }
                     HomeRefreshAgeLabel(
                         lastRefresh: model.snapshot().reviewStatus.lastSuccessfulExtraction
@@ -326,41 +324,21 @@ struct HomeView: View {
     }
 
     private var isReviewRefreshing: Bool {
-        reviewScanScheduler?.isScanning == true || MergeRequestListSession.shared.controller(for: .reviewsRequested).isRefreshing
+        reviewScanScheduler?.isScanning == true
     }
 
     private var reviewScanStatus: String? {
-        if isReviewRefreshing { return "Checking GitLab…" }
-        let controller = MergeRequestListSession.shared.controller(for: .reviewsRequested)
-        if controller.lastRefreshTimedOut {
-            return MRReviewScanOutcome.timedOut.message
-        }
-        let sourceMessage: String?
-        // Live source state wins over a previous scan outcome, especially
-        // when sign-in recovery finishes after the scheduler has returned.
-        switch controller.state {
-        case .unconfigured: sourceMessage = MRReviewScanOutcome.unconfigured.message
-        case .authenticationRequired: sourceMessage = MRReviewScanOutcome.signInRequired.message
-        case .unsupportedPage: sourceMessage = MRReviewScanOutcome.unsupportedPage.message
-        case .extractionFailed: sourceMessage = MRReviewScanOutcome.failed.message
-        case .stale(_, _, let reason): sourceMessage = "\(reason.reasonText). Showing previous cards; refresh to retry."
-        case .loaded(let items, _): sourceMessage = MRReviewScanOutcome.refreshed(items.count).message
-        case .empty: sourceMessage = MRReviewScanOutcome.refreshed(0).message
-        case .loadingPage, .extracting: sourceMessage = MRReviewScanOutcome.cancelled.message
-        }
-        let deferred = reviewScanScheduler?.lastOutcome == .deferred
-            && (reviewScanScheduler?.lastScanStartedAt ?? .distantPast) >= (controller.state.refreshedAt ?? .distantPast)
-        let message = [deferred ? MRReviewScanOutcome.deferred.message : sourceMessage, reviewScanScheduler?.dispositions?.message]
-            .compactMap { $0 }.joined(separator: " ")
-        return message.isEmpty ? nil : message
+        if isReviewRefreshing { return "Triaging GitLab reviews…" }
+        return reviewScanScheduler?.source.message ?? reviewScanScheduler?.lastOutcome?.message
     }
 
-    private func reviewStateLabel(_ item: MergeRequestSummary) -> String {
-        if let disposition = reviewScanScheduler?.dispositions?.disposition(for: item) {
-            return "AI: \(disposition.rawValue)"
+    private func startReview(_ item: MergeRequestSummary) {
+        guard let iid = item.iidText, !launchingReviews.contains(item.id) else { return }
+        launchingReviews.insert(item.id)
+        Task {
+            defer { launchingReviews.remove(item.id) }
+            await launchCoordinator.beginMergeRequestReview(iid: iid, title: item.title, url: item.mergeRequestURL)
         }
-        return AttentionChannel.awaitingAuthorReviewState(item.reviewDisplayState)?.label
-            ?? item.reviewDisplayState ?? "Review requested"
     }
 
     /// Quiet count only — the column title already names the source.
@@ -384,15 +362,6 @@ struct HomeView: View {
         case .unconfigured: return .setUpJira
         case .signedOut: return nil // JIRA sign-in is surfaced by the Next story slot
         case .unavailable: return .openJira
-        case .ready, .updating, .stale, .loading: return nil
-        }
-    }
-
-    private func gitLabRecovery(for health: HomeBoardHealth) -> HomeBoardRecovery? {
-        switch health {
-        case .unconfigured: return .setUpGitLab
-        case .signedOut: return .signInGitLab // Next no longer shows GitLab; Review owns sign-in
-        case .unavailable: return .openGitLab
         case .ready, .updating, .stale, .loading: return nil
         }
     }
@@ -428,9 +397,7 @@ struct HomeView: View {
         model.refreshJiraHandler = { [sources] in
             sources.refreshJira()
         }
-        // Entry-time staleness pass for the Review column goes through the
-        // scan scheduler so its in-flight guard and retained-page-away
-        // protections apply.
+        // The AI scheduler owns review staleness and deduplicates refreshes.
         sources.refreshReviewsHandler = { [reviewScanScheduler] in
             reviewScanScheduler?.scanOnAppearance()
         }
