@@ -85,7 +85,8 @@ struct HomeBoard: Equatable, Sendable {
     /// Every review-request row, most urgent first. The most urgent row is
     /// the "next MR to review".
     var reviewQueue: [MergeRequestSummary] = []
-    /// Stories whose host status is actively in progress, source order.
+    /// Stories whose host status is actively in progress or in review,
+    /// source order.
     var inProgressTickets: [JiraTicketSummary] = []
 }
 
@@ -118,7 +119,10 @@ enum HomeBoardBuilder {
         if board.jiraHealth.retainsContent {
             board.nextStory = nextStoryTicket(in: snapshot.jiraTickets)
             board.inProgressTickets = snapshot.jiraTickets.filter {
-                AttentionChannel.forTicketStatus($0.status) == .active
+                switch AttentionChannel.forTicketStatus($0.status) {
+                case .active, .inFlight: return true
+                default: return false
+                }
             }
         }
         if board.reviewHealth.retainsContent {
@@ -127,13 +131,43 @@ enum HomeBoardBuilder {
         return board
     }
 
-    /// The next story to start: the first parked ticket in host order — the
-    /// same rule as `NextContextBuilder.firstParkedTicket`. Unknown status
-    /// vocabulary parks, so an unrecognized label is eligible to start.
+    /// The next story to start: the first parked ticket by preference
+    /// cascade. Unknown status vocabulary parks, so an unrecognized label
+    /// stays eligible to start. Cascade, in order:
+    ///   1. Status tier — "Next Up" outranks every other parked status
+    ///      ("Backlog", "To Do", unrecognized).
+    ///   2. Type tier within one status — Bug issues outrank everything
+    ///      else; Features rank last; an unknown type sits in between.
+    ///   3. Host order breaks remaining ties.
     static func nextStoryTicket(in tickets: [JiraTicketSummary]) -> JiraTicketSummary? {
         tickets
             .filter { AttentionChannel.forTicketStatus($0.status) == .parked }
-            .min { $0.sourceOrder < $1.sourceOrder }
+            .min { lhs, rhs in
+                let left = nextStoryPreference(lhs)
+                let right = nextStoryPreference(rhs)
+                if left.statusTier != right.statusTier { return left.statusTier < right.statusTier }
+                if left.typeTier != right.typeTier { return left.typeTier < right.typeTier }
+                return lhs.sourceOrder < rhs.sourceOrder
+            }
+    }
+
+    /// Preference rank for one parked ticket: lower wins. Status "Next Up"
+    /// is tier 0, everything else tier 1. Within a tier, Bug issues are
+    /// preferred (0), Features are deprioritized last (2), and any other or
+    /// unknown type keeps host order in between (1).
+    private static func nextStoryPreference(_ ticket: JiraTicketSummary) -> (statusTier: Int, typeTier: Int) {
+        let statusTier = normalizedText(ticket.status) == "next up" ? 0 : 1
+        let typeTier: Int
+        switch normalizedText(ticket.issueType) {
+        case let type? where type.hasPrefix("bug"): typeTier = 0
+        case let type? where type.hasPrefix("feature"): typeTier = 2
+        default: typeTier = 1
+        }
+        return (statusTier, typeTier)
+    }
+
+    private static func normalizedText(_ value: String?) -> String? {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     /// The Review column's queue: every review-request row, most urgent

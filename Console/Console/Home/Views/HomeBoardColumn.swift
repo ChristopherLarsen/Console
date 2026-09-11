@@ -161,17 +161,40 @@ struct HomeBoardPlaceholderCard: View {
     }
 }
 
-/// One story card on the board: parked (next story) or active (in progress).
-/// One button for the whole card; the reserved action row names the journey.
+/// One bottom-row action on a Home card.
+struct HomeCardAction: Identifiable {
+    let label: String
+    let handler: () -> Void
+
+    var id: String { label }
+}
+
+/// Light grey bar separating the bottom-row buttons on a Home card.
+struct HomeCardButtonSeparator: View {
+    var body: some View {
+        Text("|")
+            .font(.system(size: 10))
+            .foregroundStyle(Color(nsColor: .separatorColor))
+            .accessibilityHidden(true)
+    }
+}
+
+/// One story card on the board: parked (next story), active, or in review
+/// (in progress). The card body taps through to the primary journey; the
+/// reserved bottom row carries real borderless buttons, joined by
+/// light-grey separators.
 struct HomeBoardTicketCard: View {
     let ticket: JiraTicketSummary
     /// Verbatim host status shown as tinted state text. The In Progress
-    /// column passes nil — the column title already says it.
+    /// column passes nil for active stories — the column title already says
+    /// it — and the story's status for in-review stories.
     let stateLine: String?
-    let actionLabel: String
-    /// Launch in flight; the action row reads "Starting…" and stays inert.
+    /// Bottom-row buttons, leading to trailing.
+    let bottomActions: [HomeCardAction]
+    /// Whole-card tap journey; the bottom-row buttons take precedence.
+    var cardAction: (() -> Void)? = nil
+    /// Launch in flight; every control on the card goes inert.
     var isLaunching = false
-    let action: () -> Void
 
     @State private var hovering = false
 
@@ -179,52 +202,58 @@ struct HomeBoardTicketCard: View {
         AttentionChannel.forTicketStatus(ticket.status)
     }
 
-    private var actionIsEnabled: Bool { !isLaunching }
-
     var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: HomeCardMetrics.rowGap) {
-                HStack(spacing: 5) {
-                    HomeCardGlyph(color: channel.color, needsYou: false)
+        VStack(alignment: .leading, spacing: HomeCardMetrics.rowGap) {
+            HStack(spacing: 5) {
+                HomeCardGlyph(color: channel.color, needsYou: false)
 
-                    Text(ticket.key)
-                        .font(HomeCardMetrics.identityFont)
-                        .foregroundStyle(.secondary)
+                Text(ticket.key)
+                    .font(HomeCardMetrics.identityFont)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                if let stateLine {
+                    Text(stateLine)
+                        .font(HomeCardMetrics.stateFont)
+                        .foregroundStyle(channel.color)
                         .lineLimit(1)
-
-                    if let stateLine {
-                        Text(stateLine)
-                            .font(HomeCardMetrics.stateFont)
-                            .foregroundStyle(channel.color)
-                            .lineLimit(1)
-                    }
-
-                    Spacer(minLength: 4)
                 }
 
-                Text(ticket.summary)
-                    .font(HomeCardMetrics.titleFont)
-                    .foregroundStyle(.primary)
-                    .lineLimit(3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: 4)
+            }
 
-                HStack(spacing: 3) {
-                    Spacer(minLength: 0)
-                    Text(actionLabel)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.secondary)
+            Text(ticket.summary)
+                .font(HomeCardMetrics.titleFont)
+                .foregroundStyle(.primary)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 6) {
+                Spacer(minLength: 0)
+                ForEach(Array(bottomActions.enumerated()), id: \.element.id) { index, item in
+                    if index > 0 {
+                        HomeCardButtonSeparator()
+                    }
+                    Button(item.label) {
+                        item.handler()
+                    }
+                    .disabled(isLaunching)
                 }
             }
-            .padding(HomeCardMetrics.padding)
-            .frame(maxWidth: .infinity, minHeight: HomeCardMetrics.minHeight, alignment: .leading)
+            .font(.system(size: 10, weight: .medium))
+            .buttonStyle(.borderless)
+            .padding(.top, 5)
         }
-        .buttonStyle(.plain)
+        .padding(HomeCardMetrics.padding)
+        .frame(maxWidth: .infinity, minHeight: HomeCardMetrics.minHeight, alignment: .leading)
+        .contentShape(RoundedRectangle(cornerRadius: HomeCardMetrics.cornerRadius))
+        .onTapGesture {
+            guard !isLaunching else { return }
+            cardAction?()
+        }
         .onHover { hovering = $0 }
         .homeCardSurface(hovering: hovering)
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier("HomeBoardTicketCard")
     }
@@ -234,7 +263,6 @@ struct HomeBoardTicketCard: View {
             ticket.key,
             ticket.summary,
             stateLine,
-            actionLabel,
         ]
         .compactMap { $0 }
         .joined(separator: ", ")
@@ -299,17 +327,20 @@ struct HomeBoardReviewRequestCard: View {
                     .help(reason)
             }
 
-            HStack(spacing: 12) {
+            HStack(spacing: 6) {
                 Spacer(minLength: 0)
                 Button("Open in GitLab", action: open)
+                HomeCardButtonSeparator()
                 Button("Open in JIRA", action: openJira)
                     .disabled(!canOpenJira)
                     .help(canOpenJira ? "Open the associated story in a new JIRA tab" : "No associated JIRA story is available")
+                HomeCardButtonSeparator()
                 Button(isLaunching ? "Starting…" : (hasReviewSession ? "Open Review Session" : "Start Review"), action: startReview)
                     .disabled(isLaunching)
             }
             .font(.system(size: 10, weight: .medium))
             .buttonStyle(.borderless)
+            .padding(.top, 5)
         }
         .padding(HomeCardMetrics.padding)
         .frame(maxWidth: .infinity, minHeight: HomeCardMetrics.minHeight, alignment: .leading)

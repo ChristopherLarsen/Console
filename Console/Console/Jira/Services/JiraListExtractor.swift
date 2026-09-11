@@ -17,6 +17,7 @@ struct JiraListExtractor {
         let priority: String?
         let updated: String?
         let url: String?
+        let type: String?
     }
 
     struct Payload: Decodable {
@@ -69,7 +70,8 @@ struct JiraListExtractor {
                     priority: normalized(row.priority),
                     updatedText: normalized(row.updated),
                     issueURL: url,
-                    sourceOrder: result.count
+                    sourceOrder: result.count,
+                    issueType: normalized(row.type)
                 )
             )
         }
@@ -178,6 +180,7 @@ extension JiraListExtractor {
       if (t.indexOf('priority') >= 0) { return 'priority'; }
       if (t.indexOf('status') >= 0) { return 'status'; }
       if (t.indexOf('updated') >= 0) { return 'updated'; }
+      if (t.indexOf('type') >= 0) { return 'type'; }
       return null;
     }
     const columnByIndex = {};
@@ -201,11 +204,16 @@ extension JiraListExtractor {
         const wrapper = cell.querySelector('[data-testid*="priority"]');
         if (wrapper) { return norm(wrapper.textContent); }
       }
+      if (semantic === 'type') {
+        const img = cell.querySelector('img[alt]');
+        if (img) { return norm(img.getAttribute('alt')); }
+      }
       const direct = norm(cell.textContent);
       return direct.length > 0 ? direct : null;
     }
     const seenKeys = {};
     const outRows = [];
+    const KNOWN_TYPES = ['bug', 'feature', 'story', 'task', 'sub-task', 'spike', 'epic', 'improvement', 'new feature'];
     rows.forEach(function(tr) {
       const keyAnchor =
         tr.querySelector('a[data-testid$="issue-key-cell"][href*="/browse/"]') ||
@@ -220,6 +228,7 @@ extension JiraListExtractor {
       let status = null;
       let priority = null;
       let updated = null;
+      let type = null;
       if (tr.cells) {
         for (let i = 0; i < tr.cells.length; i++) {
           const semantic = columnByIndex[i];
@@ -229,6 +238,16 @@ extension JiraListExtractor {
           if (semantic === 'status' && status === null) { status = value; }
           else if (semantic === 'priority' && priority === null) { priority = value; }
           else if (semantic === 'updated' && updated === null) { updated = value; }
+          else if (semantic === 'type' && type === null) { type = value; }
+        }
+      }
+      if (!type) {
+        const typeImg =
+          tr.querySelector('[data-testid*="issue-type"] img[alt]') ||
+          tr.querySelector('img[alt]');
+        if (typeImg) {
+          const alt = norm(typeImg.getAttribute('alt'));
+          if (alt && KNOWN_TYPES.indexOf(alt.toLowerCase()) >= 0) { type = alt; }
         }
       }
       outRows.push({
@@ -237,6 +256,7 @@ extension JiraListExtractor {
         status: status,
         priority: priority,
         updated: updated,
+        type: type,
         url: href
       });
     });

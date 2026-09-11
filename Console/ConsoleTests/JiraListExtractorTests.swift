@@ -8,7 +8,8 @@ final class JiraListExtractorTests: XCTestCase {
         status: String?,
         priority: String?,
         updated: String?,
-        url: String? = nil
+        url: String? = nil,
+        type: String? = nil
     ) -> JiraListExtractor.ExtractedRow {
         JiraListExtractor.ExtractedRow(
             key: key,
@@ -16,14 +17,15 @@ final class JiraListExtractorTests: XCTestCase {
             status: status,
             priority: priority,
             updated: updated,
-            url: url ?? "https://jira.example.com/browse/\(key ?? "UNKNOWN")"
+            url: url ?? "https://jira.example.com/browse/\(key ?? "UNKNOWN")",
+            type: type
         )
     }
 
     func testTicketsDecodeWithAllFieldsPreserved() throws {
         let data = Data("""
         {"kind":"tickets","rows":[
-          {"key":"DEMO-101","summary":"Fix background refresh after sign-in","status":"In Progress","priority":"High","updated":"Updated 2h","url":"https://jira.example.com/browse/DEMO-101"}
+          {"key":"DEMO-101","summary":"Fix background refresh after sign-in","status":"In Progress","priority":"High","updated":"Updated 2h","type":"Bug","url":"https://jira.example.com/browse/DEMO-101"}
         ]}
         """.utf8)
 
@@ -38,6 +40,7 @@ final class JiraListExtractorTests: XCTestCase {
         XCTAssertEqual(tickets[0].status, "In Progress")
         XCTAssertEqual(tickets[0].priority, "High")
         XCTAssertEqual(tickets[0].updatedText, "Updated 2h")
+        XCTAssertEqual(tickets[0].issueType, "Bug")
         XCTAssertEqual(tickets[0].issueURL.absoluteString, "https://jira.example.com/browse/DEMO-101")
         XCTAssertEqual(tickets[0].sourceOrder, 0)
     }
@@ -90,7 +93,8 @@ final class JiraListExtractorTests: XCTestCase {
             status: "   In   Review ",
             priority: "none",
             updated: "",
-            url: "https://jira.example.com/browse/DEMO-7"
+            url: "https://jira.example.com/browse/DEMO-7",
+            type: " Bug "
         )
 
         let tickets = JiraListExtractor.summaries(from: [messy])
@@ -100,6 +104,7 @@ final class JiraListExtractorTests: XCTestCase {
         XCTAssertEqual(tickets[0].status, "In Review")
         XCTAssertNil(tickets[0].priority)
         XCTAssertNil(tickets[0].updatedText)
+        XCTAssertEqual(tickets[0].issueType, "Bug")
     }
 
     func testTicketsPayloadWithAllRowsDroppedIsFailureNeverFalseEmpty() {

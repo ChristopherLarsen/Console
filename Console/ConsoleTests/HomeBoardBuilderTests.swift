@@ -11,7 +11,8 @@ final class HomeBoardBuilderTests: XCTestCase {
     private func ticket(
         key: String = "PROJ-1",
         status: String?,
-        order: Int
+        order: Int,
+        type: String? = nil
     ) -> JiraTicketSummary {
         JiraTicketSummary(
             key: key,
@@ -20,7 +21,8 @@ final class HomeBoardBuilderTests: XCTestCase {
             priority: nil,
             updatedText: nil,
             issueURL: URL(string: "https://jira.example.test/browse/\(key)")!,
-            sourceOrder: order
+            sourceOrder: order,
+            issueType: type
         )
     }
 
@@ -75,6 +77,39 @@ final class HomeBoardBuilderTests: XCTestCase {
         XCTAssertNil(HomeBoardBuilder.nextStoryTicket(in: tickets))
     }
 
+    func testNextStoryPrefersNextUpOverBacklog() {
+        let tickets = [
+            ticket(key: "A", status: "Backlog", order: 0),
+            ticket(key: "B", status: "Next Up", order: 1),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.nextStoryTicket(in: tickets)?.key, "B")
+    }
+
+    func testNextStoryPrefersBugsOverFeatures() {
+        let tickets = [
+            ticket(key: "A", status: "To Do", order: 0, type: "Feature"),
+            ticket(key: "B", status: "Backlog", order: 1, type: "Bug"),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.nextStoryTicket(in: tickets)?.key, "B")
+    }
+
+    func testNextUpOutranksTypeWithinCascade() {
+        // Status tier first: a Next Up Feature beats a Backlog Bug.
+        let tickets = [
+            ticket(key: "A", status: "Backlog", order: 0, type: "Bug"),
+            ticket(key: "B", status: "Next Up", order: 1, type: "Feature"),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.nextStoryTicket(in: tickets)?.key, "B")
+    }
+
+    func testFeatureFallsBelowUnknownTypeWithinSameStatus() {
+        let tickets = [
+            ticket(key: "A", status: "To Do", order: 0, type: "Feature"),
+            ticket(key: "B", status: "To Do", order: 1, type: "Story"),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.nextStoryTicket(in: tickets)?.key, "B")
+    }
+
     // MARK: - In progress
 
     func testInProgressKeepsOnlyActiveVocabularyInHostOrder() {
@@ -87,6 +122,18 @@ final class HomeBoardBuilderTests: XCTestCase {
         let snapshot = HomeBoardSnapshot(jiraTickets: tickets, jiraStatus: .current)
         let board = HomeBoardBuilder.build(snapshot)
         XCTAssertEqual(board.inProgressTickets.map(\.key), ["A", "C"])
+    }
+
+    func testInProgressIncludesInReviewStories() {
+        let tickets = [
+            ticket(key: "A", status: "In Progress", order: 0),
+            ticket(key: "B", status: "In Review", order: 1),
+            ticket(key: "C", status: "To Do", order: 2),
+            ticket(key: "D", status: "Testing", order: 3),
+        ]
+        let snapshot = HomeBoardSnapshot(jiraTickets: tickets, jiraStatus: .current)
+        let board = HomeBoardBuilder.build(snapshot)
+        XCTAssertEqual(board.inProgressTickets.map(\.key), ["A", "B", "D"])
     }
 
     // MARK: - Review queue ordering

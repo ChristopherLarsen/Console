@@ -54,7 +54,7 @@ struct HomeView: View {
         let sessions = sessionStore?.sessions ?? []
 
         return HStack(alignment: .top, spacing: 12) {
-            nextColumn(board)
+            nextColumn(board, sessions: sessions)
             inProgressColumn(board, sessions: sessions)
             reviewColumn(board)
         }
@@ -73,13 +73,13 @@ struct HomeView: View {
 
     /// Next holds one slot: the story slot follows Jira health. The column
     /// itself always renders content; the slot owns its state presentation.
-    private func nextColumn(_ board: HomeBoard) -> some View {
+    private func nextColumn(_ board: HomeBoard, sessions: [ConsoleSession]) -> some View {
         HomeBoardColumn(
             title: "Next Story",
             detail: nil,
             health: .ready,
             content: {
-                nextStorySlot(board)
+                nextStorySlot(board, sessions: sessions)
             },
             accessory: {
                 HStack(spacing: 6) {
@@ -105,18 +105,11 @@ struct HomeView: View {
     }
 
     @ViewBuilder
-    private func nextStorySlot(_ board: HomeBoard) -> some View {
+    private func nextStorySlot(_ board: HomeBoard, sessions: [ConsoleSession]) -> some View {
         switch board.jiraHealth {
         case .ready:
             if let story = board.nextStory {
-                HomeBoardTicketCard(
-                    ticket: story,
-                    stateLine: story.status,
-                    actionLabel: "Open story"
-                ) {
-                    model.openStory(story)
-                }
-                .accessibilityIdentifier("HomeNextStoryCard")
+                nextStoryCard(story, sessions: sessions)
             } else {
                 HomeBoardPlaceholderCard(
                     title: "No story",
@@ -126,14 +119,7 @@ struct HomeView: View {
             }
         case .updating, .stale:
             if let story = board.nextStory {
-                HomeBoardTicketCard(
-                    ticket: story,
-                    stateLine: story.status,
-                    actionLabel: "Open story"
-                ) {
-                    model.openStory(story)
-                }
-                .accessibilityIdentifier("HomeNextStoryCard")
+                nextStoryCard(story, sessions: sessions)
             }
         case .loading:
             HomeSkeletonCard()
@@ -143,6 +129,33 @@ struct HomeView: View {
             // Sign-in is surfaced only in the Next column.
             recoveryCard(.signInJira)
         }
+    }
+
+    /// The Next story card: open the issue in JIRA, or start a session on it.
+    /// Starting routes through the shared launch journey — it opens the
+    /// story's live session when one exists, launches on current data, and
+    /// requests a refresh against stale data.
+    private func nextStoryCard(
+        _ story: JiraTicketSummary,
+        sessions: [ConsoleSession]
+    ) -> some View {
+        let isLaunching = model.launchingTicketKeys.contains(story.key)
+        return HomeBoardTicketCard(
+            ticket: story,
+            stateLine: story.status,
+            bottomActions: [
+                HomeCardAction(label: "Open story") { model.openStory(story) },
+                HomeCardAction(label: isLaunching ? "Starting…" : "Start story") {
+                    guard !isLaunching else { return }
+                    Task {
+                        await model.continueTicket(story, sessions: sessions)
+                    }
+                }
+            ],
+            cardAction: { model.openStory(story) },
+            isLaunching: isLaunching
+        )
+        .accessibilityIdentifier("HomeNextStoryCard")
     }
 
     // MARK: In Progress
@@ -222,6 +235,7 @@ struct HomeView: View {
     ) -> some View {
         let hasLiveSession = HomeStorySessionMatcher.sessionID(for: ticket, in: sessions) != nil
         let isLaunching = model.launchingTicketKeys.contains(ticket.key)
+        let inReview = AttentionChannel.forTicketStatus(ticket.status) == .inFlight
         let actionLabel: String
         if isLaunching {
             actionLabel = "Starting…"
@@ -232,18 +246,27 @@ struct HomeView: View {
         } else {
             actionLabel = "Refresh to start"
         }
-
-        return HomeBoardTicketCard(
-            ticket: ticket,
-            stateLine: nil,
-            actionLabel: actionLabel,
-            isLaunching: isLaunching
-        ) {
+        let primaryJourney: () -> Void = {
             guard !isLaunching else { return }
             Task {
                 await model.continueTicket(ticket, sessions: sessions)
             }
         }
+
+        var bottomActions: [HomeCardAction] = []
+        if !inReview {
+            bottomActions.append(HomeCardAction(label: actionLabel, handler: primaryJourney))
+        }
+        bottomActions.append(HomeCardAction(label: "Open in JIRA") { model.openStory(ticket) })
+        bottomActions.append(HomeCardAction(label: "Open in GitLab") { model.openGitLabSource() })
+
+        return HomeBoardTicketCard(
+            ticket: ticket,
+            stateLine: inReview ? ticket.status : nil,
+            bottomActions: bottomActions,
+            cardAction: inReview ? { model.openStory(ticket) } : primaryJourney,
+            isLaunching: isLaunching
+        )
         .accessibilityIdentifier("HomeInProgressCard.\(index)")
     }
 

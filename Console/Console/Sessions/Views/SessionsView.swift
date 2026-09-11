@@ -22,7 +22,6 @@ struct SessionsView: View {
                     headlessCards
                     detailArea
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    restorationFooter
                 }
                     .frame(minWidth: SessionWorkspaceLayout.detailMinWidth)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -319,31 +318,36 @@ struct SessionsView: View {
 
     @ViewBuilder
     private var detailArea: some View {
-        if let session = store.selectedSession {
-            SessionTerminalPane(
-                session: session,
-                displayedState: displayedSessionState(
-                    activity: session.activity,
-                    attention: session.attention
-                ),
-                onQuickCommand: { command in
-                    store.sendSlashCommand(command, to: session.id)
-                    store.focusSelectedTerminal()
-                },
-                onColor: { argument in
-                    store.sendColorCommand(argument, to: session.id)
-                    store.focusSelectedTerminal()
-                },
-                onTerminate: { requestTerminate(session) }
-            )
-            .id(session.id)
-        } else {
-            VStack(spacing: 8) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 36))
-                    .foregroundStyle(.tertiary)
+        VStack(spacing: 0) {
+            if let session = store.selectedSession {
+                SessionTerminalPane(
+                    session: session,
+                    displayedState: displayedSessionState(
+                        activity: session.activity,
+                        attention: session.attention
+                    ),
+                    onQuickCommand: { command in
+                        store.sendSlashCommand(command, to: session.id)
+                        store.focusSelectedTerminal()
+                    },
+                    onColor: { argument in
+                        store.sendColorCommand(argument, to: session.id)
+                        store.focusSelectedTerminal()
+                    },
+                    onTerminate: { requestTerminate(session) }
+                )
+                .id(session.id)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 36))
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            restorationFooter
         }
     }
 

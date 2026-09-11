@@ -167,12 +167,11 @@ struct SessionTerminalPane: View {
                 }
             }
         } label: {
-            HStack(spacing: 3) {
-                Text("Command")
-                    .font(.caption)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-            }
+            // One interpolated Text: macOS hoists loose Images in Menu labels
+            // to the leading edge; a single Text keeps the chevron trailing
+            // the title.
+            Text("Command \(Image(systemName: "chevron.down"))")
+                .font(.caption)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
