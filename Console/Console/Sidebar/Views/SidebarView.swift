@@ -115,6 +115,36 @@ struct SidebarView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            sidebarHotkeys
+        }
+    }
+
+    /// Ctrl-1…Ctrl-N select the sidebar destinations in visible order:
+    /// the primary list rows, then Settings. AI Provider only claims a
+    /// number while the Settings toggle makes its row exist.
+    private var sidebarHotkeys: some View {
+        ForEach(Array(navigableDestinations.enumerated()), id: \.element) { index, destination in
+            Button {
+                selection = destination
+            } label: {
+                EmptyView()
+            }
+            .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .control)
+            .opacity(0)
+            .accessibilityHidden(true)
+        }
+    }
+
+    private var navigableDestinations: [SidebarSelection] {
+        var destinations: [SidebarSelection] = [
+            .home, .jira, .mergeRequests, .sessions, .commands, .brief,
+        ]
+        if isAIProviderEnabled {
+            destinations.append(.aiProvider)
+        }
+        destinations.append(.settings)
+        return destinations
     }
 }
 
