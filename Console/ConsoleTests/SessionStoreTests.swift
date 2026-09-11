@@ -104,7 +104,8 @@ final class SessionStoreTests: XCTestCase {
     private func makeStore(
         assembler: (any ConsoleClaudePluginAssembling)? = nil,
         restorationStore: SessionRestorationStore? = nil,
-        processInspector: any SessionProcessInspecting = HeadlessSessionProcesses()
+        processInspector: any SessionProcessInspecting = HeadlessSessionProcesses(),
+        ticketAssociations: SessionTicketAssociations = SessionTicketAssociations()
     ) -> (SessionStore, FakeLauncher) {
         let launcher = FakeLauncher()
         let store = SessionStore(
@@ -112,7 +113,8 @@ final class SessionStoreTests: XCTestCase {
             locator: ClaudeExecutableLocator(defaults: defaults),
             pluginAssembler: assembler ?? ConsoleClaudePluginAssembler(),
             restorationStore: restorationStore,
-            processInspector: processInspector
+            processInspector: processInspector,
+            ticketAssociations: ticketAssociations
         )
         return (store, launcher)
     }
@@ -663,6 +665,59 @@ final class SessionStoreTests: XCTestCase {
         store.handleProcessTerminated(sessionID: id)
 
         XCTAssertEqual(launcher.exitShellStartCount, shellStartsAfterLaunch + 1)
+    }
+
+    // MARK: - Ticket associations
+
+    func testJiraSourceLaunchPersistsTicketAssociation() throws {
+        let associationDefaults = UserDefaults(suiteName: "SessionStoreAssociations-\(UUID().uuidString)")!
+        let associations = SessionTicketAssociations(defaults: associationDefaults)
+        let (store, _) = makeStore(ticketAssociations: associations)
+
+        let id = try store.createSession(request: SessionCreationRequest(
+            purpose: .existingTicket,
+            name: "ENG-456",
+            workingDirectory: tmpDirectory("Assoc"),
+            source: .jira(key: "ENG-456", title: nil, url: nil)
+        ))
+
+        let session = try XCTUnwrap(store.session(withID: id))
+        XCTAssertEqual(associations.key(for: session.claudeSessionID), "ENG-456")
+    }
+
+    func testNewTicketStoryNamePersistsAssociationAndGeneralLaunchDoesNot() throws {
+        let associationDefaults = UserDefaults(suiteName: "SessionStoreAssociations-\(UUID().uuidString)")!
+        let associations = SessionTicketAssociations(defaults: associationDefaults)
+        let (store, _) = makeStore(ticketAssociations: associations)
+
+        let storyID = try store.createSession(
+            request: SessionCreationRequest(purpose: .newTicket, name: "S-777", workingDirectory: tmpDirectory("Story"))
+        )
+        let story = try XCTUnwrap(store.session(withID: storyID))
+        XCTAssertEqual(associations.key(for: story.claudeSessionID), "S-777")
+
+        let generalID = try store.createSession(
+            request: SessionCreationRequest(purpose: .general, name: "General", workingDirectory: tmpDirectory("Gen"))
+        )
+        let general = try XCTUnwrap(store.session(withID: generalID))
+        XCTAssertNil(associations.key(for: general.claudeSessionID))
+    }
+
+    func testResumeSessionLaunchesExactResumeArguments() throws {
+        let (store, launcher) = makeStore()
+        let dir = tmpDirectory("Resumed")
+        let historyID = UUID()
+        let record = SessionRestorationRecord(
+            claudeSessionID: historyID, name: "Fix login", workingDirectory: dir, purpose: .general
+        )
+
+        let id = try store.resumeSession(from: record)
+
+        let session = try XCTUnwrap(store.session(withID: id))
+        XCTAssertEqual(session.claudeSessionID, historyID)
+        XCTAssertEqual(session.workingDirectory, dir)
+        let args = try XCTUnwrap(launcher.lastArguments)
+        XCTAssertEqual(args.prefix(2), ["--resume", historyID.uuidString])
     }
 
     // MARK: - Selection

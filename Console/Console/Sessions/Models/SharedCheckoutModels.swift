@@ -83,12 +83,21 @@ struct SharedCheckoutOccupant: Identifiable, Equatable {
     }
 }
 
+/// What a blocked launch will do once the checkout question is resolved.
+enum PendingLaunchAction: Equatable {
+    case create(request: SessionCreationRequest)
+    case resume(record: SessionRestorationRecord)
+}
+
 /// One launch waiting on Focus / Continue / Cancel because the checkout is
 /// already occupied. Hosted as a sheet at MainView.
 struct PendingSharedCheckoutWarning: Identifiable, Equatable {
     let id: UUID
     let claimID: UUID
     let draft: SessionDraft
+    /// What executes once the warning resolves. Fresh launches create; a
+    /// Previous Sessions resume keeps its restoration record.
+    let action: PendingLaunchAction
     let canonicalPath: String
     var occupants: [SharedCheckoutOccupant]
     var gitState: LocalGitWorkingCopyState

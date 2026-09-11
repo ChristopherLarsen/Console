@@ -115,7 +115,7 @@ nonisolated enum SessionLaunchSource: Equatable, Sendable {
 
 /// Everything needed to build and launch one session.
 /// `name` is the local Console display name and is never passed to Claude.
-struct SessionCreationRequest {
+struct SessionCreationRequest: Equatable {
     let purpose: SessionPurpose
     let name: String
     let workingDirectory: URL
