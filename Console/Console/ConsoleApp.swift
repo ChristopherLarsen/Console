@@ -339,6 +339,9 @@ struct ConsoleApp: App {
         if ProcessInfo.processInfo.arguments.contains("-uiTestSessionsPreview") {
             sessionStore.injectUITestPreviewSessions()
         }
+        if ProcessInfo.processInfo.arguments.contains("-uiTestHeadlessSessionsPreview") {
+            sessionStore.injectUITestHeadlessPreview()
+        }
         // Home radar preview: injected sessions while staying on Home — this
         // flag deliberately does not touch sidebarSelection.
         if ProcessInfo.processInfo.arguments.contains("-uiTestHomeSessionsPreview") {

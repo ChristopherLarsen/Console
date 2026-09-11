@@ -63,6 +63,24 @@ final class SessionsUITests: XCTestCase {
 
     // MARK: - Zero-session UI
 
+    func testHeadlessCardsShowBothRecoveryActionsInDetailArea() throws {
+        app.launchArguments.append("-uiTestHeadlessSessionsPreview")
+        launchSessions(preview: true)
+        let card = element("Sessions.Headless.Card.999999")
+        XCTAssertTrue(card.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Sessions.Headless.Kill.999999"].exists)
+        XCTAssertTrue(app.buttons["Sessions.Headless.Reattach.999999"].exists)
+        XCTAssertTrue(app.staticTexts["Re-attach restarts Claude using the saved conversation."].exists)
+        let toggle = app.buttons["Sessions.ToggleListButton"]
+        XCTAssertTrue(toggle.exists)
+        toggle.click()
+        XCTAssertTrue(card.exists, "Headless cards belong to the detail area, not the collapsible session list")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Headless session light pink card"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testZeroSessionStateShowsEmptyStateAndCreationEntry() throws {
         launchSessions(preview: false)
 

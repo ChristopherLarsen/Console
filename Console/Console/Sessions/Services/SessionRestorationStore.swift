@@ -7,6 +7,7 @@ struct SessionRestorationRecord: Codable, Equatable, Identifiable {
     var name: String
     var workingDirectory: URL
     let purpose: SessionPurpose
+    var processIdentity: SessionProcessIdentity? = nil
 }
 
 struct SessionRestorationSnapshot: Codable, Equatable {

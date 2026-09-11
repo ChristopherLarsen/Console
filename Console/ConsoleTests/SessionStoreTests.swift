@@ -1,5 +1,6 @@
 import XCTest
 import SwiftTerm
+import SwiftUI
 @testable import Console
 
 @MainActor
@@ -81,16 +82,37 @@ final class SessionStoreTests: XCTestCase {
         var errorDescription: String? { "Synthetic launcher failed." }
     }
 
+    private final class FakeProcessInspector: SessionProcessInspecting, @unchecked Sendable {
+        private let lock = NSLock()
+        private var processes: [SessionProcessSnapshot] = []
+        private var sentSignals: [Int32] = []
+        var values: [SessionProcessSnapshot] {
+            get { lock.withLock { processes } }
+            set { lock.withLock { processes = newValue } }
+        }
+        var signals: [Int32] { lock.withLock { sentSignals } }
+        func snapshot() throws -> [SessionProcessSnapshot] { values }
+        func isRunning(_ identity: SessionProcessIdentity) -> Bool { values.contains { $0.identity == identity } }
+        func signal(_ signal: Int32, to identity: SessionProcessIdentity) throws {
+            lock.withLock {
+                sentSignals.append(signal)
+                processes.removeAll { $0.identity == identity }
+            }
+        }
+    }
+
     private func makeStore(
         assembler: (any ConsoleClaudePluginAssembling)? = nil,
-        restorationStore: SessionRestorationStore? = nil
+        restorationStore: SessionRestorationStore? = nil,
+        processInspector: any SessionProcessInspecting = HeadlessSessionProcesses()
     ) -> (SessionStore, FakeLauncher) {
         let launcher = FakeLauncher()
         let store = SessionStore(
             launcher: launcher,
             locator: ClaudeExecutableLocator(defaults: defaults),
             pluginAssembler: assembler ?? ConsoleClaudePluginAssembler(),
-            restorationStore: restorationStore
+            restorationStore: restorationStore,
+            processInspector: processInspector
         )
         return (store, launcher)
     }
@@ -104,6 +126,186 @@ final class SessionStoreTests: XCTestCase {
     }
 
     // MARK: - Creation
+
+    func testHeadlessDiscoveryExcludesAttachedUnownedAndUnknownSessions() async throws {
+        let directory = tmpDirectory("headless")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Saved", workingDirectory: directory, purpose: .general)
+        try disk.save(.init(sessions: [record]))
+        let inspector = FakeProcessInspector()
+        func process(_ pid: Int32, parent: Int32 = 1, owned: Bool = true, id: UUID? = nil) -> SessionProcessSnapshot {
+            .init(identity: .init(pid: pid, startedSeconds: 123, startedMicroseconds: 0), parentPID: parent,
+                  claudeSessionID: id ?? record.id, isConsoleOwned: owned)
+        }
+        inspector.values = [process(100), process(101, parent: 55), process(102, owned: false), process(103, id: UUID())]
+        let (store, _) = makeStore(restorationStore: disk, processInspector: inspector)
+        await store.refreshHeadlessSessions()
+        XCTAssertEqual(store.headlessSessions.map(\.id.pid), [100])
+    }
+
+    func testHeadlessReattachStopsOldProcessThenResumesSameConversation() async throws {
+        let directory = tmpDirectory("reattach")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Saved", workingDirectory: directory, purpose: .general)
+        try disk.save(.init(sessions: [record]))
+        let inspector = FakeProcessInspector()
+        inspector.values = [.init(identity: .init(pid: 100, startedSeconds: 123, startedMicroseconds: 0),
+                                  parentPID: 1, claudeSessionID: record.id, isConsoleOwned: true)]
+        let (store, launcher) = makeStore(restorationStore: disk, processInspector: inspector)
+        await store.refreshHeadlessSessions()
+        await store.recoverHeadlessSession(try XCTUnwrap(store.headlessSessions.first), reattach: true)
+        XCTAssertEqual(inspector.signals, [SIGTERM])
+        XCTAssertTrue(inspector.values.isEmpty)
+        XCTAssertEqual(launcher.launchCount, 1)
+        XCTAssertEqual(launcher.lastArguments?.prefix(2), ["--resume", record.id.uuidString])
+        XCTAssertEqual(launcher.lastEnvironment?[HeadlessSessionProcesses.sessionEnvironmentKey], record.id.uuidString)
+        XCTAssertEqual(store.selectedSession?.claudeSessionID, record.id)
+        XCTAssertTrue(store.headlessSessions.isEmpty)
+        XCTAssertTrue(store.pendingRestorations.isEmpty)
+        store.terminateAll()
+    }
+
+    func testHeadlessKillRemovesSavedEntryWithoutLaunching() async throws {
+        let directory = tmpDirectory("kill")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Saved", workingDirectory: directory, purpose: .general)
+        try disk.save(.init(sessions: [record]))
+        let inspector = FakeProcessInspector()
+        inspector.values = [.init(identity: .init(pid: 100, startedSeconds: 123, startedMicroseconds: 0),
+                                  parentPID: 1, claudeSessionID: record.id, isConsoleOwned: true)]
+        let (store, launcher) = makeStore(restorationStore: disk, processInspector: inspector)
+        await store.refreshHeadlessSessions()
+        await store.recoverHeadlessSession(try XCTUnwrap(store.headlessSessions.first), reattach: false)
+        XCTAssertEqual(inspector.signals, [SIGTERM])
+        XCTAssertEqual(launcher.launchCount, 0)
+        XCTAssertTrue(store.headlessSessions.isEmpty)
+        XCTAssertTrue(try disk.load().sessions.isEmpty)
+    }
+
+    func testRecycledPIDIsNeverSignalled() async throws {
+        let directory = tmpDirectory("recycled")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Saved", workingDirectory: directory, purpose: .general)
+        try disk.save(.init(sessions: [record]))
+        let inspector = FakeProcessInspector()
+        inspector.values = [.init(identity: .init(pid: 100, startedSeconds: 123, startedMicroseconds: 0),
+                                  parentPID: 1, claudeSessionID: record.id, isConsoleOwned: true)]
+        let (store, launcher) = makeStore(restorationStore: disk, processInspector: inspector)
+        await store.refreshHeadlessSessions()
+        let card = try XCTUnwrap(store.headlessSessions.first)
+        inspector.values = [.init(identity: .init(pid: 100, startedSeconds: 999, startedMicroseconds: 0),
+                                  parentPID: 1, claudeSessionID: record.id, isConsoleOwned: true)]
+        await store.recoverHeadlessSession(card, reattach: true)
+        XCTAssertTrue(inspector.signals.isEmpty)
+        XCTAssertEqual(launcher.launchCount, 0)
+        XCTAssertFalse(store.pendingRestorations.isEmpty)
+    }
+
+    func testRestoreDoesNotDuplicateConversationOwnedByAnotherTerminal() async throws {
+        let directory = tmpDirectory("duplicate")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Saved", workingDirectory: directory, purpose: .general)
+        try disk.save(.init(sessions: [record]))
+        let inspector = FakeProcessInspector()
+        inspector.values = [.init(identity: .init(pid: 100, startedSeconds: 123, startedMicroseconds: 0),
+                                  parentPID: 50, claudeSessionID: record.id, isConsoleOwned: false)]
+        let (store, launcher) = makeStore(restorationStore: disk, processInspector: inspector)
+        await store.restoreSessions()
+        XCTAssertEqual(launcher.launchCount, 0)
+        XCTAssertEqual(store.pendingRestorations, [record])
+        XCTAssertNotNil(store.restorationMessage)
+    }
+
+    func testPersistedIdentityFindsHeadlessProcessWithoutReadableArguments() async throws {
+        let directory = tmpDirectory("identity")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let identity = SessionProcessIdentity(pid: 100, startedSeconds: 123, startedMicroseconds: 456)
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Saved", workingDirectory: directory,
+                                              purpose: .general, processIdentity: identity)
+        try disk.save(.init(sessions: [record]))
+        let inspector = FakeProcessInspector()
+        inspector.values = [.init(identity: identity, parentPID: 1, claudeSessionID: nil, isConsoleOwned: false)]
+        let (store, launcher) = makeStore(restorationStore: disk, processInspector: inspector)
+        await store.refreshHeadlessSessions()
+        XCTAssertEqual(store.headlessSessions.first?.record, record)
+        await store.restoreSessions()
+        XCTAssertEqual(launcher.launchCount, 0, "Restore must also recognize the saved PID/start-time identity")
+        await store.recoverHeadlessSession(try XCTUnwrap(store.headlessSessions.first), reattach: false)
+        XCTAssertEqual(inspector.signals, [SIGTERM])
+        XCTAssertTrue(try disk.load().sessions.isEmpty)
+    }
+
+    func testFailedHeadlessRelaunchKeepsConversationAvailableForRetry() async throws {
+        let directory = tmpDirectory("failed-reattach")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Saved", workingDirectory: directory, purpose: .general)
+        try disk.save(.init(sessions: [record]))
+        let inspector = FakeProcessInspector()
+        inspector.values = [.init(identity: .init(pid: 100, startedSeconds: 123, startedMicroseconds: 0),
+                                  parentPID: 1, claudeSessionID: record.id, isConsoleOwned: true)]
+        let (store, launcher) = makeStore(restorationStore: disk, processInspector: inspector)
+        launcher.errorToThrow = SyntheticLaunchError()
+        await store.refreshHeadlessSessions()
+        await store.recoverHeadlessSession(try XCTUnwrap(store.headlessSessions.first), reattach: true)
+        XCTAssertEqual(inspector.signals, [SIGTERM])
+        XCTAssertTrue(store.headlessSessions.isEmpty)
+        XCTAssertTrue(store.sessions.isEmpty)
+        XCTAssertEqual(store.pendingRestorations, [record])
+        XCTAssertEqual(try disk.load().sessions, [record])
+        XCTAssertNotNil(store.headlessMessage)
+        XCTAssertNil(store.headlessActionID)
+        launcher.errorToThrow = nil
+        await store.restoreSessions()
+        XCTAssertEqual(store.selectedSession?.claudeSessionID, record.id)
+        store.terminateAll()
+    }
+
+    func testHeadlessDetailRendersLightPinkCard() async throws {
+        let (store, _) = makeStore()
+        store.injectUITestHeadlessPreview()
+        let view = SessionsView()
+            .environment(store)
+            .environment(SessionWorkspaceLayoutController())
+            .frame(width: 1000, height: 700)
+        // ScrollView uses AppKit; ImageRenderer omits its contents. Render an
+        // actual hosting view without requiring the system UI automation runner.
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.contentView = nil; window.close() }
+        host.frame = NSRect(x: 0, y: 0, width: 1000, height: 700)
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(200))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let image = NSImage(size: host.bounds.size)
+        image.addRepresentation(bitmap)
+        var pinkPixels = 0
+        for y in stride(from: 0, to: bitmap.pixelsHigh, by: 4) {
+            for x in stride(from: 0, to: bitmap.pixelsWide, by: 4) {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
+                if color.redComponent > 0.98 && abs(color.greenComponent - 0.94) < 0.015
+                    && abs(color.blueComponent - 0.96) < 0.015 {
+                    pinkPixels += 1
+                }
+            }
+        }
+        XCTAssertGreaterThan(pinkPixels, 1000, "The detail must render a substantial very light pink card")
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "Headless session detail rendering"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
 
     func testRestoreResumesConversationAndPreservesSelectionAcrossQuit() async throws {
         let directory = tmpDirectory("restore")

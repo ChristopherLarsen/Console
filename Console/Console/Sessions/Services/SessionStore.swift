@@ -21,7 +21,8 @@ enum SessionCreationError: LocalizedError, Equatable {
 
 /// App-owned observable store for all Console Claude sessions.
 ///
-/// Processes are memory-only; eligible launch metadata survives app termination.
+/// Terminal views are memory-only; launch metadata and process identities survive
+/// app termination so leftover processes can be recovered safely.
 @MainActor
 @Observable
 final class SessionStore {
@@ -32,13 +33,23 @@ final class SessionStore {
     private(set) var isRestoringSessions = false
     private(set) var restorationMessage: String?
     private(set) var restorationPersistenceError: String?
+    private(set) var headlessSessions: [HeadlessSession] = []
+    private(set) var headlessActionID: SessionProcessIdentity?
+    private(set) var headlessMessage: String?
+    @ObservationIgnored private let processInspector: any SessionProcessInspecting
+    @ObservationIgnored private var isScanningProcesses = false
+    #if DEBUG
+    @ObservationIgnored private var headlessPreviewMode = false
+    #endif
     @ObservationIgnored private let restorationStore: SessionRestorationStore?
     @ObservationIgnored private var savedSnapshot = SessionRestorationSnapshot()
     @ObservationIgnored private var isTerminating = false
     @ObservationIgnored private var restorationLoadFailed = false
     @ObservationIgnored private var startingRestorations: [UUID: SessionRestorationRecord] = [:]
 
-    var canRestoreSessions: Bool { !pendingRestorations.isEmpty && !isRestoringSessions && !isTerminating }
+    var canRestoreSessions: Bool {
+        !pendingRestorations.isEmpty && !isRestoringSessions && !isTerminating && headlessActionID == nil
+    }
     /// Sessions the user terminated; closed (removed) as soon as their
     /// process exits instead of lingering as dead terminals.
     @ObservationIgnored private var closeOnExitIDs: Set<UUID> = []
@@ -72,12 +83,14 @@ final class SessionStore {
         launcher: any SessionProcessLaunching,
         locator: ClaudeExecutableLocator,
         pluginAssembler: any ConsoleClaudePluginAssembling = ConsoleClaudePluginAssembler(),
-        restorationStore: SessionRestorationStore? = nil
+        restorationStore: SessionRestorationStore? = nil,
+        processInspector: any SessionProcessInspecting = HeadlessSessionProcesses()
     ) {
         self.launcher = launcher
         self.locator = locator
         self.pluginAssembler = pluginAssembler
         self.restorationStore = restorationStore
+        self.processInspector = processInspector
         if let restorationStore {
             do {
                 savedSnapshot = try restorationStore.load()
@@ -97,6 +110,9 @@ final class SessionStore {
                 self?.sessionTokens[sessionID]
             }
         )
+        if restorationStore != nil {
+            Task { [weak self] in await self?.refreshHeadlessSessions() }
+        }
     }
 
     convenience init(launcher: any SessionProcessLaunching) {
@@ -294,7 +310,7 @@ final class SessionStore {
         let pluginRoot = materializePluginRoot()
         let token: String?
         let arguments: [String]
-        let environment: [String: String]
+        var environment: [String: String]
         let bridgeStatus: BridgeStatus
         let instrumentationWarning: String?
 
@@ -328,6 +344,10 @@ final class SessionStore {
             bridgeStatus = .unavailable
             instrumentationWarning = SessionCreationError.pluginAssemblyFailed.errorDescription
         }
+
+        // Present even when bridge assembly fails; child tools cannot be mistaken
+        // for Claude because discovery also checks the executable and session argv.
+        environment[HeadlessSessionProcesses.sessionEnvironmentKey] = claudeID.uuidString
 
         let session = ConsoleSession(
             id: consoleID,
@@ -862,6 +882,115 @@ final class SessionStore {
 
     // MARK: - Restoration
 
+    #if DEBUG
+    func injectUITestHeadlessPreview() {
+        headlessPreviewMode = true
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Headless Preview",
+                                              workingDirectory: URL(fileURLWithPath: "/tmp/console-preview"), purpose: .general)
+        let process = SessionProcessSnapshot(identity: .init(pid: 999999, startedSeconds: 1, startedMicroseconds: 0),
+                                             parentPID: 1, claudeSessionID: record.id, isConsoleOwned: true)
+        headlessSessions = [.init(record: record, process: process)]
+    }
+    #endif
+
+    func refreshHeadlessSessions() async {
+        #if DEBUG
+        if headlessPreviewMode { return }
+        #endif
+        guard !isScanningProcesses, !isTerminating else { return }
+        isScanningProcesses = true
+        defer { isScanningProcesses = false }
+        do {
+            let processes = try await processSnapshot()
+            guard !isTerminating else { return }
+            updateHeadlessSessions(processes)
+        } catch {
+            headlessMessage = "Could not inspect leftover sessions: \(error.localizedDescription)"
+        }
+    }
+
+    private func processSnapshot() async throws -> [SessionProcessSnapshot] {
+        let inspector = processInspector
+        return try await Task.detached(priority: .utility) { try inspector.snapshot() }.value
+    }
+
+    private func updateHeadlessSessions(_ processes: [SessionProcessSnapshot]) {
+        let liveIDs = Set(sessions.filter { $0.activity != .exited }.map(\.claudeSessionID))
+        headlessSessions = processes.compactMap { process in
+            guard process.parentPID == 1,
+                  let record = pendingRestorations.first(where: {
+                      $0.processIdentity == process.identity
+                          || (process.isConsoleOwned && $0.id == process.claudeSessionID)
+                  }), !liveIDs.contains(record.id) else { return nil }
+            return HeadlessSession(record: record, process: process)
+        }.sorted { $0.id.pid < $1.id.pid }
+    }
+
+    private func process(_ process: SessionProcessSnapshot, matches record: SessionRestorationRecord) -> Bool {
+        process.identity == record.processIdentity || process.claudeSessionID == record.id
+    }
+
+    /// macOS cannot transfer a crashed forkpty owner's master to a new process.
+    /// Recovery stops that child before resuming the conversation with a new PTY
+    /// and newly authenticated bridge. Never run two writers for one conversation.
+    func recoverHeadlessSession(_ headless: HeadlessSession, reattach: Bool) async {
+        guard headlessActionID == nil, !isRestoringSessions, !isTerminating else { return }
+        headlessActionID = headless.id
+        headlessMessage = nil
+        defer { headlessActionID = nil }
+        do {
+            let current = try await processSnapshot()
+            updateHeadlessSessions(current)
+            guard headlessSessions.contains(where: { $0.id == headless.id }) else {
+                headlessMessage = "That process is no longer a headless Console session."
+                return
+            }
+            if reattach {
+                guard locator.locate() != nil else { throw SessionCreationError.claudeNotFound }
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: headless.record.workingDirectory.path, isDirectory: &isDirectory),
+                      isDirectory.boolValue else { throw CocoaError(.fileNoSuchFile) }
+            }
+            try processInspector.signal(SIGTERM, to: headless.id)
+            for _ in 0..<30 {
+                if !processInspector.isRunning(headless.id) { break }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            if processInspector.isRunning(headless.id) {
+                try processInspector.signal(SIGKILL, to: headless.id)
+                for _ in 0..<20 {
+                    if !processInspector.isRunning(headless.id) { break }
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+            }
+            guard !processInspector.isRunning(headless.id) else { throw POSIXError(.EBUSY) }
+            let remaining = try await processSnapshot()
+            updateHeadlessSessions(remaining)
+            guard !isTerminating, !Task.isCancelled else { return }
+            if reattach {
+                guard !remaining.contains(where: { process($0, matches: headless.record) }),
+                      !sessions.contains(where: { $0.claudeSessionID == headless.record.id && $0.activity != .exited }) else {
+                    headlessMessage = "Another process still uses this conversation. Recover or stop it first."
+                    return
+                }
+                let record = headless.record
+                for session in sessions.filter({ $0.claudeSessionID == record.id && $0.activity == .exited }) {
+                    closeSession(id: session.id, preservingRestoration: true)
+                }
+                _ = try createSession(request: .init(purpose: record.purpose, name: record.name,
+                                                     workingDirectory: record.workingDirectory), resuming: record)
+                focusSelectedTerminal()
+            } else if !remaining.contains(where: { process($0, matches: headless.record) }) {
+                pendingRestorations.removeAll { $0.id == headless.record.id }
+                persistRestorationSnapshot()
+            }
+        } catch {
+            headlessMessage = "\(headless.record.name): \(error.localizedDescription)"
+                + (reattach ? " The saved conversation is retained; use Restore Sessions to retry if the process has stopped." : "")
+            await refreshHeadlessSessions()
+        }
+    }
+
     func restoreSessions() async {
         guard canRestoreSessions else { return }
         isRestoringSessions = true
@@ -874,6 +1003,14 @@ final class SessionStore {
             isRestoringSessions = false
             persistRestorationSnapshot()
         }
+        let running: [SessionProcessSnapshot]
+        do {
+            running = try await processSnapshot()
+            updateHeadlessSessions(running)
+        } catch {
+            restorationMessage = "Could not check for running Claude sessions. Restore was cancelled: \(error.localizedDescription)"
+            return
+        }
         for record in records {
             await Task.yield()
             guard !isTerminating, !Task.isCancelled else { return }
@@ -883,6 +1020,10 @@ final class SessionStore {
             }
             if sessions.contains(where: { $0.claudeSessionID == record.id }) {
                 pendingRestorations.removeAll { $0.id == record.id }
+                continue
+            }
+            guard !running.contains(where: { process($0, matches: record) }) else {
+                failures.append("\(record.name): Claude is still running. Use its headless session card, or return to its owning terminal.")
                 continue
             }
             var isDirectory: ObjCBool = false
@@ -914,7 +1055,8 @@ final class SessionStore {
         var records = pendingRestorations
         for session in sessions where session.activity != .exited && !closeOnExitIDs.contains(session.id) {
             let record = SessionRestorationRecord(claudeSessionID: session.claudeSessionID,
-                name: session.name, workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general)
+                name: session.name, workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general,
+                processIdentity: HeadlessSessionProcesses.identity(for: session.terminalView.process?.shellPid ?? 0))
             records.removeAll { $0.id == record.id }
             records.append(record)
         }

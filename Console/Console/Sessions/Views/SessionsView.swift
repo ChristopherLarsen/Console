@@ -19,6 +19,7 @@ struct SessionsView: View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
                 VStack(spacing: 0) {
+                    headlessCards
                     detailArea
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     restorationFooter
@@ -45,6 +46,13 @@ struct SessionsView: View {
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .task {
+            repeat {
+                await store.refreshHeadlessSessions()
+                do { try await Task.sleep(for: .seconds(5)) }
+                catch { return }
+            } while !Task.isCancelled
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 toggleListButton
@@ -115,8 +123,62 @@ struct SessionsView: View {
         }
     }
 
+    @ViewBuilder
+    private var headlessCards: some View {
+        if !store.headlessSessions.isEmpty {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Headless Sessions").font(.headline)
+                    ForEach(store.headlessSessions) { headless in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Label(headless.record.name, systemImage: "terminal")
+                                    .font(.headline)
+                                Spacer()
+                                Text("PID \(headless.id.pid)").font(.caption.monospacedDigit())
+                            }
+                            Text(headless.record.workingDirectory.path)
+                                .font(.caption).lineLimit(1).truncationMode(.middle)
+                                .help(headless.record.workingDirectory.path)
+                            Text("Claude is running without a Console terminal.")
+                                .font(.caption)
+                            HStack {
+                                Button("Kill Session", role: .destructive) {
+                                    Task { await store.recoverHeadlessSession(headless, reattach: false) }
+                                }
+                                .accessibilityIdentifier("Sessions.Headless.Kill.\(headless.id.pid)")
+                                Button("Re-attach") {
+                                    Task { await store.recoverHeadlessSession(headless, reattach: true) }
+                                }
+                                .accessibilityIdentifier("Sessions.Headless.Reattach.\(headless.id.pid)")
+                                .help("Stops the leftover process and resumes its saved conversation in a new terminal. In-progress work is interrupted.")
+                                if store.headlessActionID == headless.id {
+                                    ProgressView().controlSize(.small)
+                                }
+                            }
+                            .disabled(store.headlessActionID != nil || store.isRestoringSessions)
+                            Text("Re-attach restarts Claude using the saved conversation.")
+                                .font(.caption2)
+                        }
+                        .padding(12)
+                        .foregroundStyle(Color.black.opacity(0.85))
+                        .background(Color(red: 1, green: 0.94, blue: 0.96), in: RoundedRectangle(cornerRadius: 10))
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("Sessions.Headless.Card.\(headless.id.pid)")
+                    }
+                }
+                .padding(12)
+            }
+            .frame(maxHeight: 240)
+        }
+    }
+
     private var restorationFooter: some View {
         VStack(spacing: 6) {
+            if let message = store.headlessMessage {
+                Text(message).font(.caption).foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
             if let message = store.restorationPersistenceError ?? store.restorationMessage {
                 Text(message)
                     .font(.caption)
