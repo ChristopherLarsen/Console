@@ -70,6 +70,9 @@ final class SessionStore {
     @ObservationIgnored let locator: ClaudeExecutableLocator
     @ObservationIgnored private var launcher: any SessionProcessLaunching
     @ObservationIgnored private let pluginAssembler: any ConsoleClaudePluginAssembling
+    /// Remembers which ticket a Claude conversation belongs to so Previous
+    /// Sessions classification survives Console restarts.
+    @ObservationIgnored private let ticketAssociations: SessionTicketAssociations
 
     // Bridge plumbing. Tokens and event ids live only in memory.
     @ObservationIgnored private var sessionTokens: [UUID: String] = [:]
@@ -97,13 +100,15 @@ final class SessionStore {
         locator: ClaudeExecutableLocator,
         pluginAssembler: any ConsoleClaudePluginAssembling = ConsoleClaudePluginAssembler(),
         restorationStore: SessionRestorationStore? = nil,
-        processInspector: any SessionProcessInspecting = HeadlessSessionProcesses()
+        processInspector: any SessionProcessInspecting = HeadlessSessionProcesses(),
+        ticketAssociations: SessionTicketAssociations = SessionTicketAssociations()
     ) {
         self.launcher = launcher
         self.locator = locator
         self.pluginAssembler = pluginAssembler
         self.restorationStore = restorationStore
         self.processInspector = processInspector
+        self.ticketAssociations = ticketAssociations
         if let restorationStore {
             do {
                 savedSnapshot = try restorationStore.load()
@@ -387,6 +392,7 @@ final class SessionStore {
         }
         selectedSessionID = consoleID
         if let record { startingRestorations[consoleID] = record }
+        persistTicketAssociation(for: request, claudeID: claudeID)
 
         do {
             try launcher.launch(
@@ -459,6 +465,18 @@ final class SessionStore {
         return consoleID
     }
 
+    /// Remembers the ticket a launch belongs to: the Jira source key
+    /// directly, or Console's `S-1234` new-ticket display name. Read later by
+    /// the Previous Sessions history for card classification.
+    private func persistTicketAssociation(for request: SessionCreationRequest, claudeID: UUID) {
+        if case let .jira(key, _, _) = request.source {
+            ticketAssociations.associate(key, with: claudeID)
+        } else if request.purpose == .newTicket,
+                  SessionTicketClassification.consoleStoryName(request.name) {
+            ticketAssociations.associate(request.name, with: claudeID)
+        }
+    }
+
     /// Initial informational chips for a launch's source context so the row
     /// shows its ticket/MR immediately, before any bridge artifacts arrive.
     static func initialArtifacts(for source: SessionLaunchSource?) -> [SessionArtifact] {
@@ -476,6 +494,22 @@ final class SessionStore {
                 name: name,
                 workingDirectory: workingDirectory
             )
+        )
+    }
+
+    /// Typed resume entry point: reopens a previous Claude conversation with
+    /// `claude --resume <session-id>` in a fresh Console terminal at the
+    /// conversation's recorded working directory. Bridge instrumentation and
+    /// rollback behave exactly like a fresh launch.
+    @discardableResult
+    func resumeSession(from record: SessionRestorationRecord) throws -> UUID {
+        try createSession(
+            request: SessionCreationRequest(
+                purpose: .general,
+                name: record.name,
+                workingDirectory: record.workingDirectory
+            ),
+            resuming: record
         )
     }
 

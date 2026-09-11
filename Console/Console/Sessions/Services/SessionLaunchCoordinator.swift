@@ -36,6 +36,8 @@ final class SessionLaunchCoordinator {
         case sessionFolderMissing
         case sessionFolderUnavailable
         case sessionFolderNotAGitRepository
+        case resumeFolderMissing
+        case resumeTranscriptMissing
 
         var errorDescription: String? {
             switch self {
@@ -45,6 +47,10 @@ final class SessionLaunchCoordinator {
                 return "The Session Folder is no longer available. Choose another in Settings → Claude."
             case .sessionFolderNotAGitRepository:
                 return "Review sessions need a Git repository. Choose a Session Folder that contains a Git checkout in Settings → Claude."
+            case .resumeFolderMissing:
+                return "The session's working folder no longer exists, so it cannot be resumed."
+            case .resumeTranscriptMissing:
+                return "That transcript is no longer available, so the session cannot be resumed."
             }
         }
     }
@@ -63,6 +69,8 @@ final class SessionLaunchCoordinator {
     @ObservationIgnored private let workspaceStore: SessionWorkspaceStore
     @ObservationIgnored private let gitInspector: any LocalGitInspecting
     @ObservationIgnored private let recheckGate: (@MainActor () async -> Void)?
+    /// Root of Claude's local transcript history, checked before a resume.
+    @ObservationIgnored private let historyRoot: URL
     /// Canonical paths claimed by in-flight launches or pending warnings so
     /// two simultaneous requests cannot both skip the occupancy check.
     @ObservationIgnored private var occupancyClaims: [UUID: String] = [:]
@@ -71,12 +79,14 @@ final class SessionLaunchCoordinator {
         store: SessionStore,
         workspaceStore: SessionWorkspaceStore,
         gitInspector: (any LocalGitInspecting)? = nil,
-        recheckGate: (@MainActor () async -> Void)? = nil
+        recheckGate: (@MainActor () async -> Void)? = nil,
+        historyRoot: URL = SessionHistoryReader.claudeProjectsRoot
     ) {
         self.store = store
         self.workspaceStore = workspaceStore
         self.gitInspector = gitInspector ?? LocalGitWorkingCopyInspector()
         self.recheckGate = recheckGate
+        self.historyRoot = historyRoot
     }
 
     // MARK: - Drafts
@@ -156,6 +166,37 @@ final class SessionLaunchCoordinator {
         return try await performLaunch(draft: draft, folder: folder)
     }
 
+    /// Resumes a previous Claude conversation by its session ID. The
+    /// transcript and recorded working directory are validated first; the
+    /// same checkout-collision handling as fresh launches applies. Returns
+    /// the new session ID, or nil when a shared-checkout warning is pending.
+    @discardableResult
+    func launchResume(record: SessionRestorationRecord) async throws -> UUID? {
+        lastFailure = nil
+        clearCollision(releasingClaim: true)
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(
+            atPath: record.workingDirectory.path, isDirectory: &isDirectory
+        ), isDirectory.boolValue else {
+            throw LaunchError.resumeFolderMissing
+        }
+        let transcriptURL = historyRoot
+        guard directoryContainsTranscript(named: record.claudeSessionID.uuidString, under: transcriptURL) else {
+            throw LaunchError.resumeTranscriptMissing
+        }
+
+        var prepared = draft(purpose: .general, source: nil)
+        prepared.name = record.name
+        return try await performOccupancyGatedLaunch(
+            draft: prepared,
+            workingDirectory: record.workingDirectory,
+            action: .resume(record: record),
+            acknowledgeSharedCheckout: false,
+            existingClaimID: nil
+        )
+    }
+
     /// The single Session Folder, validated for this purpose. Refuses —
     /// never silently falls back to another directory — when unset,
     /// unavailable, or (for reviews) not a Git repository.
@@ -186,15 +227,25 @@ final class SessionLaunchCoordinator {
     }
 
     /// Explicit acknowledgement: launch in the same checkout without
-    /// resetting, stashing, switching branches, or stopping occupants.
+    /// resetting, stashing, switching branches, or stopping occupants. A
+    /// pending resume keeps its restoration record; a fresh launch keeps the
+    /// Session Folder validation.
     @discardableResult
     func continueInSameFolder() async throws -> UUID? {
         guard let pending = pendingCollision else { return nil }
         lastFailure = nil
         do {
-            return try await performLaunch(
+            let workingDirectory: URL
+            switch pending.action {
+            case .create:
+                workingDirectory = try validatedSessionFolder(purpose: pending.draft.purpose).directoryURL
+            case .resume(let record):
+                workingDirectory = record.workingDirectory
+            }
+            return try await performOccupancyGatedLaunch(
                 draft: pending.draft,
-                folder: validatedSessionFolder(purpose: pending.draft.purpose),
+                workingDirectory: workingDirectory,
+                action: pending.action,
                 acknowledgeSharedCheckout: true,
                 existingClaimID: pending.claimID
             )
@@ -248,7 +299,32 @@ final class SessionLaunchCoordinator {
         acknowledgeSharedCheckout: Bool = false,
         existingClaimID: UUID? = nil
     ) async throws -> UUID? {
-        let canonicalPath = CheckoutPath.canonical(folder.directoryURL)
+        try await performOccupancyGatedLaunch(
+            draft: draft,
+            workingDirectory: folder.directoryURL,
+            action: .create(request: SessionCreationRequest(
+                purpose: draft.purpose,
+                name: draft.name,
+                workingDirectory: folder.directoryURL,
+                source: draft.source
+            )),
+            acknowledgeSharedCheckout: acknowledgeSharedCheckout,
+            existingClaimID: existingClaimID
+        )
+    }
+
+    /// Shared occupancy-claim and shared-checkout-warning gate. The action
+    /// executes only when the checkout is free, or the user acknowledged
+    /// sharing it. Returns nil when a warning is now pending instead of
+    /// launching.
+    private func performOccupancyGatedLaunch(
+        draft: SessionDraft,
+        workingDirectory: URL,
+        action: PendingLaunchAction,
+        acknowledgeSharedCheckout: Bool,
+        existingClaimID: UUID?
+    ) async throws -> UUID? {
+        let canonicalPath = CheckoutPath.canonical(workingDirectory)
 
         let claimID = existingClaimID ?? UUID()
         if existingClaimID == nil {
@@ -269,7 +345,8 @@ final class SessionLaunchCoordinator {
            let warning = await warningIfOccupied(
             draft: draft,
             canonicalPath: canonicalPath,
-            claimID: claimID
+            claimID: claimID,
+            action: action
            ) {
             presentCollision(warning)
             return nil
@@ -281,20 +358,20 @@ final class SessionLaunchCoordinator {
            let warning = await warningIfOccupied(
             draft: draft,
             canonicalPath: canonicalPath,
-            claimID: claimID
+            claimID: claimID,
+            action: action
            ) {
             presentCollision(warning)
             return nil
         }
 
-        let request = SessionCreationRequest(
-            purpose: draft.purpose,
-            name: draft.name,
-            workingDirectory: folder.directoryURL,
-            source: draft.source
-        )
-
-        let sessionID = try store.createSession(request: request)
+        let sessionID: UUID
+        switch action {
+        case .create(let request):
+            sessionID = try store.createSession(request: request)
+        case .resume(let record):
+            sessionID = try store.resumeSession(from: record)
+        }
         created = true
         occupancyClaims.removeValue(forKey: claimID)
 
@@ -304,10 +381,29 @@ final class SessionLaunchCoordinator {
         return sessionID
     }
 
+    /// Cheap transcript-existence check for the resume path: any project
+    /// directory under Claude's history root may hold the transcript.
+    private func directoryContainsTranscript(named sessionID: String, under root: URL) -> Bool {
+        let fileManager = FileManager.default
+        guard let projectDirs = try? fileManager.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+        ) else {
+            return false
+        }
+        let fileName = "\(sessionID).jsonl"
+        for projectDir in projectDirs {
+            if fileManager.fileExists(atPath: projectDir.appendingPathComponent(fileName).path) {
+                return true
+            }
+        }
+        return false
+    }
+
     private func warningIfOccupied(
         draft: SessionDraft,
         canonicalPath: String,
-        claimID: UUID
+        claimID: UUID,
+        action: PendingLaunchAction
     ) async -> PendingSharedCheckoutWarning? {
         let first = occupancy(canonicalPath: canonicalPath, excludingClaim: claimID)
         guard first.hasConflict else { return nil }
@@ -318,6 +414,7 @@ final class SessionLaunchCoordinator {
             id: UUID(),
             claimID: claimID,
             draft: draft,
+            action: action,
             canonicalPath: canonicalPath,
             occupants: second.occupants,
             gitState: gitState,

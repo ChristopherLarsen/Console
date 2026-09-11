@@ -100,8 +100,26 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             pluginAssembler: pluginAssembler ?? ConsoleClaudePluginAssembler()
         )
         let workspaces = SessionWorkspaceStore(defaults: defaults!)
-        let coordinator = SessionLaunchCoordinator(store: store, workspaceStore: workspaces)
+        let coordinator = SessionLaunchCoordinator(
+            store: store,
+            workspaceStore: workspaces,
+            historyRoot: tmpRoot!.appendingPathComponent("claude-projects", isDirectory: true)
+        )
         return Stack(store: store, workspaces: workspaces, coordinator: coordinator, launcher: launcher)
+    }
+
+    /// Creates a transcript fixture for `sessionID` in the stack's fake
+    /// Claude history root.
+    private func writeHistoryTranscript(_ sessionID: UUID) throws {
+        let projectDir = tmpRoot!.appendingPathComponent("claude-projects/-fixture", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        let lines = [
+            #"{"type":"user","timestamp":"2026-09-10T12:00:00.000Z","cwd":"\#(tmpRoot!.path)","isSidechain":false,"message":{"role":"user","content":"resume fixture"}}"#,
+        ]
+        try lines.joined(separator: "\n").write(
+            to: projectDir.appendingPathComponent("\(sessionID.uuidString).jsonl"),
+            atomically: true, encoding: .utf8
+        )
     }
 
     private struct GitFixtureError: Error {}
@@ -698,5 +716,102 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             .rejected(.sessionNotAcceptingInput)
         )
         assertSourceMetadataAbsent(from: stack)
+    }
+
+    // MARK: - Resume from transcript history
+
+    private func resumeRecord(_ sessionID: UUID, directory: URL) -> SessionRestorationRecord {
+        SessionRestorationRecord(
+            claudeSessionID: sessionID,
+            name: "Fix SCRUM-9 login redirect",
+            workingDirectory: directory,
+            purpose: .general
+        )
+    }
+
+    func testResumeLaunchesClaudeWithResumeArgumentsInRecordedDirectory() async throws {
+        let stack = makeStack()
+        let directory = tmpRoot!.appendingPathComponent("Resume", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let historyID = UUID()
+        try writeHistoryTranscript(historyID)
+
+        let sessionID = try await stack.coordinator.launchResume(
+            record: resumeRecord(historyID, directory: directory)
+        )
+        let unwrappedID = try XCTUnwrap(sessionID)
+
+        let session = try XCTUnwrap(stack.store.session(withID: unwrappedID))
+        XCTAssertEqual(session.workingDirectory, directory, "resume reopens in the recorded working directory")
+        XCTAssertEqual(session.name, "Fix SCRUM-9 login redirect")
+        XCTAssertEqual(stack.launcher.launchCount, 1)
+        let args = try XCTUnwrap(stack.launcher.lastArguments)
+        XCTAssertEqual(args.prefix(2), ["--resume", historyID.uuidString], "resume arguments are exact")
+        XCTAssertTrue(args.contains("--dangerously-skip-permissions"))
+        XCTAssertNil(stack.coordinator.lastFailureMessage)
+        // The resumed conversation keeps its transcript identity.
+        XCTAssertEqual(session.claudeSessionID, historyID)
+    }
+
+    func testResumeWithoutTranscriptThrowsActionableError() async throws {
+        let stack = makeStack()
+        let directory = tmpRoot!.appendingPathComponent("NoTranscript", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        do {
+            _ = try await stack.coordinator.launchResume(
+                record: resumeRecord(UUID(), directory: directory)
+            )
+            XCTFail("expected resumeTranscriptMissing")
+        } catch let error as SessionLaunchCoordinator.LaunchError {
+            XCTAssertEqual(error, .resumeTranscriptMissing)
+            XCTAssertTrue(error.errorDescription?.contains("transcript") == true)
+        }
+    }
+
+    func testResumeWithMissingWorkingDirectoryThrowsActionableError() async throws {
+        let stack = makeStack()
+        let historyID = UUID()
+        try writeHistoryTranscript(historyID)
+        let gone = tmpRoot!.appendingPathComponent("gone-resume", isDirectory: true)
+
+        do {
+            _ = try await stack.coordinator.launchResume(record: resumeRecord(historyID, directory: gone))
+            XCTFail("expected resumeFolderMissing")
+        } catch let error as SessionLaunchCoordinator.LaunchError {
+            XCTAssertEqual(error, .resumeFolderMissing)
+        }
+        XCTAssertEqual(stack.launcher.launchCount, 0)
+    }
+
+    func testResumeIntoOccupiedCheckoutWarnsAndLaunchesNothing() async throws {
+        let stack = makeStack()
+        let directory = try addWorkspace(stack, named: "Shared")
+        let historyID = UUID()
+        try writeHistoryTranscript(historyID)
+
+        let first = try await requireLaunch(
+            stack, draft: stack.coordinator.draft(purpose: .general, source: nil)
+        )
+        XCTAssertEqual(stack.launcher.launchCount, 1)
+
+        let resumed = try await stack.coordinator.launchResume(
+            record: resumeRecord(historyID, directory: directory.directoryURL)
+        )
+        XCTAssertNil(resumed, "occupied checkout presents the warning instead of launching")
+        XCTAssertNil(stack.coordinator.lastFailureMessage)
+        XCTAssertEqual(stack.launcher.launchCount, 1, "no second process started")
+        XCTAssertEqual(stack.coordinator.pendingCollision?.occupants.count, 1)
+        XCTAssertEqual(stack.coordinator.pendingCollision?.occupants.first?.id, first)
+
+        // Acknowledging continues the resume through the same draft.
+        let second = try await stack.coordinator.continueInSameFolder()
+        let resumedSession = try XCTUnwrap(second.flatMap { stack.store.session(withID: $0) })
+        XCTAssertEqual(resumedSession.workingDirectory, directory.directoryURL)
+        XCTAssertEqual(
+            try XCTUnwrap(stack.launcher.lastArguments).prefix(2),
+            ["--resume", historyID.uuidString],
+            "the acknowledged continue still resumes the same conversation"
+        )
     }
 }

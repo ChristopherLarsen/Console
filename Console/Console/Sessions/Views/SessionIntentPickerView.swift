@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Compact launcher: four intent rows and a collapsed Customize area.
-/// Sessions always start in the single Session Folder (Settings → Claude).
+/// Compact launcher: intent rows plus a Previous Sessions entry point, and a
+/// collapsed Customize area. Sessions always start in the single Session
+/// Folder (Settings → Claude).
 struct SessionIntentPickerView: View {
     @Environment(SessionStore.self) private var store
     @Environment(SessionLaunchCoordinator.self) private var coordinator
@@ -30,6 +31,7 @@ struct SessionIntentPickerView: View {
     @State private var inlineError: String?
     @State private var errorMessage: String?
     @State private var showsSettingsRoute = false
+    @State private var showsPreviousSessions = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -66,6 +68,13 @@ struct SessionIntentPickerView: View {
         }
         .padding(16)
         .frame(width: 380)
+        .sheet(isPresented: $showsPreviousSessions) {
+            PreviousSessionsView(onFinished: { dismiss() })
+                .frame(
+                    minWidth: 560, idealWidth: 800, maxWidth: 940,
+                    minHeight: 420, idealHeight: 600, maxHeight: 860
+                )
+        }
         // Contain rather than replace: without this the root identifier
         // leaks onto every child and hides the per-row identifiers.
         .accessibilityElement(children: .contain)
@@ -88,6 +97,19 @@ struct SessionIntentPickerView: View {
                 .accessibilityLabel("\(purpose.displayName). \(purpose.intentDescription)")
                 .accessibilityIdentifier("Sessions.Intent.\(purpose.rawValue)")
             }
+
+            Button {
+                errorMessage = nil
+                showsSettingsRoute = false
+                showsPreviousSessions = true
+            } label: {
+                resumeSessionRowLabel
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("6")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Resume Session. Reopen a previous Claude conversation from its transcript history.")
+            .accessibilityIdentifier("Sessions.Launcher.ResumeSession")
         }
     }
 
@@ -109,6 +131,35 @@ struct SessionIntentPickerView: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        )
+        .contentShape(Rectangle())
+    }
+
+    private var resumeSessionRowLabel: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 18))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 24)
+
+            Text("Resume Session")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+
+            Spacer(minLength: 0)
+
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
         }
         .padding(10)
         .background(
