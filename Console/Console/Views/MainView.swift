@@ -230,6 +230,15 @@ struct MainView: View {
                     terminalPanelHeight = newMax
                 }
             }
+            .onChange(of: isDrawerVisuallyExpanded) { _, expanded in
+                guard expanded else { return }
+                // Revealing the drawer claims the lower half of the view;
+                // the drag handle still adjusts it afterwards.
+                terminalPanelHeight = max(
+                    Self.terminalMinExpandedHeight,
+                    min(geometry.size.height * 0.5, maxTerminalHeight)
+                )
+            }
         }
     }
 
