@@ -6,8 +6,18 @@ import SwiftTerm
 struct SessionTerminalPane: View {
     let session: ConsoleSession
     let displayedState: DisplayedSessionState
+    let onQuickCommand: (String) -> Void
     let onColor: (String) -> Void
     let onTerminate: () -> Void
+
+    /// The Quick Commands configured in Settings. `@AppStorage` observes the
+    /// same defaults key the settings window writes, so edits show up here
+    /// immediately.
+    @AppStorage(AppSettings.quickCommandsKey) private var quickCommandsJSON: String = "[]"
+
+    private var quickCommands: [String] {
+        AppSettings.decodeQuickCommands(from: quickCommandsJSON)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -67,6 +77,8 @@ struct SessionTerminalPane: View {
 
             mergeRequestBadge
 
+            quickCommandsMenu
+
             colorMenu
 
             Button(action: onTerminate) {
@@ -121,6 +133,48 @@ struct SessionTerminalPane: View {
         ConsoleNavigation.show(.mergeRequests)
     }
 
+    /// Quick Commands configured in Settings, rendered as a capsule menu
+    /// immediately left of the color picker. Selecting an entry routes through
+    /// the shared replacement-and-submit path: the current line is cleared, the
+    /// command is inserted, and Return is pressed. Disabled after Claude
+    /// exits — there is no prompt left to accept a command.
+    private var quickCommandsMenu: some View {
+        Menu {
+            let commands = quickCommands
+            if commands.isEmpty {
+                Button("Add commands in Settings.") {}
+                    .disabled(true)
+                    .accessibilityIdentifier("Sessions.QuickCommand.EmptyState")
+            } else {
+                ForEach(Array(commands.enumerated()), id: \.offset) { index, command in
+                    Button(command) {
+                        onQuickCommand(command)
+                    }
+                    .accessibilityIdentifier("Sessions.QuickCommand.\(index)")
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Text("Command")
+                    .font(.caption)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
+            .overlay(Capsule().stroke(Color(nsColor: .separatorColor), lineWidth: 0.5))
+            .contentShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(session.activity == .exited)
+        .help("Replace the current input line and press Return. Clear multiline drafts manually first.")
+        .accessibilityLabel("Quick Commands")
+        .accessibilityIdentifier("Sessions.QuickCommandsMenu")
+    }
+
     /// Palette for Claude Code's `/color` command. Disabled after Claude
     /// exits — including while the pane sits at its fallback login shell —
     /// because there is no Claude prompt left to accept the command.
@@ -146,7 +200,7 @@ struct SessionTerminalPane: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .disabled(session.activity == .exited)
-        .help("Set Claude session color — use with an empty prompt.")
+        .help("Set Claude session color — replaces the current input line. Clear multiline drafts manually first.")
         .accessibilityLabel("Set Claude Session Color")
         .accessibilityIdentifier("SessionColorMenu")
     }

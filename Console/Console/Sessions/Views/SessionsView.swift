@@ -326,6 +326,10 @@ struct SessionsView: View {
                     activity: session.activity,
                     attention: session.attention
                 ),
+                onQuickCommand: { command in
+                    store.sendSlashCommand(command, to: session.id)
+                    store.focusSelectedTerminal()
+                },
                 onColor: { argument in
                     store.sendColorCommand(argument, to: session.id)
                     store.focusSelectedTerminal()

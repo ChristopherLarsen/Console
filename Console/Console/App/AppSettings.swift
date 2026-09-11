@@ -39,6 +39,43 @@ class AppSettings {
     static let defaultTerminalFolderKey = "defaultTerminalFolder"
     static let defaultTerminalFolderDefault = "~"
 
+    // Terminal Quick Commands
+    /// JSON-encoded `[String]` of Quick Commands, shown in their configured
+    /// order in the terminal header's Command menu. Empty list by default.
+    static let quickCommandsKey = "terminalQuickCommands"
+    static let quickCommandsLimit = 10
+    /// Placeholder for the Settings add-command field.
+    static let quickCommandsPlaceholder = "/review-mr"
+
+    /// A quick command must be a single non-empty line; anything else is
+    /// rejected so the header menu never submits a broken entry.
+    static func sanitizedQuickCommand(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains(where: \.isNewline) else { return nil }
+        return trimmed
+    }
+
+    /// Sanitizes a stored list at the limit, preserving configured order.
+    static func sanitizedQuickCommands(_ raw: [String]) -> [String] {
+        var valid = raw.compactMap { sanitizedQuickCommand($0) }
+        if valid.count > quickCommandsLimit {
+            valid.removeLast(valid.count - quickCommandsLimit)
+        }
+        return valid
+    }
+
+    static func encodeQuickCommands(_ commands: [String]) -> String {
+        let capped = sanitizedQuickCommands(commands)
+        guard let data = try? JSONEncoder().encode(capped) else { return "[]" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    static func decodeQuickCommands(from stored: String?) -> [String] {
+        guard let stored, let data = stored.data(using: .utf8),
+              let commands = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return Array(sanitizedQuickCommands(commands))
+    }
+
     /// Expands the stored terminal folder setting to a real start directory,
     /// falling back to the home directory when unset, empty, or missing.
     static func resolvedTerminalStartDirectory(from stored: String?) -> String {

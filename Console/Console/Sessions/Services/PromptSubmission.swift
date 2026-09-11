@@ -53,4 +53,18 @@ enum PromptSubmissionEngine {
     static func slashCommandBytes(_ command: String) -> [UInt8] {
         Array(command.utf8) + returnBytes
     }
+
+    /// Control bytes that empty a TUI editor's current input line: Ctrl+U kills
+    /// the input before the cursor, Ctrl+K kills from the cursor to the end.
+    /// Together they clear the current line regardless of cursor position.
+    /// They do not clear earlier lines of multiline input. Ctrl+C would clear
+    /// those too, but can interrupt running work or arm Claude's exit shortcut.
+    static let clearDraftBytes: [UInt8] = [0x15, 0x0B]
+
+    /// Byte sequence for a header-menu command such as a Quick Command or
+    /// `/color`: clear the editor's current line, insert `command`, then
+    /// press Return. Header-menu commands are always single-line.
+    static func replacementCommandBytes(_ command: String) -> [UInt8] {
+        clearDraftBytes + Array(command.utf8) + returnBytes
+    }
 }

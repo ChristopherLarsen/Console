@@ -20,6 +20,10 @@ struct SettingsView: View {
 
     @AppStorage(AppSettings.defaultTerminalFolderKey) private var defaultTerminalFolder: String = AppSettings.defaultTerminalFolderDefault
 
+    @AppStorage(AppSettings.quickCommandsKey) private var quickCommandsJSON: String = "[]"
+    @State private var quickCommands: [String] = []
+    @State private var newQuickCommand = ""
+
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
     @Environment(UpdateManager.self) private var updateManager
     @State private var detectedClaudePath: String?
@@ -36,6 +40,7 @@ struct SettingsView: View {
             claudeSection
             ManagedClaudeAccessSection()
             terminalSection
+            quickCommandsSection
             urlsSection
             mrReviewScansSection
             appearanceSection
@@ -51,6 +56,7 @@ struct SettingsView: View {
             }
             detectedClaudePath = locator.locate()
             dispositionPromptDraft = mrDispositionPrompt
+            quickCommands = AppSettings.decodeQuickCommands(from: quickCommandsJSON)
         }
     }
 
@@ -219,6 +225,120 @@ struct SettingsView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    // MARK: - Quick Commands
+
+    private var quickCommandsSection: some View {
+        Section {
+            ForEach(quickCommands.indices, id: \.self) { index in
+                quickCommandRow(index: index)
+            }
+
+            HStack(spacing: 12) {
+                TextField(
+                    "",
+                    text: $newQuickCommand,
+                    prompt: Text(AppSettings.quickCommandsPlaceholder)
+                        .foregroundStyle(Color(nsColor: .placeholderTextColor))
+                )
+                    .textFieldStyle(.plain)
+                    .lineLimit(1)
+                    .padding(6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                    )
+                    .onSubmit(addQuickCommand)
+                    .disabled(quickCommands.count >= AppSettings.quickCommandsLimit)
+                    .accessibilityIdentifier("Settings.QuickCommands.Field")
+
+                Button("Add") { addQuickCommand() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    .disabled(quickCommands.count >= AppSettings.quickCommandsLimit
+                              || AppSettings.sanitizedQuickCommand(newQuickCommand) == nil)
+                    .accessibilityIdentifier("Settings.QuickCommands.AddButton")
+            }
+
+            Text("Up to \(AppSettings.quickCommandsLimit) single-line commands. Picking one in a terminal replaces the current input line and presses Return. Clear multiline drafts manually first.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text("Quick Commands")
+        }
+    }
+
+    private func quickCommandRow(index: Int) -> some View {
+        HStack(spacing: 12) {
+            Text("\(index + 1)")
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            TextField(
+                "",
+                text: quickCommandBinding(index)
+            )
+                .textFieldStyle(.plain)
+                .lineLimit(1)
+                .padding(6)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                )
+                .accessibilityIdentifier("Settings.QuickCommands.Row.\(index)")
+
+            Button {
+                removeQuickCommand(at: index)
+            } label: {
+                Image(systemName: "minus.circle")
+                    .foregroundStyle(.red)
+            }
+            .buttonStyle(.plain)
+            .help("Remove Command")
+            .accessibilityLabel("Remove Command \(index + 1)")
+            .accessibilityIdentifier("Settings.QuickCommands.RemoveButton.\(index)")
+        }
+    }
+
+    private func quickCommandBinding(_ index: Int) -> Binding<String> {
+        Binding(
+            get: { quickCommands.indices.contains(index) ? quickCommands[index] : "" },
+            set: { newValue in
+                guard quickCommands.indices.contains(index) else { return }
+                quickCommands[index] = newValue
+                persistQuickCommands()
+            }
+        )
+    }
+
+    private func addQuickCommand() {
+        guard let command = AppSettings.sanitizedQuickCommand(newQuickCommand),
+              quickCommands.count < AppSettings.quickCommandsLimit else { return }
+        quickCommands.append(command)
+        newQuickCommand = ""
+        persistQuickCommands()
+    }
+
+    private func removeQuickCommand(at index: Int) {
+        guard quickCommands.indices.contains(index) else { return }
+        quickCommands.remove(at: index)
+        persistQuickCommands()
+    }
+
+    /// Writes the working list back to storage; blank or multiline entries
+    /// never persist because encoding sanitizes each entry.
+    private func persistQuickCommands() {
+        quickCommandsJSON = AppSettings.encodeQuickCommands(quickCommands)
     }
 
     private func chooseTerminalFolder() {
