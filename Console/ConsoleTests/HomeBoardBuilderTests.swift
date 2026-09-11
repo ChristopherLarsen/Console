@@ -110,6 +110,26 @@ final class HomeBoardBuilderTests: XCTestCase {
         XCTAssertEqual(HomeBoardBuilder.nextStoryTicket(in: tickets)?.key, "B")
     }
 
+    func testNextStoriesOrdersParkedTicketsByPreferenceCascade() {
+        let tickets = [
+            ticket(key: "A", status: "Backlog", order: 0),
+            ticket(key: "B", status: "Next Up", order: 1),
+            ticket(key: "C", status: "In Progress", order: 2),
+            ticket(key: "D", status: "Next Up", order: 3),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.nextStories(in: tickets).map(\.key), ["B", "D", "A"])
+    }
+
+    func testNextUpCountCountsOnlyExactNextUpStatus() {
+        let tickets = [
+            ticket(key: "A", status: "Next Up", order: 0),
+            ticket(key: "B", status: "Next Up", order: 1),
+            ticket(key: "C", status: "Backlog", order: 2),
+            ticket(key: "D", status: "In Progress", order: 3),
+        ]
+        XCTAssertEqual(tickets.filter { HomeBoardBuilder.isNextUp($0) }.count, 2)
+    }
+
     // MARK: - In progress
 
     func testInProgressKeepsOnlyActiveVocabularyInHostOrder() {

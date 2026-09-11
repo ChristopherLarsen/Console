@@ -71,11 +71,11 @@ struct HomeView: View {
 
     // MARK: Next
 
-    /// Next holds one slot: the story slot follows Jira health. The column
-    /// itself always renders content; the slot owns its state presentation.
+    /// Next holds the parked stories worth starting, best first. The column
+    /// itself always renders content; each card owns its state presentation.
     private func nextColumn(_ board: HomeBoard, sessions: [ConsoleSession]) -> some View {
         HomeBoardColumn(
-            title: "Next Story",
+            title: "Next up",
             detail: nil,
             health: .ready,
             content: {
@@ -108,18 +108,18 @@ struct HomeView: View {
     private func nextStorySlot(_ board: HomeBoard, sessions: [ConsoleSession]) -> some View {
         switch board.jiraHealth {
         case .ready:
-            if let story = board.nextStory {
-                nextStoryCard(story, sessions: sessions)
-            } else {
+            if board.nextStories.isEmpty {
                 HomeBoardPlaceholderCard(
                     title: "No story",
                     detail: "Open JIRA to pick something new.",
                     accessibilityIdentifier: "HomeNextNoStoryPlaceholder"
                 )
+            } else {
+                nextStoryCards(board, sessions: sessions)
             }
         case .updating, .stale:
-            if let story = board.nextStory {
-                nextStoryCard(story, sessions: sessions)
+            if !board.nextStories.isEmpty {
+                nextStoryCards(board, sessions: sessions)
             }
         case .loading:
             HomeSkeletonCard()
@@ -131,20 +131,39 @@ struct HomeView: View {
         }
     }
 
-    /// The Next story card: open the issue in JIRA, or start a session on it.
+    @ViewBuilder
+    private func nextStoryCards(_ board: HomeBoard, sessions: [ConsoleSession]) -> some View {
+        ForEach(
+            Array(board.nextStories.prefix(Self.maxNextStories).enumerated()),
+            id: \.element.key
+        ) { index, story in
+            nextStoryCard(story, sessions: sessions, index: index)
+        }
+
+        if board.nextUpCount > Self.maxNextStories {
+            Text("There are \(board.nextUpCount) Next Up stories")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .accessibilityIdentifier("HomeNextOverflowFooter")
+        }
+    }
+
+    /// A Next up card: open the issue in JIRA, or start a session on it.
     /// Starting routes through the shared launch journey — it opens the
     /// story's live session when one exists, launches on current data, and
     /// requests a refresh against stale data.
     private func nextStoryCard(
         _ story: JiraTicketSummary,
-        sessions: [ConsoleSession]
+        sessions: [ConsoleSession],
+        index: Int
     ) -> some View {
         let isLaunching = model.launchingTicketKeys.contains(story.key)
         return HomeBoardTicketCard(
             ticket: story,
             stateLine: story.status,
             bottomActions: [
-                HomeCardAction(label: "Open story") { model.openStory(story) },
+                HomeCardAction(label: "Open in JIRA") { model.openStory(story) },
                 HomeCardAction(label: isLaunching ? "Starting…" : "Start story") {
                     guard !isLaunching else { return }
                     Task {
@@ -155,12 +174,14 @@ struct HomeView: View {
             cardAction: { model.openStory(story) },
             isLaunching: isLaunching
         )
-        .accessibilityIdentifier("HomeNextStoryCard")
+        .accessibilityIdentifier("HomeNextStoryCard.\(index)")
     }
 
     // MARK: In Progress
 
     /// Display limits apply after the full queues have been ordered.
+    static let maxNextStories = 3
+
     static let maxInProgressStories = 9
 
     static let maxReviewRequests = 9

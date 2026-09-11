@@ -73,21 +73,27 @@ enum HomeBoardSource: String, Equatable, Sendable {
     }
 }
 
-/// The three-column Home board: one decided story, the in-progress stories,
-/// and the review queue ordered most-urgent-first. Selection, filtering, and
-/// ordering are pure; the view only renders.
+/// The three-column Home board: the parked stories to start next, the
+/// in-progress stories, and the review queue ordered most-urgent-first.
+/// Selection, filtering, and ordering are pure; the view only renders.
 struct HomeBoard: Equatable, Sendable {
     var jiraHealth = HomeBoardHealth.unconfigured
     var reviewHealth = HomeBoardHealth.unconfigured
 
-    /// The one parked story the user should start next.
-    var nextStory: JiraTicketSummary?
+    /// Parked stories the user could start next, most preferred first.
+    var nextStories: [JiraTicketSummary] = []
+    /// Parked tickets whose host status is exactly "Next Up"; Backlog and
+    /// every other parked status never count.
+    var nextUpCount = 0
     /// Every review-request row, most urgent first. The most urgent row is
     /// the "next MR to review".
     var reviewQueue: [MergeRequestSummary] = []
     /// Stories whose host status is actively in progress or in review,
     /// source order.
     var inProgressTickets: [JiraTicketSummary] = []
+
+    /// The one parked story the user should start next.
+    var nextStory: JiraTicketSummary? { nextStories.first }
 }
 
 enum HomeBoardBuilder {
@@ -117,7 +123,8 @@ enum HomeBoardBuilder {
         board.reviewHealth = health(for: snapshot.reviewStatus, hasRetained: !snapshot.reviewItems.isEmpty)
 
         if board.jiraHealth.retainsContent {
-            board.nextStory = nextStoryTicket(in: snapshot.jiraTickets)
+            board.nextStories = nextStories(in: snapshot.jiraTickets)
+            board.nextUpCount = snapshot.jiraTickets.filter { isNextUp($0) }.count
             board.inProgressTickets = snapshot.jiraTickets.filter {
                 switch AttentionChannel.forTicketStatus($0.status) {
                 case .active, .inFlight, .testing: return true
@@ -131,18 +138,18 @@ enum HomeBoardBuilder {
         return board
     }
 
-    /// The next story to start: the first parked ticket by preference
-    /// cascade. Unknown status vocabulary parks, so an unrecognized label
-    /// stays eligible to start. Cascade, in order:
+    /// Every parked story worth starting, best first. Unknown status
+    /// vocabulary parks, so an unrecognized label stays eligible to start.
+    /// Preference cascade, in order:
     ///   1. Status tier — "Next Up" outranks every other parked status
     ///      ("Backlog", "To Do", unrecognized).
     ///   2. Type tier within one status — Bug issues outrank everything
     ///      else; Features rank last; an unknown type sits in between.
     ///   3. Host order breaks remaining ties.
-    static func nextStoryTicket(in tickets: [JiraTicketSummary]) -> JiraTicketSummary? {
+    static func nextStories(in tickets: [JiraTicketSummary]) -> [JiraTicketSummary] {
         tickets
             .filter { AttentionChannel.forTicketStatus($0.status) == .parked }
-            .min { lhs, rhs in
+            .sorted { lhs, rhs in
                 let left = nextStoryPreference(lhs)
                 let right = nextStoryPreference(rhs)
                 if left.statusTier != right.statusTier { return left.statusTier < right.statusTier }
@@ -151,12 +158,22 @@ enum HomeBoardBuilder {
             }
     }
 
+    /// The single best parked story: the head of `nextStories(in:)`.
+    static func nextStoryTicket(in tickets: [JiraTicketSummary]) -> JiraTicketSummary? {
+        nextStories(in: tickets).first
+    }
+
+    /// True only for the exact host status "Next Up".
+    static func isNextUp(_ ticket: JiraTicketSummary) -> Bool {
+        normalizedText(ticket.status) == "next up"
+    }
+
     /// Preference rank for one parked ticket: lower wins. Status "Next Up"
     /// is tier 0, everything else tier 1. Within a tier, Bug issues are
     /// preferred (0), Features are deprioritized last (2), and any other or
     /// unknown type keeps host order in between (1).
     private static func nextStoryPreference(_ ticket: JiraTicketSummary) -> (statusTier: Int, typeTier: Int) {
-        let statusTier = normalizedText(ticket.status) == "next up" ? 0 : 1
+        let statusTier = isNextUp(ticket) ? 0 : 1
         let typeTier: Int
         switch normalizedText(ticket.issueType) {
         case let type? where type.hasPrefix("bug"): typeTier = 0
