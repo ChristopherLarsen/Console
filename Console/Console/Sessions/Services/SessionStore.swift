@@ -930,25 +930,39 @@ final class SessionStore {
         terminalView.send(data: bytes[...])
     }
 
-    // MARK: - Session color command
+    // MARK: - Header-menu commands
 
-    /// Sends Claude Code's `/color <argument>` slash command into the
-    /// session's PTY. A local slash command changes only the prompt bar
-    /// color, so the session's activity and attention are deliberately left
-    /// untouched — submitting a color must never mark the session Working.
-    /// Assumes an empty Claude prompt; rejected once the session has exited,
-    /// including while it sits at its fallback login shell.
+    /// Shared replacement-and-submit path for the terminal header's menus
+    /// (Quick Commands and the color palette): clears the current input line in the
+    /// terminal's actual input editor — Ctrl+U/Ctrl+K control bytes, not a
+    /// screen erase — then inserts `command` and presses Return. Status is
+    /// deliberately untouched; the bridge reports what the session does with
+    /// the command. Rejected once the session has exited, including while it
+    /// sits at its fallback login shell.
     @discardableResult
-    func sendColorCommand(_ argument: String, to sessionID: UUID) -> SubmissionResult {
+    func sendSlashCommand(_ command: String, to sessionID: UUID) -> SubmissionResult {
         guard let session = session(withID: sessionID) else {
             return .rejected(.sessionNotFound)
         }
         guard session.activity != .exited else {
             return .rejected(.sessionNotAcceptingInput)
         }
-        let bytes = PromptSubmissionEngine.slashCommandBytes("/color \(argument)")
+        let bytes = PromptSubmissionEngine.replacementCommandBytes(command)
         sendToTerminal(bytes, sessionID: sessionID, terminalView: session.terminalView)
         return .submitted
+    }
+
+    // MARK: - Session color command
+
+    /// Sends Claude Code's `/color <argument>` slash command through the
+    /// shared replacement-and-submit path: the editor's current line is cleared
+    /// first, then the command and Return are sent. A local slash command
+    /// changes only the prompt bar color, so the session's activity and
+    /// attention are deliberately left untouched — submitting a color must
+    /// never mark the session Working.
+    @discardableResult
+    func sendColorCommand(_ argument: String, to sessionID: UUID) -> SubmissionResult {
+        sendSlashCommand("/color \(argument)", to: sessionID)
     }
 
     #if DEBUG

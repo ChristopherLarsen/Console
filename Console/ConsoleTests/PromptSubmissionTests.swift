@@ -67,6 +67,35 @@ final class PromptSubmissionTests: XCTestCase {
         )
     }
 
+    // MARK: - Replacement command bytes (header menus)
+
+    func testClearDraftBytesAreCtrlUThenCtrlK() {
+        // 0x15 = Ctrl+U (kill before cursor), 0x0B = Ctrl+K (kill to end).
+        XCTAssertEqual(PromptSubmissionEngine.clearDraftBytes, [0x15, 0x0B])
+    }
+
+    func testReplacementCommandBytesOrderClearThenInsertThenReturn() {
+        let bytes = PromptSubmissionEngine.replacementCommandBytes("/review-mr")
+        XCTAssertEqual(
+            bytes,
+            PromptSubmissionEngine.clearDraftBytes
+                + Array("/review-mr".utf8)
+                + PromptSubmissionEngine.returnBytes
+        )
+        // The draft must be cleared before any command bytes are sent, and
+        // Return must come last so insertion and submission stay ordered.
+        XCTAssertEqual(Array(bytes.prefix(PromptSubmissionEngine.clearDraftBytes.count)),
+                       PromptSubmissionEngine.clearDraftBytes)
+        XCTAssertEqual(bytes.last, 0x0D)
+    }
+
+    func testReplacementCommandBytesForColorCommand() {
+        XCTAssertEqual(
+            PromptSubmissionEngine.replacementCommandBytes("/color purple"),
+            [0x15, 0x0B] + Array("/color purple".utf8) + [0x0D]
+        )
+    }
+
     // MARK: - Session color palette
 
     func testSessionColorPaletteMatchesClaudeCodeArguments() {

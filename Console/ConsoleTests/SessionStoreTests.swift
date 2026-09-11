@@ -913,9 +913,77 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertTrue(store.debugTerminalSendBytes.isEmpty)
     }
 
+    // MARK: - Header-menu replacement commands (Quick Commands + color)
+
+    func testQuickCommandSendsReplacementBytesToRequestedSessionOnly() throws {
+        let (store, _) = makeStore()
+        let first = try store.createSession(name: "First", workingDirectory: tmpDirectory("First"))
+        let second = try store.createSession(name: "Second", workingDirectory: tmpDirectory("Second"))
+
+        XCTAssertEqual(store.sendSlashCommand("/review-mr", to: first), .submitted)
+
+        XCTAssertEqual(store.debugTerminalSendBytes.count, 1)
+        let send = try XCTUnwrap(store.debugTerminalSendBytes.first)
+        XCTAssertEqual(send.sessionID, first, "quick commands must target the requested session only")
+        XCTAssertNotEqual(send.sessionID, second)
+        XCTAssertEqual(send.utf8, "\u{15}\u{0B}/review-mr\r")
+    }
+
+    func testQuickCommandRejectedAfterExit() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Doomed", workingDirectory: tmpDirectory("Doomed"))
+        store.handleProcessTerminated(sessionID: id)
+        XCTAssertEqual(store.session(withID: id)?.activity, .exited)
+
+        XCTAssertEqual(store.sendSlashCommand("/review-mr", to: id), .rejected(.sessionNotAcceptingInput))
+        XCTAssertTrue(store.debugTerminalSendBytes.isEmpty, "no bytes may reach an exited session")
+    }
+
+    func testQuickCommandRejectedForUnknownSession() throws {
+        let (store, _) = makeStore()
+        XCTAssertEqual(store.sendSlashCommand("/review-mr", to: UUID()), .rejected(.sessionNotFound))
+        XCTAssertTrue(store.debugTerminalSendBytes.isEmpty)
+    }
+
+    func testQuickCommandLeavesActivityAndAttentionUnchanged() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Live", workingDirectory: tmpDirectory("Live"))
+        store.debugReceiveEnvelope(BridgeEnvelope(
+            sessionID: id.uuidString,
+            token: try XCTUnwrap(store.debugSessionToken(id)),
+            eventID: UUID().uuidString,
+            kind: .lifecycle,
+            lifecycleEvent: .sessionStarted
+        ))
+        XCTAssertEqual(store.session(withID: id)?.activity, .idle)
+
+        XCTAssertEqual(store.sendSlashCommand("/review-mr", to: id), .submitted)
+        XCTAssertEqual(
+            store.session(withID: id)?.activity,
+            .idle,
+            "a header-menu command must not mark the session Working on its own"
+        )
+        XCTAssertEqual(store.session(withID: id)?.attention, SessionAttention.none)
+    }
+
+    func testQuickCommandClearsTheDraftBeforeTheCommand() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Drafted", workingDirectory: tmpDirectory("Drafted"))
+
+        XCTAssertEqual(store.sendSlashCommand("/review-mr", to: id), .submitted)
+
+        let send = try XCTUnwrap(store.debugTerminalSendBytes.first)
+        let utf8 = send.utf8
+        // The clear bytes must precede the command; the Return must follow it.
+        let clearPrefix = String(decoding: PromptSubmissionEngine.clearDraftBytes, as: UTF8.self)
+        XCTAssertTrue(utf8.hasPrefix(clearPrefix), "the draft must be cleared before inserting the command")
+        XCTAssertTrue(utf8.hasSuffix("\r"))
+        XCTAssertEqual(utf8.dropFirst(clearPrefix.count).dropLast(), "/review-mr")
+    }
+
     // MARK: - Session color command
 
-    func testColorCommandSendsExactBytesToRequestedSessionOnly() throws {
+    func testColorCommandSendsReplacementBytesToRequestedSessionOnly() throws {
         let (store, _) = makeStore()
         let first = try store.createSession(name: "First", workingDirectory: tmpDirectory("First"))
         let second = try store.createSession(name: "Second", workingDirectory: tmpDirectory("Second"))
@@ -926,7 +994,7 @@ final class SessionStoreTests: XCTestCase {
         let send = try XCTUnwrap(store.debugTerminalSendBytes.first)
         XCTAssertEqual(send.sessionID, first, "color command must target the requested session only")
         XCTAssertNotEqual(send.sessionID, second)
-        XCTAssertEqual(send.utf8, "/color purple\r")
+        XCTAssertEqual(send.utf8, "\u{15}\u{0B}/color purple\r")
     }
 
     func testColorCommandResetSendsDefaultArgument() throws {
@@ -934,7 +1002,7 @@ final class SessionStoreTests: XCTestCase {
         let id = try store.createSession(name: "Reset", workingDirectory: tmpDirectory("Reset"))
 
         XCTAssertEqual(store.sendColorCommand("default", to: id), .submitted)
-        XCTAssertEqual(store.debugTerminalSendBytes.first?.utf8, "/color default\r")
+        XCTAssertEqual(store.debugTerminalSendBytes.first?.utf8, "\u{15}\u{0B}/color default\r")
     }
 
     func testColorCommandRejectedAfterExit() throws {
