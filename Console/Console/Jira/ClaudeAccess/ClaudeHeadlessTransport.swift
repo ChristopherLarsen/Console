@@ -307,19 +307,22 @@ final class HeadlessProcessTransport: ClaudeHeadlessTransporting, @unchecked Sen
         }
     }
 
-    private enum ProcessExit {
+    enum ProcessExit: Equatable {
         case exited(Int32)
         case timedOut
     }
 
     /// Waits for process exit, racing the deadline. On deadline the child is
     /// terminated (SIGTERM, then SIGKILL after a short grace).
-    private static func awaitExit(_ process: Process, deadline: Date) async -> ProcessExit {
+    static func awaitExit(_ process: Process, deadline: Date) async -> ProcessExit {
         await withCheckedContinuation { continuation in
             let gate = ContinuationGate()
-            process.terminationHandler = { terminated in
+            // Unlike a handler installed after launch, waitUntilExit also
+            // observes children that exited before this waiter was registered.
+            DispatchQueue.global(qos: .userInitiated).async {
+                process.waitUntilExit()
                 if gate.claim() {
-                    continuation.resume(returning: .exited(terminated.terminationStatus))
+                    continuation.resume(returning: .exited(process.terminationStatus))
                 }
             }
             DispatchQueue.global(qos: .userInitiated).async {
@@ -327,10 +330,13 @@ final class HeadlessProcessTransport: ClaudeHeadlessTransporting, @unchecked Sen
                 if interval > 0 {
                     Thread.sleep(forTimeInterval: min(interval, 3600))
                 }
-                guard process.isRunning else { return } // termination handler owns the resume
                 if gate.claim() {
-                    Self.terminate(process)
-                    continuation.resume(returning: .timedOut)
+                    if process.isRunning {
+                        Self.terminate(process)
+                        continuation.resume(returning: .timedOut)
+                    } else {
+                        continuation.resume(returning: .exited(process.terminationStatus))
+                    }
                 }
             }
         }
