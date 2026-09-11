@@ -29,13 +29,15 @@ struct MRReviewTriageItem: Codable, Equatable, Sendable {
     let hasDeveloperComments: Bool
     let latestMyCommentAt: String?
     let latestAuthorActivityAt: String?
+    var jiraIssueKey: String? = nil
 
     func summary(order: Int) -> MergeRequestSummary {
         MergeRequestSummary(
             id: url, iidText: String(iid), title: title, projectDisplayName: project,
             authorDisplayName: author, isDraft: false, pipelineDisplayState: nil,
             reviewDisplayState: category.title, updatedText: latestAuthorActivityAt,
-            mergeRequestURL: url, sourceOrder: order, triageCategory: category, triageReason: reason
+            mergeRequestURL: url, sourceOrder: order, triageCategory: category, triageReason: reason,
+            jiraIssueKey: jiraIssueKey.flatMap { JiraSourceContext.parseKey(from: $0) }
         )
     }
 }
@@ -115,7 +117,8 @@ enum MRReviewTriagePrompt {
             "draft": ["type": "boolean"], "approved": ["type": "boolean"],
             "category": ["type": "string", "enum": MRReviewCategory.allCases.map(\.rawValue)],
             "reason": string, "hasDeveloperComments": ["type": "boolean"],
-            "latestMyCommentAt": nullableString, "latestAuthorActivityAt": nullableString
+            "latestMyCommentAt": nullableString, "latestAuthorActivityAt": nullableString,
+            "jiraIssueKey": nullableString
         ]
         let schema: [String: Any] = [
             "type": "object", "additionalProperties": false,
@@ -137,6 +140,8 @@ enum MRReviewTriagePrompt {
             \(configuredText(defaults))
 
             Required execution/output contract: use only the supplied glab executable with Bash.
+            Include jiraIssueKey from the MR title, source branch, or description when exactly one
+            associated Jira story is explicit (e.g. ENG-123); otherwise return null. Never guess.
             Every command starts with \(executable) api --method GET and includes --hostname.
             API endpoints and query strings must be shell-quoted. No other commands or tools.
             Return exactly one JSON object matching the supplied schema, no markdown or prose and

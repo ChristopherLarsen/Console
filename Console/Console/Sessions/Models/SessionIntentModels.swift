@@ -190,6 +190,32 @@ nonisolated enum NewTicketSessionNaming {
 /// Parses Jira keys and URLs out of strings the retained WebView already
 /// rendered. Results live only in memory.
 nonisolated enum JiraSourceContext {
+    /// Only resolve an unambiguous issue key; never guess among multiple stories.
+    static func issueKey(in text: String) -> String? {
+        let keys = Set(text.matches(of: /\b[A-Z][A-Z0-9]*-\d+\b/).map { String($0.output) })
+        return keys.count == 1 ? keys.first : nil
+    }
+
+    static func issueURL(key: String, configuredURL: String) -> URL? {
+        guard let key = parseKey(from: key),
+              var components = URLComponents(string: configuredURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+              ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
+              components.host != nil else { return nil }
+        // Preserve a self-hosted Jira context path, e.g. /jira/browse/ENG-123.
+        let parts = components.path.split(separator: "/").map(String.init)
+        let routes = ["browse", "issues", "plugins", "secure", "projects"]
+        let cloudRoute = parts.indices.first { index in
+            parts[index] == "jira" && index + 1 < parts.count
+                && ["software", "core", "servicedesk"].contains(parts[index + 1])
+        }
+        let routeIndex = cloudRoute ?? parts.firstIndex { routes.contains($0) }
+        let prefix = routeIndex.map { Array(parts.prefix($0)) } ?? parts
+        components.path = "/" + (prefix + ["browse", key]).joined(separator: "/")
+        components.query = nil
+        components.fragment = nil
+        return components.url
+    }
+
     /// Uppercase project prefix of a key like `ENG-123` → `ENG`.
     static func projectKeyPrefix(of key: String) -> String? {
         guard let match = key.firstMatch(of: /^([A-Za-z][A-Za-z0-9]*)-\d+$/) else { return nil }

@@ -47,6 +47,7 @@ struct MergeRequestSummary: Identifiable, Equatable, Sendable {
     let sourceOrder: Int
     var triageCategory: MRReviewCategory? = nil
     var triageReason: String? = nil
+    var jiraIssueKey: String? = nil
 }
 
 /// Why a manual refresh did not produce fresh cards. Values are fixed,
