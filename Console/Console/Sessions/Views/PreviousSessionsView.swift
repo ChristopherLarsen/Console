@@ -210,13 +210,9 @@ struct PreviousSessionsView: View {
         Task { @MainActor in
             defer { resumingSessionIDs.remove(record.id) }
             do {
-                let sessionID = try await coordinator.launchResume(record: restoration)
-                // Success launches the terminal; nil means the shared-checkout
-                // warning is pending at MainView and needs this modal gone so
-                // its sheet is visible. Either way close modal and launcher.
-                if sessionID != nil || coordinator.pendingCollision != nil {
-                    onFinished()
-                }
+                _ = try await coordinator.launchResume(record: restoration)
+                // Success launches the terminal; close modal and launcher.
+                onFinished()
                 dismiss()
             } catch {
                 errorMessage = SessionLaunchFailure(error: error).message

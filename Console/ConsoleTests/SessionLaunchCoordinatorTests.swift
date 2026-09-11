@@ -175,8 +175,7 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
     }
 
     private func requireLaunch(_ stack: Stack, draft: SessionDraft) async throws -> UUID {
-        let sessionID = try await stack.coordinator.launch(draft: draft)
-        return try XCTUnwrap(sessionID)
+        try await stack.coordinator.launch(draft: draft)
     }
 
     private enum Sentinel {
@@ -784,34 +783,30 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         XCTAssertEqual(stack.launcher.launchCount, 0)
     }
 
-    func testResumeIntoOccupiedCheckoutWarnsAndLaunchesNothing() async throws {
+    func testResumeIntoOccupiedCheckoutLaunchesWithoutWarning() async throws {
         let stack = makeStack()
         let directory = try addWorkspace(stack, named: "Shared")
         let historyID = UUID()
         try writeHistoryTranscript(historyID)
 
-        let first = try await requireLaunch(
+        _ = try await requireLaunch(
             stack, draft: stack.coordinator.draft(purpose: .general, source: nil)
         )
         XCTAssertEqual(stack.launcher.launchCount, 1)
 
+        // Every session works in the same project folder, so an occupied
+        // checkout never blocks a launch — the resume proceeds directly.
         let resumed = try await stack.coordinator.launchResume(
             record: resumeRecord(historyID, directory: directory.directoryURL)
         )
-        XCTAssertNil(resumed, "occupied checkout presents the warning instead of launching")
-        XCTAssertNil(stack.coordinator.lastFailureMessage)
-        XCTAssertEqual(stack.launcher.launchCount, 1, "no second process started")
-        XCTAssertEqual(stack.coordinator.pendingCollision?.occupants.count, 1)
-        XCTAssertEqual(stack.coordinator.pendingCollision?.occupants.first?.id, first)
-
-        // Acknowledging continues the resume through the same draft.
-        let second = try await stack.coordinator.continueInSameFolder()
-        let resumedSession = try XCTUnwrap(second.flatMap { stack.store.session(withID: $0) })
+        let resumedSession = try XCTUnwrap(stack.store.session(withID: resumed))
         XCTAssertEqual(resumedSession.workingDirectory, directory.directoryURL)
+        XCTAssertEqual(stack.launcher.launchCount, 2)
+        XCTAssertNil(stack.coordinator.lastFailureMessage)
         XCTAssertEqual(
             try XCTUnwrap(stack.launcher.lastArguments).prefix(2),
             ["--resume", historyID.uuidString],
-            "the acknowledged continue still resumes the same conversation"
+            "the resume still reopens the same conversation"
         )
     }
 }

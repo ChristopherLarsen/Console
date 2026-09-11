@@ -68,13 +68,8 @@ struct MainView: View {
         .preferredColorScheme(themeManager.colorScheme)
         // Shared host for unresolved contextual launches: Jira, GitLab,
         // future Home cards, and the Sessions launcher all land here.
-        .sheet(item: collisionSheetBinding) { warning in
-            SharedCheckoutWarningSheet(warning: warning)
-                .frame(minWidth: 460, maxWidth: 460, minHeight: 280, maxHeight: 480)
-        }
         .overlay(alignment: .top) {
-            if let failure = launchCoordinator.lastFailure,
-               !launchCoordinator.presentsCollisionSheet {
+            if let failure = launchCoordinator.lastFailure {
                 SessionLaunchErrorBanner(
                     failure: failure,
                     onDismiss: { launchCoordinator.clearFailure() },
@@ -86,9 +81,6 @@ struct MainView: View {
         .onChange(of: sidebarSelection) { _, newValue in
             if newValue != .sessions, sessionWorkspaceLayout.isFocusMode {
                 sessionWorkspaceLayout.toggleFocusSession()
-            }
-            if newValue != .settings {
-                launchCoordinator.restoreCollisionSheetIfNeeded()
             }
         }
         .onChange(of: isAIProviderEnabled) { _, enabled in
@@ -144,17 +136,6 @@ struct MainView: View {
                 }
             }
         }
-    }
-
-    private var collisionSheetBinding: Binding<PendingSharedCheckoutWarning?> {
-        Binding(
-            get: { launchCoordinator.presentsCollisionSheet ? launchCoordinator.pendingCollision : nil },
-            set: { newValue in
-                if newValue == nil, launchCoordinator.presentsCollisionSheet {
-                    launchCoordinator.cancelSharedCheckoutWarning()
-                }
-            }
-        )
     }
 
     private var detailColumn: some View {

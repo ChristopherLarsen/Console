@@ -255,17 +255,6 @@ final class SessionStore {
         }
     }
 
-    /// Live sessions whose canonical working directory matches `canonicalPath`.
-    /// Exited rows are ignored. Unknown/legacy purposes are treated as editing.
-    func liveEditingSessions(occupyingCanonicalPath canonicalPath: String) -> [ConsoleSession] {
-        sessions.filter { session in
-            guard session.activity != .exited else { return false }
-            let occupies = session.purpose?.occupiesCheckoutForEditing ?? true
-            guard occupies else { return false }
-            return CheckoutPath.canonical(session.workingDirectory) == canonicalPath
-        }
-    }
-
     func displayedState(for sessionID: UUID) -> DisplayedSessionState {
         guard let session = session(withID: sessionID) else { return .unknown }
         return displayedSessionState(activity: session.activity, attention: session.attention)

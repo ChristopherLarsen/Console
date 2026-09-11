@@ -60,16 +60,6 @@ enum SessionPurpose: String, Codable, CaseIterable {
             return "Review"
         }
     }
-
-    /// Whether a live session with this purpose occupies its checkout for
-    /// editing. Reviews are not treated as read-only just because the
-    /// launcher copy describes an idle review session.
-    var occupiesCheckoutForEditing: Bool {
-        switch self {
-        case .newTicket, .existingTicket, .review, .general, .blank:
-            return true
-        }
-    }
 }
 
 /// Memory-only context about the Jira ticket or GitLab merge request a

@@ -57,35 +57,21 @@ final class SessionLaunchCoordinator {
 
     /// Contextual-launch failure. MainView presents it.
     private(set) var lastFailure: SessionLaunchFailure?
-    /// Shown when an editing launch would share a live checkout. Continue is
-    /// required; Focus selects an occupant and launches nothing.
-    private(set) var pendingCollision: PendingSharedCheckoutWarning?
-    /// True while the shared-checkout warning sheet should be visible.
-    private(set) var presentsCollisionSheet = false
 
     var lastFailureMessage: String? { lastFailure?.message }
 
     @ObservationIgnored private let store: SessionStore
     @ObservationIgnored private let workspaceStore: SessionWorkspaceStore
-    @ObservationIgnored private let gitInspector: any LocalGitInspecting
-    @ObservationIgnored private let recheckGate: (@MainActor () async -> Void)?
     /// Root of Claude's local transcript history, checked before a resume.
     @ObservationIgnored private let historyRoot: URL
-    /// Canonical paths claimed by in-flight launches or pending warnings so
-    /// two simultaneous requests cannot both skip the occupancy check.
-    @ObservationIgnored private var occupancyClaims: [UUID: String] = [:]
 
     init(
         store: SessionStore,
         workspaceStore: SessionWorkspaceStore,
-        gitInspector: (any LocalGitInspecting)? = nil,
-        recheckGate: (@MainActor () async -> Void)? = nil,
         historyRoot: URL = SessionHistoryReader.claudeProjectsRoot
     ) {
         self.store = store
         self.workspaceStore = workspaceStore
-        self.gitInspector = gitInspector ?? LocalGitWorkingCopyInspector()
-        self.recheckGate = recheckGate
         self.historyRoot = historyRoot
     }
 
@@ -151,29 +137,26 @@ final class SessionLaunchCoordinator {
 
     // MARK: - Launch
 
-    /// Validates the Session Folder and launches. Returns the new session
-    /// ID, or nil when a shared-checkout warning is now pending at MainView.
+    // MARK: - Launch
+
+    /// Validates the Session Folder and launches. Returns the new session ID.
     ///
     /// Does not record `lastFailure` — the intent picker surfaces thrown
     /// errors itself. Contextual toolbar/card launches go through
     /// `startContextualLaunch`.
     @discardableResult
-    func launch(draft: SessionDraft) async throws -> UUID? {
+    func launch(draft: SessionDraft) async throws -> UUID {
         lastFailure = nil
-        clearCollision(releasingClaim: true)
 
         let folder = try validatedSessionFolder(purpose: draft.purpose)
         return try await performLaunch(draft: draft, folder: folder)
     }
 
     /// Resumes a previous Claude conversation by its session ID. The
-    /// transcript and recorded working directory are validated first; the
-    /// same checkout-collision handling as fresh launches applies. Returns
-    /// the new session ID, or nil when a shared-checkout warning is pending.
+    /// transcript and recorded working directory are validated first.
     @discardableResult
-    func launchResume(record: SessionRestorationRecord) async throws -> UUID? {
+    func launchResume(record: SessionRestorationRecord) async throws -> UUID {
         lastFailure = nil
-        clearCollision(releasingClaim: true)
 
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(
@@ -188,12 +171,10 @@ final class SessionLaunchCoordinator {
 
         var prepared = draft(purpose: .general, source: nil)
         prepared.name = record.name
-        return try await performOccupancyGatedLaunch(
+        return try await performLaunch(
             draft: prepared,
             workingDirectory: record.workingDirectory,
-            action: .resume(record: record),
-            acknowledgeSharedCheckout: false,
-            existingClaimID: nil
+            action: .resume(record: record)
         )
     }
 
@@ -213,78 +194,6 @@ final class SessionLaunchCoordinator {
         return folder
     }
 
-    /// Focuses a live occupant and launches nothing.
-    func focusExistingSession() {
-        guard let pending = pendingCollision,
-              let targetID = pending.focusedOccupantID,
-              pending.liveOccupants.contains(where: { $0.id == targetID }) else {
-            return
-        }
-        store.select(sessionID: targetID)
-        ConsoleNavigation.showSessions()
-        lastFailure = nil
-        clearCollision(releasingClaim: true)
-    }
-
-    /// Explicit acknowledgement: launch in the same checkout without
-    /// resetting, stashing, switching branches, or stopping occupants. A
-    /// pending resume keeps its restoration record; a fresh launch keeps the
-    /// Session Folder validation.
-    @discardableResult
-    func continueInSameFolder() async throws -> UUID? {
-        guard let pending = pendingCollision else { return nil }
-        lastFailure = nil
-        do {
-            let workingDirectory: URL
-            switch pending.action {
-            case .create:
-                workingDirectory = try validatedSessionFolder(purpose: pending.draft.purpose).directoryURL
-            case .resume(let record):
-                workingDirectory = record.workingDirectory
-            }
-            return try await performOccupancyGatedLaunch(
-                draft: pending.draft,
-                workingDirectory: workingDirectory,
-                action: pending.action,
-                acknowledgeSharedCheckout: true,
-                existingClaimID: pending.claimID
-            )
-        } catch {
-            lastFailure = SessionLaunchFailure(error: error)
-            throw error
-        }
-    }
-
-    func cancelSharedCheckoutWarning() {
-        lastFailure = nil
-        clearCollision(releasingClaim: true)
-    }
-
-    func updatePendingCollisionOccupant(_ occupantID: UUID?) {
-        guard var pending = pendingCollision else { return }
-        pending.selectedOccupantID = occupantID
-        pendingCollision = pending
-    }
-
-    func clearFailure() {
-        lastFailure = nil
-    }
-
-    /// Opens Settings so the user can fix the Claude executable or the
-    /// Session Folder.
-    func openSessionsSettings() {
-        presentsCollisionSheet = false
-        lastFailure = nil
-        ConsoleNavigation.showSettings()
-    }
-
-    /// Re-shows the shared-checkout warning after a Settings visit if the
-    /// user never cancelled.
-    func restoreCollisionSheetIfNeeded() {
-        guard pendingCollision != nil else { return }
-        presentsCollisionSheet = true
-    }
-
     private func startContextualLaunch(_ draft: SessionDraft) async {
         do {
             _ = try await launch(draft: draft)
@@ -295,11 +204,9 @@ final class SessionLaunchCoordinator {
 
     private func performLaunch(
         draft: SessionDraft,
-        folder: SessionWorkspace,
-        acknowledgeSharedCheckout: Bool = false,
-        existingClaimID: UUID? = nil
-    ) async throws -> UUID? {
-        try await performOccupancyGatedLaunch(
+        folder: SessionWorkspace
+    ) async throws -> UUID {
+        try await performLaunch(
             draft: draft,
             workingDirectory: folder.directoryURL,
             action: .create(request: SessionCreationRequest(
@@ -307,64 +214,17 @@ final class SessionLaunchCoordinator {
                 name: draft.name,
                 workingDirectory: folder.directoryURL,
                 source: draft.source
-            )),
-            acknowledgeSharedCheckout: acknowledgeSharedCheckout,
-            existingClaimID: existingClaimID
+            ))
         )
     }
 
-    /// Shared occupancy-claim and shared-checkout-warning gate. The action
-    /// executes only when the checkout is free, or the user acknowledged
-    /// sharing it. Returns nil when a warning is now pending instead of
-    /// launching.
-    private func performOccupancyGatedLaunch(
+    /// Creates or resumes the session in the requested directory. Sessions
+    /// always share the same project folder, so nothing gates the launch.
+    private func performLaunch(
         draft: SessionDraft,
         workingDirectory: URL,
-        action: PendingLaunchAction,
-        acknowledgeSharedCheckout: Bool,
-        existingClaimID: UUID?
-    ) async throws -> UUID? {
-        let canonicalPath = CheckoutPath.canonical(workingDirectory)
-
-        let claimID = existingClaimID ?? UUID()
-        if existingClaimID == nil {
-            occupancyClaims[claimID] = canonicalPath
-        }
-        var created = false
-        defer {
-            if !created, pendingCollision?.claimID != claimID {
-                occupancyClaims.removeValue(forKey: claimID)
-            }
-        }
-
-        if let recheckGate {
-            await recheckGate()
-        }
-
-        if !acknowledgeSharedCheckout,
-           let warning = await warningIfOccupied(
-            draft: draft,
-            canonicalPath: canonicalPath,
-            claimID: claimID,
-            action: action
-           ) {
-            presentCollision(warning)
-            return nil
-        }
-
-        // Recheck immediately before create so two overlapping launches
-        // cannot both observe an empty occupant list and skip the warning.
-        if !acknowledgeSharedCheckout,
-           let warning = await warningIfOccupied(
-            draft: draft,
-            canonicalPath: canonicalPath,
-            claimID: claimID,
-            action: action
-           ) {
-            presentCollision(warning)
-            return nil
-        }
-
+        action: PendingLaunchAction
+    ) async throws -> UUID {
         let sessionID: UUID
         switch action {
         case .create(let request):
@@ -372,11 +232,8 @@ final class SessionLaunchCoordinator {
         case .resume(let record):
             sessionID = try store.resumeSession(from: record)
         }
-        created = true
-        occupancyClaims.removeValue(forKey: claimID)
 
         lastFailure = nil
-        clearCollision(releasingClaim: false)
         ConsoleNavigation.showSessions()
         return sessionID
     }
@@ -399,56 +256,15 @@ final class SessionLaunchCoordinator {
         return false
     }
 
-    private func warningIfOccupied(
-        draft: SessionDraft,
-        canonicalPath: String,
-        claimID: UUID,
-        action: PendingLaunchAction
-    ) async -> PendingSharedCheckoutWarning? {
-        let first = occupancy(canonicalPath: canonicalPath, excludingClaim: claimID)
-        guard first.hasConflict else { return nil }
-        let gitState = await gitInspector.inspect(canonicalPath: canonicalPath)
-        let second = occupancy(canonicalPath: canonicalPath, excludingClaim: claimID)
-        guard second.hasConflict else { return nil }
-        return PendingSharedCheckoutWarning(
-            id: UUID(),
-            claimID: claimID,
-            draft: draft,
-            action: action,
-            canonicalPath: canonicalPath,
-            occupants: second.occupants,
-            gitState: gitState,
-            selectedOccupantID: second.occupants.first(where: \.isLiveSession)?.id
-        )
-    }
-
-    private func occupancy(
-        canonicalPath: String,
-        excludingClaim claimID: UUID
-    ) -> SharedCheckoutOccupancy {
-        let live = store.liveEditingSessions(occupyingCanonicalPath: canonicalPath)
-        let otherClaimIDs = occupancyClaims.compactMap { id, path -> UUID? in
-            guard id != claimID, path == canonicalPath else { return nil }
-            return id
-        }
-        return SharedCheckoutOccupancy(live: live, otherClaimIDs: otherClaimIDs)
-    }
-
-    private func presentCollision(_ warning: PendingSharedCheckoutWarning) {
-        if let existing = pendingCollision, existing.claimID != warning.claimID {
-            occupancyClaims.removeValue(forKey: existing.claimID)
-        }
-        pendingCollision = warning
-        presentsCollisionSheet = true
+    /// Opens Settings so the user can fix the Claude executable or the
+    /// Session Folder.
+    func openSessionsSettings() {
         lastFailure = nil
+        ConsoleNavigation.showSettings()
     }
 
-    private func clearCollision(releasingClaim: Bool) {
-        if releasingClaim, let pending = pendingCollision {
-            occupancyClaims.removeValue(forKey: pending.claimID)
-        }
-        pendingCollision = nil
-        presentsCollisionSheet = false
+    func clearFailure() {
+        lastFailure = nil
     }
 
     #if DEBUG
@@ -478,27 +294,5 @@ extension SessionLaunchFailure {
             return
         }
         self.init(message: error.localizedDescription, offersSettingsRoute: true)
-    }
-}
-
-private struct SharedCheckoutOccupancy {
-    let live: [ConsoleSession]
-    let otherClaimIDs: [UUID]
-
-    var hasConflict: Bool { !live.isEmpty || !otherClaimIDs.isEmpty }
-
-    var occupants: [SharedCheckoutOccupant] {
-        var result = live.map { session in
-            SharedCheckoutOccupant(
-                id: session.id,
-                name: session.name,
-                purpose: session.purpose,
-                isLiveSession: true
-            )
-        }
-        if result.isEmpty {
-            result.append(contentsOf: otherClaimIDs.map(SharedCheckoutOccupant.inFlightPlaceholder(claimID:)))
-        }
-        return result
     }
 }
