@@ -19,6 +19,15 @@ enum SessionCreationError: LocalizedError, Equatable {
     }
 }
 
+/// The owned process set captured when a stop starts: the PTY root plus its
+/// descendants, each with a pid+start-time identity. Captured BEFORE any
+/// signal because the root's death reparents descendants, and because a
+/// recycled PID must never become a later kill target.
+struct SessionStopTarget: Equatable {
+    let root: SessionProcessIdentity
+    let descendants: [SessionProcessIdentity]
+}
+
 /// App-owned observable store for all Console Claude sessions.
 ///
 /// Terminal views are memory-only; launch metadata and process identities survive
@@ -53,6 +62,10 @@ final class SessionStore {
     /// Sessions the user terminated; closed (removed) as soon as their
     /// process exits instead of lingering as dead terminals.
     @ObservationIgnored private var closeOnExitIDs: Set<UUID> = []
+    /// Captured stop targets per session, retained across the grace period so
+    /// escalation and force stop never re-read a terminal PID that may have
+    /// been recycled or replaced.
+    @ObservationIgnored private var stopTargets: [UUID: SessionStopTarget] = [:]
 
     @ObservationIgnored let locator: ClaudeExecutableLocator
     @ObservationIgnored private var launcher: any SessionProcessLaunching
@@ -577,33 +590,82 @@ final class SessionStore {
     /// Graceful stop (SIGTERM). The UI's Terminate flow (`terminateSession`)
     /// confirms first for Working / Needs Approval / Needs Input sessions and
     /// calls this afterwards; plain stops retain the exited session row.
+    ///
+    /// The whole owned set is signaled, not just the PTY root: a Claude
+    /// resumed from the retained login shell is a descendant of the root with
+    /// its own foreground process group, and an interactive zsh ignores
+    /// SIGTERM, so signaling the root alone never reaches it. Identities are
+    /// captured before the first signal and reused by escalation.
     func stopSession(id: UUID) {
         guard let session = session(withID: id), session.activity != .exited else { return }
         awaitingForceStopSessionID = nil
         let pid = session.terminalView.process?.shellPid ?? 0
-        guard pid > 0 else {
+        guard pid > 0, let target = captureStopTarget(rootPID: pid) else {
             handleProcessTerminated(sessionID: id)
             return
         }
-        kill(pid, SIGTERM)
-        scheduleForceStopOffer(id: id, pid: pid)
+        stopTargets[id] = target
+        HeadlessSessionProcesses.signalAttached([target.root] + target.descendants, SIGTERM)
+        scheduleOwnedStopEscalation(id: id, target: target)
     }
 
-    /// Force stop (SIGKILL), offered only when graceful termination did not
-    /// complete within the grace period. Liveness, not the activity flag,
-    /// decides: a session marked exited by a bridge event can still own a
-    /// live process.
+    /// Force stop (SIGKILL). Liveness, not the activity flag, decides: a
+    /// session marked exited by a bridge event can still own a live process.
+    /// The captured stop target outranks the terminal's current PID, which may
+    /// belong to a recycled or replaced process.
     func forceStop(id: UUID) {
         awaitingForceStopSessionID = nil
         guard let session = session(withID: id) else { return }
-        let pid = session.terminalView.process?.shellPid ?? 0
-        guard pid > 0 else {
+        guard let target = stopTargets[id] ?? freshStopTarget(for: session) else {
             handleProcessTerminated(sessionID: id)
             return
         }
+        let alive = aliveOwnedIdentities(of: target)
         // A process that no longer exists needs nothing; zombies included.
-        guard kill(pid, 0) == 0 else { return }
-        kill(pid, SIGKILL)
+        guard !alive.isEmpty else { return }
+        HeadlessSessionProcesses.signalAttached(alive, SIGKILL)
+    }
+
+    private func freshStopTarget(for session: ConsoleSession) -> SessionStopTarget? {
+        guard let pid = session.terminalView.process?.shellPid, pid > 0 else { return nil }
+        return captureStopTarget(rootPID: pid)
+    }
+
+    private func captureStopTarget(rootPID: pid_t) -> SessionStopTarget? {
+        guard let root = HeadlessSessionProcesses.identity(for: rootPID) else { return nil }
+        return SessionStopTarget(
+            root: root,
+            descendants: OwnedProcessTree.descendantIDs(of: rootPID)
+                .compactMap { HeadlessSessionProcesses.identity(for: $0) }
+        )
+    }
+
+    /// Owned identities that are still alive, validated against their
+    /// captured pid+start-time identities. While the root lives, descendants
+    /// spawned after the capture are picked up too; once the root is gone its
+    /// former descendants are reparented, so only the captured identities
+    /// remain addressable.
+    private func aliveOwnedIdentities(of target: SessionStopTarget) -> [SessionProcessIdentity] {
+        var candidates = target.descendants
+        if processInspector.isRunning(target.root) {
+            candidates += OwnedProcessTree.descendantIDs(of: target.root.pid)
+                .compactMap { HeadlessSessionProcesses.identity(for: $0) }
+        }
+        candidates.append(target.root)
+        var seenPIDs = Set<pid_t>()
+        return candidates
+            .filter { seenPIDs.insert($0.pid).inserted }
+            .filter { processInspector.isRunning($0) }
+    }
+
+    /// SIGKILLs the session's owned set: the captured stop target when one
+    /// exists, otherwise a fresh capture from the terminal's current PID.
+    private func terminateOwnedProcesses(for sessionID: UUID) {
+        guard let session = session(withID: sessionID),
+              let target = stopTargets[sessionID] ?? freshStopTarget(for: session) else { return }
+        let alive = aliveOwnedIdentities(of: target)
+        guard !alive.isEmpty else { return }
+        HeadlessSessionProcesses.signalAttached(alive, SIGKILL)
     }
 
     /// User-initiated termination from the Sessions UI: stops the process
@@ -676,15 +738,34 @@ final class SessionStore {
     }
 #endif
 
-    private func scheduleForceStopOffer(id: UUID, pid: pid_t) {
+    /// Bounded stop escalation: after the grace period, SIGKILLs whatever is
+    /// still alive from the captured stop target and waits a bounded time for
+    /// the root to die. Only when even SIGKILL fails is the manual Force Stop
+    /// offer raised. A final sweep re-signals survivors so a descendant that
+    /// outlived the root cannot be orphaned once the session closes.
+    private func scheduleOwnedStopEscalation(id: UUID, target: SessionStopTarget) {
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(Self.gracefulStopGraceSeconds))
             guard let self else { return }
+            let alive = self.aliveOwnedIdentities(of: target)
+            if !alive.isEmpty {
+                HeadlessSessionProcesses.signalAttached(alive, SIGKILL)
+                for _ in 0..<30 {
+                    if !self.processInspector.isRunning(target.root) { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
             // Liveness decides, not the activity flag: a bridge
             // `sessionEnded` can mark the row exited while the process
             // still hangs, and that process must still be escalatable.
-            guard self.session(withID: id) != nil, kill(pid, 0) == 0 else { return }
-            self.awaitingForceStopSessionID = id
+            if self.session(withID: id) != nil,
+               self.processInspector.isRunning(target.root) {
+                self.awaitingForceStopSessionID = id
+            }
+            let remaining = self.aliveOwnedIdentities(of: target)
+            if !remaining.isEmpty {
+                HeadlessSessionProcesses.signalAttached(remaining, SIGKILL)
+            }
         }
     }
 
@@ -702,11 +783,8 @@ final class SessionStore {
         if !preservingRestoration, let session = session(withID: id) {
             pendingRestorations.removeAll { $0.id == session.claudeSessionID }
         }
-        if let session = session(withID: id),
-           let pid = session.terminalView.process?.shellPid,
-           pid > 0, kill(pid, 0) == 0 {
-            kill(pid, SIGKILL)
-        }
+        terminateOwnedProcesses(for: id)
+        stopTargets.removeValue(forKey: id)
         sessions.removeAll(where: { $0.id == id })
         sessionTokens.removeValue(forKey: id)
         router.forget(sessionID: id)
@@ -719,6 +797,7 @@ final class SessionStore {
     }
 
     func handleProcessTerminated(sessionID: UUID, startExitShell: Bool = true) {
+        stopTargets.removeValue(forKey: sessionID)
         if !isTerminating, let record = startingRestorations.removeValue(forKey: sessionID) {
             if !pendingRestorations.contains(where: { $0.id == record.id }) {
                 pendingRestorations.append(record)
@@ -781,10 +860,7 @@ final class SessionStore {
         persistRestorationSnapshot()
         isTerminating = true
         for session in sessions {
-            let pid = session.terminalView.process?.shellPid ?? 0
-            if pid > 0, kill(pid, 0) == 0 {
-                kill(pid, SIGKILL)
-            }
+            terminateOwnedProcesses(for: session.id)
             if session.activity != .exited {
                 // App termination: no exit shell, nothing would ever use it.
                 handleProcessTerminated(sessionID: session.id, startExitShell: false)
@@ -1110,7 +1186,10 @@ final class SessionStore {
     private func persistRestorationSnapshot() {
         guard !isTerminating, !restorationLoadFailed, let restorationStore else { return }
         var records = pendingRestorations
-        for session in sessions where session.activity != .exited && !closeOnExitIDs.contains(session.id) {
+        // Sessions being terminated stay in the snapshot until their exit is
+        // confirmed: dropping them here would discard recovery metadata while
+        // the process is still alive and the termination can still fail.
+        for session in sessions where session.activity != .exited {
             let record = SessionRestorationRecord(claudeSessionID: session.claudeSessionID,
                 name: session.name, workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general,
                 processIdentity: HeadlessSessionProcesses.identity(for: session.terminalView.process?.shellPid ?? 0))

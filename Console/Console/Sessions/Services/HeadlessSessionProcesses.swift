@@ -69,6 +69,33 @@ nonisolated struct HeadlessSessionProcesses: SessionProcessInspecting {
         }
     }
 
+    /// Signals captured pid+start-time identities for an ATTACHED session's
+    /// owned tree. Unlike `signal(_:to:)` — which only accepts reparented
+    /// headless processes (PPID 1) — this validates identity, uid, and
+    /// liveness, and never targets this process, its parent, or a PID whose
+    /// current start time no longer matches the captured one.
+    static func signalAttached(_ identities: [SessionProcessIdentity], _ signal: Int32) -> Set<pid_t> {
+        let selfPID = getpid()
+        let parentPID = getppid()
+        var signaled = Set<pid_t>()
+        for identity in identities {
+            guard identity.pid > 1,
+                  identity.pid != selfPID,
+                  identity.pid != parentPID,
+                  Self.identity(for: identity.pid) == identity else { continue }
+            if Darwin.kill(identity.pid, signal) == 0 {
+                signaled.insert(identity.pid)
+            }
+        }
+        return signaled
+    }
+
+    /// True while the process with this captured pid+start-time identity is
+    /// alive; a recycled PID carries a different start time and reads as dead.
+    static func isAttachedAlive(_ identity: SessionProcessIdentity) -> Bool {
+        Self.identity(for: identity.pid) == identity
+    }
+
     static func classify(arguments: [String], executable: String, marker: String?) -> (id: UUID, owned: Bool)? {
         let isClaude = URL(fileURLWithPath: executable).lastPathComponent == "claude"
             || executable.contains("/claude/versions/")
