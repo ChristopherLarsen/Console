@@ -14,6 +14,7 @@ struct SessionTerminalPane: View {
     /// same defaults key the settings window writes, so edits show up here
     /// immediately.
     @AppStorage(AppSettings.quickCommandsKey) private var quickCommandsJSON: String = "[]"
+    @AppStorage("webViewJiraURL") private var webViewJiraURL: String = ""
 
     private var quickCommands: [String] {
         AppSettings.decodeQuickCommands(from: quickCommandsJSON)
@@ -76,6 +77,18 @@ struct SessionTerminalPane: View {
             Spacer()
 
             mergeRequestBadge
+
+            if let url = HomeStorySessionMatcher.jiraURL(
+                for: session, configuredURL: webViewJiraURL, reviewItems: MRReviewScanController.shared.items
+            ) {
+                Button("Open in JIRA") {
+                    JiraDeepLink.shared.set(url: url)
+                    ConsoleNavigation.show(.jira)
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("Sessions.OpenInJira")
+            }
 
             quickCommandsMenu
 

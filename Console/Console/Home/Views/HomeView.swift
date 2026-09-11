@@ -279,7 +279,13 @@ struct HomeView: View {
                         HomeBoardReviewRequestCard(
                             item: item,
                             isLaunching: launchingReviews.contains(item.id),
+                            hasReviewSession: reviewSession(for: item) != nil,
+                            canOpenJira: jiraURL(for: item) != nil,
                             open: { model.openReview(item) },
+                            openJira: {
+                                guard let url = jiraURL(for: item) else { return }
+                                HomeBoardModel.executeNavigation(.openJiraIssue(url: url))
+                            },
                             startReview: { startReview(item) }
                         )
                         .accessibilityIdentifier("HomeReviewCard.\(index)")
@@ -333,12 +339,32 @@ struct HomeView: View {
     }
 
     private func startReview(_ item: MergeRequestSummary) {
+        if let session = reviewSession(for: item) {
+            model.selectSession(session.id)
+            return
+        }
         guard let iid = item.iidText, !launchingReviews.contains(item.id) else { return }
         launchingReviews.insert(item.id)
         Task {
             defer { launchingReviews.remove(item.id) }
             await launchCoordinator.beginMergeRequestReview(iid: iid, title: item.title, url: item.mergeRequestURL)
         }
+    }
+
+    private func reviewSession(for item: MergeRequestSummary) -> ConsoleSession? {
+        HomeStorySessionMatcher.reviewSession(for: item.mergeRequestURL, in: sessionStore?.sessions ?? [])
+    }
+
+    private func jiraURL(for item: MergeRequestSummary) -> URL? {
+        if let session = reviewSession(for: item),
+           let url = HomeStorySessionMatcher.jiraURL(for: session, configuredURL: webViewJiraURL) {
+            return url
+        }
+        guard let key = item.jiraIssueKey ?? JiraSourceContext.issueKey(in: item.title) else { return nil }
+        if let ticket = model.snapshot().jiraTickets.first(where: { $0.key.caseInsensitiveCompare(key) == .orderedSame }) {
+            return ticket.issueURL
+        }
+        return JiraSourceContext.issueURL(key: key, configuredURL: webViewJiraURL)
     }
 
     /// Quiet count only — the column title already names the source.

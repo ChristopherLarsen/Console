@@ -245,7 +245,10 @@ struct HomeBoardTicketCard: View {
 struct HomeBoardReviewRequestCard: View {
     let item: MergeRequestSummary
     let isLaunching: Bool
+    let hasReviewSession: Bool
+    let canOpenJira: Bool
     let open: () -> Void
+    let openJira: () -> Void
     let startReview: () -> Void
 
     @State private var hovering = false
@@ -298,8 +301,11 @@ struct HomeBoardReviewRequestCard: View {
 
             HStack(spacing: 12) {
                 Spacer(minLength: 0)
-                Button("Open MR", action: open)
-                Button(isLaunching ? "Starting…" : "Start Review", action: startReview)
+                Button("Open in GitLab", action: open)
+                Button("Open in JIRA", action: openJira)
+                    .disabled(!canOpenJira)
+                    .help(canOpenJira ? "Open the associated story in a new JIRA tab" : "No associated JIRA story is available")
+                Button(isLaunching ? "Starting…" : (hasReviewSession ? "Open Review Session" : "Start Review"), action: startReview)
                     .disabled(isLaunching)
             }
             .font(.system(size: 10, weight: .medium))
