@@ -605,6 +605,66 @@ final class SessionStoreTests: XCTestCase {
         }
     }
 
+    func testBlankSessionLaunchesShellWithoutClaudeRequirements() throws {
+        defaults.removeObject(forKey: ClaudeExecutableLocator.settingsKey)
+        let noClaude = ClaudeExecutableLocator(
+            shellRunner: { _ in nil },
+            candidateProvider: { [] },
+            defaults: defaults
+        )
+        let launcher = FakeLauncher()
+        let store = SessionStore(launcher: launcher, locator: noClaude)
+        XCTAssertNil(noClaude.locate())
+
+        let dir = tmpDirectory("Blank")
+        let id = try store.createSession(
+            request: SessionCreationRequest(purpose: .blank, name: "Blank", workingDirectory: dir)
+        )
+
+        XCTAssertEqual(store.sessions.count, 1)
+        XCTAssertEqual(store.selectedSessionID, id)
+        let session = store.session(withID: id)!
+        XCTAssertEqual(session.purpose, .blank)
+        XCTAssertEqual(session.bridgeStatus, .unavailable)
+        XCTAssertNil(session.instrumentationWarning)
+        XCTAssertEqual(launcher.launchCount, 0, "no Claude executable is launched for a Blank session")
+        XCTAssertEqual(launcher.exitShellStartCount, 1, "Blank sessions start the plain login shell")
+        XCTAssertEqual(launcher.lastExitShellWorkingDirectory, dir.path)
+        let environment = try XCTUnwrap(launcher.lastExitShellEnvironment)
+        XCTAssertEqual(environment["TERM"], "xterm-256color")
+        XCTAssertTrue(
+            environment.keys.filter { $0.hasPrefix("CONSOLE_TERM_BRIDGE_") }.isEmpty,
+            "Blank shells carry no bridge identity variables"
+        )
+        store.terminateAll()
+    }
+
+    func testBlankSessionShellExitEndsSessionWithoutReplacementShell() throws {
+        let (store, launcher) = makeStore()
+        let id = try store.createSession(
+            request: SessionCreationRequest(purpose: .blank, name: "Blank", workingDirectory: tmpDirectory("Blank"))
+        )
+        let shellStartsAfterLaunch = launcher.exitShellStartCount
+
+        store.handleProcessTerminated(sessionID: id)
+
+        XCTAssertEqual(store.session(withID: id)?.activity, .exited)
+        XCTAssertEqual(
+            launcher.exitShellStartCount, shellStartsAfterLaunch,
+            "a Blank session's shell exit must not start a replacement shell"
+        )
+    }
+
+    func testClaudeSessionProcessExitStillStartsExitShell() throws {
+        let (store, launcher) = makeStore()
+        let id = try store.createSession(name: "Claude", workingDirectory: tmpDirectory("Claude"))
+        let shellStartsAfterLaunch = launcher.exitShellStartCount
+
+        store.handleProcessTerminated(sessionID: id)
+
+        XCTAssertEqual(launcher.exitShellStartCount, shellStartsAfterLaunch + 1)
+    }
+
     // MARK: - Selection
 
     func testSelectionSwitchesWithoutTouchingProcesses() throws {

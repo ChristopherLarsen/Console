@@ -7,6 +7,7 @@ enum SessionPurpose: String, Codable, CaseIterable {
     case existingTicket
     case review
     case general
+    case blank
 
     var displayName: String {
         switch self {
@@ -14,6 +15,7 @@ enum SessionPurpose: String, Codable, CaseIterable {
         case .existingTicket: return "Existing Ticket"
         case .review: return "Review"
         case .general: return "General"
+        case .blank: return "Blank"
         }
     }
 
@@ -27,6 +29,8 @@ enum SessionPurpose: String, Codable, CaseIterable {
             return "Opens an idle session in the merge-request workspace. Type the review context yourself — MR details stay in Console."
         case .general:
             return "Clean, idle Claude session for anything else."
+        case .blank:
+            return "Plain command-line terminal in the Session Folder. No Claude Code."
         }
     }
 
@@ -36,6 +40,7 @@ enum SessionPurpose: String, Codable, CaseIterable {
         case .existingTicket: return "ticket"
         case .review: return "eye"
         case .general: return "terminal"
+        case .blank: return "apple.terminal"
         }
     }
 
@@ -44,6 +49,7 @@ enum SessionPurpose: String, Codable, CaseIterable {
         switch self {
         case .newTicket: return "New Ticket"
         case .general: return "General"
+        case .blank: return "Blank"
         case .existingTicket:
             if case let .jira(key, _, _) = source { return key }
             return "Existing Ticket"
@@ -60,7 +66,7 @@ enum SessionPurpose: String, Codable, CaseIterable {
     /// launcher copy describes an idle review session.
     var occupiesCheckoutForEditing: Bool {
         switch self {
-        case .newTicket, .existingTicket, .review, .general:
+        case .newTicket, .existingTicket, .review, .general, .blank:
             return true
         }
     }

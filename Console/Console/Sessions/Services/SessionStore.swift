@@ -288,6 +288,9 @@ final class SessionStore {
     }
 
     private func createSession(request: SessionCreationRequest, resuming record: SessionRestorationRecord?) throws -> UUID {
+        if request.purpose == .blank {
+            return try createBlankSession(request: request, resuming: record)
+        }
         guard let claudePath = locator.locate() else {
             throw SessionCreationError.claudeNotFound
         }
@@ -383,6 +386,57 @@ final class SessionStore {
         } catch {
             sessions.removeAll { $0.id == consoleID }
             sessionTokens.removeValue(forKey: consoleID)
+            startingRestorations.removeValue(forKey: consoleID)
+            selectedSessionID = previousSelection
+            throw error
+        }
+        if let record { pendingRestorations.removeAll { $0.id == record.id } }
+        persistRestorationSnapshot()
+        return consoleID
+    }
+
+    /// Blank sessions run a plain login shell as their PTY child — no Claude
+    /// executable, plugin, or bridge instrumentation. The saved restoration
+    /// identity is kept so a restored Blank row reopens as a fresh shell in
+    /// the same folder.
+    private func createBlankSession(request: SessionCreationRequest, resuming record: SessionRestorationRecord?) throws -> UUID {
+        let consoleID = UUID()
+        let claudeID = record?.claudeSessionID ?? UUID()
+        let displayName = Self.uniquedName(request.name.trimmingCharacters(in: .whitespacesAndNewlines), existingNames: activeNames)
+
+        let terminalView = launcher.makeTerminalView()
+        let coordinator = SessionTerminalCoordinator(sessionID: consoleID, store: self)
+        terminalView.processDelegate = coordinator
+        (terminalView as? ConsoleTerminalView)?.retainedSessionCoordinator = coordinator
+
+        let session = ConsoleSession(
+            id: consoleID,
+            claudeSessionID: claudeID,
+            name: displayName,
+            workingDirectory: request.workingDirectory,
+            terminalView: terminalView,
+            activity: .starting,
+            attention: .none,
+            summary: nil,
+            artifacts: [],
+            bridgeStatus: .unavailable,
+            purpose: request.purpose,
+            instrumentationWarning: nil
+        )
+
+        let previousSelection = selectedSessionID
+        sessions.append(session)
+        selectedSessionID = consoleID
+        if let record { startingRestorations[consoleID] = record }
+
+        do {
+            try launcher.launchShell(
+                workingDirectory: request.workingDirectory.path,
+                environment: childEnvironment(bridgeEnvironment: [:]),
+                terminalView: terminalView
+            )
+        } catch {
+            sessions.removeAll { $0.id == consoleID }
             startingRestorations.removeValue(forKey: consoleID)
             selectedSessionID = previousSelection
             throw error
@@ -680,9 +734,12 @@ final class SessionStore {
         // A retained pane must never sit as a dead terminal: when the Claude
         // child exits, hand the same terminal view to a login shell so the
         // user gets a command-line prompt. Scrollback is preserved by
-        // SwiftTerm; a resumed Claude reports SessionStart through the same bridge.
+        // SwiftTerm; a resumed Claude reports SessionStart through the same
+        // bridge. A Blank session's shell IS the session: its exit ends the
+        // session, so no replacement shell is started.
         guard startExitShell,
               let session = session(withID: sessionID),
+              session.purpose != .blank,
               session.terminalView.process?.running != true else { return }
         launcher.startExitShell(
             workingDirectory: session.workingDirectory.path,

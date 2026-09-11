@@ -22,6 +22,14 @@ protocol SessionProcessLaunching: AnyObject {
         environment: [String: String],
         terminalView: LocalProcessTerminalView
     )
+
+    /// Starts the plain login shell a Blank session runs as its PTY child.
+    /// Throws when the PTY child never started so creation can roll back.
+    func launchShell(
+        workingDirectory: String,
+        environment: [String: String],
+        terminalView: LocalProcessTerminalView
+    ) throws
 }
 
 /// Production launcher: starts the resolved `claude` executable directly as the
@@ -66,6 +74,20 @@ final class ClaudeSessionLauncher: SessionProcessLaunching {
         environment: [String: String],
         terminalView: LocalProcessTerminalView
     ) {
+        try? launchShell(
+            workingDirectory: workingDirectory,
+            environment: environment,
+            terminalView: terminalView
+        )
+    }
+
+    /// Starts the plain login shell a Blank session runs as its PTY child.
+    /// No Claude executable, plugin arguments, or bridge variables apply.
+    func launchShell(
+        workingDirectory: String,
+        environment: [String: String],
+        terminalView: LocalProcessTerminalView
+    ) throws {
         let environmentEntries = environment.map { "\($0.key)=\($0.value)" }.sorted()
         terminalView.startProcess(
             executable: "/bin/zsh",
@@ -73,6 +95,27 @@ final class ClaudeSessionLauncher: SessionProcessLaunching {
             environment: environmentEntries,
             execName: "zsh",
             currentDirectory: workingDirectory
+        )
+        // SwiftTerm's forkpty failure is silent (shellPid stays 0). Throw so
+        // createSession's rollback removes the ghost row.
+        guard let pid = terminalView.process?.shellPid, pid > 0, terminalView.process?.running == true else {
+            throw SessionCreationError.sessionLaunchFailed
+        }
+    }
+}
+
+/// Default for test fakes: Blank launches reuse the same shell start as the
+/// exit shell, without a liveness guarantee.
+extension SessionProcessLaunching {
+    func launchShell(
+        workingDirectory: String,
+        environment: [String: String],
+        terminalView: LocalProcessTerminalView
+    ) throws {
+        startExitShell(
+            workingDirectory: workingDirectory,
+            environment: environment,
+            terminalView: terminalView
         )
     }
 }

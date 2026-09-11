@@ -127,7 +127,7 @@ struct SessionIntentPickerView: View {
         case .newTicket: return true
         case .existingTicket: return retainedJiraSource == nil
         case .review: return retainedMergeRequestSource == nil
-        case .general: return false
+        case .general, .blank: return false
         }
     }
 
@@ -173,6 +173,9 @@ struct SessionIntentPickerView: View {
                     step = .awaitingMergeRequestContext
                 }
             }
+
+        case .blank:
+            launch(purpose: purpose, source: nil)
         }
     }
 
@@ -378,6 +381,7 @@ extension SessionPurpose {
         case .existingTicket: return "2"
         case .review: return "3"
         case .general: return "4"
+        case .blank: return "5"
         }
     }
 }
