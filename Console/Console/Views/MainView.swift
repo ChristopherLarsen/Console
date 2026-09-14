@@ -95,6 +95,12 @@ struct MainView: View {
                 expanded: expanded,
                 height: terminalPanelHeight
             )
+            // Expanding the drawer hands keyboard focus to its zsh session so
+            // the user can type immediately. Collapsing never touches focus,
+            // and Focus Mode transitions leave `isTerminalExpanded` alone.
+            if expanded {
+                terminalSessionManager.focusTerminal()
+            }
         }
         .onChange(of: terminalPanelHeight) { _, height in
             sessionWorkspaceLayout.noteTerminalChrome(
@@ -321,5 +327,6 @@ struct MainView: View {
         .environment(IOSBuildCoordinator(processRunner: SystemProcessRunner()))
         .environment(SessionLaunchCoordinator(store: SessionStore(), workspaceStore: SessionWorkspaceStore()))
         .environment(SessionWorkspaceLayoutController())
+        .environment(SessionNewRequestController())
         .modelContainer(for: [Command.self, WakeWord.self], inMemory: true)
 }
