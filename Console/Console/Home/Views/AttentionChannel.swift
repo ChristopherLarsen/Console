@@ -33,8 +33,8 @@ enum AttentionChannel: Sendable, Equatable {
     }
 
     /// Card-surface fill when the testing channel applies: light green
-    /// (#E5FFE5); nil keeps the shared control-background surface.
-    static let testingCardFill = Color(red: 229.0 / 255.0, green: 1, blue: 229.0 / 255.0)
+    /// (#F2FFF2); nil keeps the shared control-background surface.
+    static let testingCardFill = Color(red: 242.0 / 255.0, green: 1, blue: 242.0 / 255.0)
 
     // MARK: - Ticket status column
 

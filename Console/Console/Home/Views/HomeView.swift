@@ -145,6 +145,7 @@ struct HomeView: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, 6)
                 .accessibilityIdentifier("HomeNextOverflowFooter")
         }
     }

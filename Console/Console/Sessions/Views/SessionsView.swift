@@ -243,7 +243,7 @@ struct SessionsView: View {
             layout.isListVisible.toggle()
         } label: {
             Image(systemName: "sidebar.trailing")
-                .foregroundStyle(layout.showsSessionList ? Color.accentColor : .secondary)
+                .foregroundStyle(.primary)
         }
         .disabled(layout.isFocusMode)
         .help(layout.showsSessionList ? "Hide Session List" : "Show Session List")

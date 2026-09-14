@@ -242,7 +242,7 @@ struct HomeBoardTicketCard: View {
             }
             .font(.system(size: 10, weight: .medium))
             .buttonStyle(.borderless)
-            .padding(.top, 5)
+            .padding(.top, 8)
         }
         .padding(HomeCardMetrics.padding)
         .frame(maxWidth: .infinity, minHeight: HomeCardMetrics.minHeight, alignment: .leading)
@@ -258,7 +258,7 @@ struct HomeBoardTicketCard: View {
         .accessibilityIdentifier("HomeBoardTicketCard")
     }
 
-    /// Testing cards tint their surface light green (#E5FFE5); every other
+    /// Testing cards tint their surface light green (#F2FFF2); every other
     /// state keeps the shared control-background fill.
     private var surfaceFill: Color? {
         channel == .testing ? AttentionChannel.testingCardFill : nil
@@ -346,7 +346,7 @@ struct HomeBoardReviewRequestCard: View {
             }
             .font(.system(size: 10, weight: .medium))
             .buttonStyle(.borderless)
-            .padding(.top, 5)
+            .padding(.top, 8)
         }
         .padding(HomeCardMetrics.padding)
         .frame(maxWidth: .infinity, minHeight: HomeCardMetrics.minHeight, alignment: .leading)
