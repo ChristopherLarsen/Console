@@ -11,7 +11,6 @@ struct PreviousSessionsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var model = PreviousSessionsModel()
-    @State private var scope: SessionHistoryScope = .sessionFolder
     @State private var searchText = ""
     @State private var resumingSessionIDs: Set<UUID> = []
     @State private var errorMessage: String?
@@ -85,14 +84,6 @@ struct PreviousSessionsView: View {
             )
 
             Spacer(minLength: 8)
-
-            Toggle("All Projects", isOn: Binding(
-                get: { scope == .allProjects },
-                set: { scope = $0 ? .allProjects : .sessionFolder }
-            ))
-            .toggleStyle(.checkbox)
-            .font(.callout)
-            .accessibilityIdentifier("PreviousSessions.AllProjectsToggle")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -121,7 +112,7 @@ struct PreviousSessionsView: View {
     private var cardList: some View {
         Group {
             if noSessionFolder {
-                messageView("Choose a Session Folder in Settings → Claude, or turn on All Projects.")
+                messageView("Choose a Session Folder in Settings → Claude.")
             } else if displayedRecords.isEmpty {
                 messageView(
                     searchText.isEmpty
@@ -138,6 +129,10 @@ struct PreviousSessionsView: View {
                             ) {
                                 resume(record)
                             }
+                        }
+
+                        if showAllSessionsFooter {
+                            allSessionsFooter
                         }
                     }
                     .padding(.horizontal, 16)
@@ -160,7 +155,42 @@ struct PreviousSessionsView: View {
     }
 
     private var noSessionFolder: Bool {
-        scope == .sessionFolder && workspaceStore.defaultFolder == nil
+        workspaceStore.defaultFolder == nil
+    }
+
+    /// The expansion footer appears while the default recent-50 list is
+    /// shown — including while a full load is in flight, when it renders
+    /// progress — and hides once everything is loaded or while searching
+    /// (expansion would not change a filtered-out list).
+    private var showAllSessionsFooter: Bool {
+        !model.isShowingAllSessions
+            && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !displayedRecords.isEmpty
+    }
+
+    /// Indexes every available transcript, not just the most recent 50.
+    private var allSessionsFooter: some View {
+        HStack(spacing: 6) {
+            if model.isLoading {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Loading all sessions…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Button {
+                    Task { await model.loadAllSessions() }
+                } label: {
+                    Label("All sessions", systemImage: "clock.arrow.circlepath")
+                        .font(.callout)
+                }
+                .buttonStyle(.borderless)
+                .help("Index every previous session instead of the 50 most recent")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.top, 4)
+        .accessibilityIdentifier("PreviousSessions.AllSessionsButton")
     }
 
     private func messageView(_ text: String) -> some View {
@@ -178,7 +208,7 @@ struct PreviousSessionsView: View {
     /// folder, branch, and ticket key.
     private var displayedRecords: [SessionHistoryRecord] {
         var records = model.records
-        if scope == .sessionFolder, let folder = workspaceStore.defaultFolder {
+        if let folder = workspaceStore.defaultFolder {
             let canonical = CheckoutPath.canonical(folder.directoryURL)
             records = records.filter { CheckoutPath.canonical($0.workingDirectory) == canonical }
         }
@@ -222,13 +252,15 @@ struct PreviousSessionsView: View {
 }
 
 /// Data source for the modal: transcript metadata loaded off the main actor
-/// through `SessionHistoryReader`.
+/// through `SessionHistoryReader`. The first load indexes only the most
+/// recent 50 transcripts; "All sessions" re-indexes everything available.
 @MainActor
 @Observable
 final class PreviousSessionsModel {
     private(set) var records: [SessionHistoryRecord] = []
     private(set) var isLoading = false
     private(set) var loadErrorMessage: String?
+    private(set) var isShowingAllSessions = false
 
     private let reader: SessionHistoryReader
 
@@ -237,11 +269,20 @@ final class PreviousSessionsModel {
     }
 
     func load() async {
+        await load(limit: SessionHistoryReader.defaultScanLimit, showingAll: false)
+    }
+
+    func loadAllSessions() async {
+        await load(limit: nil, showingAll: true)
+    }
+
+    private func load(limit: Int?, showingAll: Bool) async {
         guard !isLoading else { return }
         isLoading = true
         loadErrorMessage = nil
         defer { isLoading = false }
-        records = await reader.loadRecords()
+        records = await reader.loadRecords(limit: limit)
+        isShowingAllSessions = showingAll
     }
 }
 

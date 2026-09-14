@@ -28,12 +28,6 @@ struct SessionHistoryRecord: Identifiable, Equatable {
     var isTicketSession: Bool { ticketKey != nil }
 }
 
-/// Where the Previous Sessions modal searches.
-enum SessionHistoryScope: Equatable {
-    case sessionFolder
-    case allProjects
-}
-
 /// Conservative ticket recognition for Previous Sessions cards. Only saved
 /// Console associations and ticket-style custom titles classify as tickets —
 /// a ticket mentioned incidentally in a conversation never colors a card.

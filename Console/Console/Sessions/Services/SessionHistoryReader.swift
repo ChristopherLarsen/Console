@@ -12,9 +12,10 @@ final class SessionHistoryReader {
     nonisolated static let claudeProjectsRoot = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude/projects", isDirectory: true)
 
-    /// Bounds a first scan: only the most recently modified transcripts are
-    /// inspected before the list is shown.
-    nonisolated static let maxTranscriptsPerScan = 400
+    /// Default first scan: only the 50 most recently modified transcripts
+    /// are inspected before the list is shown. "All sessions" reloads with a
+    /// nil limit to index everything available.
+    nonisolated static let defaultScanLimit = 50
     /// Pathological transcripts are skipped entirely.
     nonisolated static let maxTranscriptByteCount: Int64 = 256 * 1024 * 1024
 
@@ -31,14 +32,15 @@ final class SessionHistoryReader {
         self.ticketAssociations = ticketAssociations
     }
 
-    /// Loads every resumable transcript, most recently active first. The
-    /// heavy scan runs off the main actor; cached files return instantly.
-    func loadRecords() async -> [SessionHistoryRecord] {
+    /// Loads resumable transcripts, most recently active first. The heavy
+    /// scan runs off the main actor; cached files return instantly. The
+    /// default limit keeps the first open fast; pass nil for all sessions.
+    func loadRecords(limit: Int? = SessionHistoryReader.defaultScanLimit) async -> [SessionHistoryRecord] {
         let root = Self.claudeProjectsRoot
         let associations = ticketAssociations.allKeys()
         let cached = cache
         let (records, updatedCache) = await Task.detached(priority: .userInitiated) {
-            Self.scan(root: root, associations: associations, cache: cached)
+            Self.scan(root: root, associations: associations, cache: cached, limit: limit)
         }.value
         cache = updatedCache
         return records
@@ -46,11 +48,13 @@ final class SessionHistoryReader {
 
     // MARK: - Scan (off main actor)
 
-    /// Internal so tests can drive a scan against a fixture root.
+    /// Internal so tests can drive a scan against a fixture root. A nil
+    /// limit inspects every candidate transcript.
     nonisolated static func scan(
         root: URL,
         associations: [UUID: String],
-        cache: [String: CachedMetadata]
+        cache: [String: CachedMetadata],
+        limit: Int? = nil
     ) -> ([SessionHistoryRecord], [String: CachedMetadata]) {
         let fileManager = FileManager.default
         guard let projectDirs = try? fileManager.contentsOfDirectory(
@@ -74,7 +78,8 @@ final class SessionHistoryReader {
             }
         }
         candidates.sort { $0.modified > $1.modified }
-        let inspected = candidates.prefix(maxTranscriptsPerScan)
+        let inspected: ArraySlice<(url: URL, byteCount: Int64, modified: Date)> =
+            limit.map { candidates.prefix($0) } ?? candidates[...]
 
         var updatedCache = cache
         var records: [SessionHistoryRecord] = []
