@@ -553,12 +553,12 @@ struct PermissionModalSuccessView: View {
             // Checkmark with scale animation
             ZStack {
                 Circle()
-                    .fill(Color.green.opacity(0.15))
+                    .fill(Color.consoleGreen.opacity(0.15))
                     .frame(width: 160, height: 160)
                 
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 100))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.consoleGreen)
                     .scaleEffect(showCheckmark ? 1.0 : 0.5)
                     .opacity(showCheckmark ? 1.0 : 0.0)
             }
@@ -592,7 +592,7 @@ struct PermissionModalSuccessView: View {
                     .multilineTextAlignment(.center)
             }
             .padding()
-            .background(Color.green.opacity(0.1))
+            .background(Color.consoleGreen.opacity(0.1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             
             Spacer()
@@ -608,7 +608,7 @@ struct PermissionModalSuccessView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.green)
+                .tint(.consoleGreen)
                 .controlSize(.large)
                 .padding(.horizontal, 40)
                 
@@ -786,12 +786,12 @@ struct PermissionManageModalView: View {
                     HStack(spacing: 12) {
                         ZStack {
                             Circle()
-                                .fill(Color.green.opacity(0.15))
+                                .fill(Color.consoleGreen.opacity(0.15))
                                 .frame(width: 50, height: 50)
                             
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 28))
-                                .foregroundStyle(.green)
+                                .foregroundStyle(.consoleGreen)
                         }
                         
                         VStack(alignment: .leading, spacing: 4) {
@@ -801,7 +801,7 @@ struct PermissionManageModalView: View {
                             
                             Text("This permission is enabled")
                                 .font(.subheadline)
-                                .foregroundStyle(.green)
+                                .foregroundStyle(.consoleGreen)
                         }
                     }
                     
@@ -817,7 +817,7 @@ struct PermissionManageModalView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding()
-                    .background(Color.green.opacity(0.1))
+                    .background(Color.consoleGreen.opacity(0.1))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     
                     // How to disable

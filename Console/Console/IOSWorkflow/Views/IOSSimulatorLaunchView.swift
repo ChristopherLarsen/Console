@@ -51,7 +51,7 @@ struct IOSSimulatorLaunchView: View {
             } else if case .succeeded = model.phase, let statusText = model.statusText {
                 Text(statusText)
                     .font(.subheadline)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.consoleGreen)
                     .accessibilityIdentifier("Settings.IOS.Simulator.Status")
             }
 

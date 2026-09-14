@@ -36,7 +36,7 @@ enum CommandStatus: String, CaseIterable {
         switch self {
         case .waiting: return .gray
         case .executing: return Color.blue
-        case .completed: return .green
+        case .completed: return .consoleGreen
         case .failed: return .red
         }
     }

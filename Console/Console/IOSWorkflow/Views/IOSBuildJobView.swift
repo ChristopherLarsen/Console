@@ -239,7 +239,7 @@ struct IOSBuildJobView: View {
         case .queued, .running:
             return .secondary
         case .succeeded:
-            return .green
+            return .consoleGreen
         case .failed, .timedOut:
             return .red
         case .cancelled:

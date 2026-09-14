@@ -21,7 +21,7 @@ struct ConnectedBuddyView: View {
     private var connectionDotColor: Color? {
         guard showsConnectionDot, let manager = aiProviderManager else { return nil }
         switch manager.lastRequest {
-        case .succeeded: return .green
+        case .succeeded: return .consoleGreen
         case .failed: return .red
         case .none: return nil
         }

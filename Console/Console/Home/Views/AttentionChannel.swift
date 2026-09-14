@@ -17,8 +17,9 @@ enum AttentionChannel: Sendable, Equatable {
     case clear
     case parked
 
-    /// Dark green (#006400) for the testing channel; the rest use system
-    /// palette colours.
+    /// Dark green (#006400) for the testing channel; the clear channel uses
+    /// the app-wide `consoleGreen` (#007F00); the rest use system palette
+    /// colours.
     static let testingColor = Color(red: 0, green: 0.392, blue: 0)
 
     var color: Color {
@@ -27,7 +28,7 @@ enum AttentionChannel: Sendable, Equatable {
         case .inFlight: return .orange
         case .testing: return Self.testingColor
         case .active: return .blue
-        case .clear: return .green
+        case .clear: return .consoleGreen
         case .parked: return .gray
         }
     }

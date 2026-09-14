@@ -113,9 +113,9 @@ struct LiveView: View {
     private var statusBar: some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(listeningActive ? Color(red: 0.1, green: 0.45, blue: 0.15) : Color.gray.opacity(0.4))
+                .fill(listeningActive ? Color.consoleGreen : Color.gray.opacity(0.4))
                 .frame(width: 8, height: 8)
-                .shadow(color: listeningActive ? Color(red: 0.1, green: 0.45, blue: 0.15).opacity(0.5) : .clear, radius: 4)
+                .shadow(color: listeningActive ? Color.consoleGreen.opacity(0.5) : .clear, radius: 4)
 
             Text(statusText)
                 .font(.caption.weight(.medium))
@@ -175,7 +175,7 @@ struct LiveView: View {
                 if triggerDetected {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.callout)
-                        .foregroundStyle(Color(red: 0.1, green: 0.45, blue: 0.15))
+                        .foregroundStyle(Color.consoleGreen)
                 }
             }
 
@@ -247,7 +247,7 @@ struct LiveView: View {
     private var matchResultColor: Color {
         let result = menuBarViewModel.lastMatchResult
         if result.hasPrefix("Matched:") || result.hasPrefix("Built-in:") {
-            return Color(red: 0.1, green: 0.45, blue: 0.15)
+            return Color.consoleGreen
         }
         return .red
     }

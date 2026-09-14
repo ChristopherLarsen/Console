@@ -105,7 +105,7 @@ struct ManagedClaudeAccessSection: View {
 
     private var statusColor: Color {
         switch service.state {
-        case .ready: return .green
+        case .ready: return .consoleGreen
         case .busy, .starting, .recovering: return .secondary
         case .needsAuthentication, .error, .stopped: return .orange
         }

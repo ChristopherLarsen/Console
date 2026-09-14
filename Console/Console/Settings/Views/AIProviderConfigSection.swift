@@ -270,7 +270,7 @@ struct AIProviderConfigSection: View {
 
     private var statusColor: Color {
         switch testResult {
-        case .success: return Color(red: 0.2, green: 0.65, blue: 0.3)
+        case .success: return .consoleGreen
         case .testing, .idle: return .secondary
         case .invalidKey, .rateLimited, .networkError, .error: return .red
         }

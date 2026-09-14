@@ -570,7 +570,7 @@ private struct TestResultBanner: View {
         if result.alreadyRunning {
             return .orange
         }
-        return result.overallSuccess ? .green : .red
+        return result.overallSuccess ? .consoleGreen : .red
     }
 
     private var statusText: String {
@@ -584,7 +584,7 @@ private struct TestResultBanner: View {
         if result.alreadyRunning {
             return Color.orange.opacity(0.08)
         }
-        return result.overallSuccess ? Color.green.opacity(0.06) : Color.red.opacity(0.06)
+        return result.overallSuccess ? Color.consoleGreen.opacity(0.06) : Color.red.opacity(0.06)
     }
 
     var body: some View {

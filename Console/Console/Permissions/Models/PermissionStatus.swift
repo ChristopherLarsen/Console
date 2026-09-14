@@ -32,7 +32,7 @@ enum PermissionStatus: String, CaseIterable, Identifiable {
     var indicatorColor: Color {
         switch self {
         case .notGranted: return .gray
-        case .granted: return .green
+        case .granted: return .consoleGreen
         case .restricted: return .yellow
         case .denied: return .red
         }
