@@ -6,7 +6,7 @@ import WebKit
 final class JiraWebSession {
     static let shared = JiraWebSession()
 
-    let page = WebPage()
+    let page = WebAuthenticationStore.makePage()
     /// Survives Home unmount so cards and last extraction remain when returning.
     let panelController = JiraPanelController()
     /// Browser-style tabs for the full JIRA destination. The pinned first tab

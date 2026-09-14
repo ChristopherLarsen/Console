@@ -13,7 +13,7 @@ final class CodeHostWebSessionStore {
     static let shared = CodeHostWebSessionStore()
 
     /// The one explicit persistent store both pages are configured with.
-    /// Never inspected for cookies, tokens, or other site data by Console.
+    /// Session cookies are secured by WebAuthenticationStore across launches.
     let websiteDataStore: WKWebsiteDataStore
 
     let reviewsPage: WebPage
@@ -100,6 +100,9 @@ final class CodeHostWebSessionStore {
     /// Builds one page bound to `dataStore`. Shared by both list kinds; every
     /// hosted page must go through here so no isolated store can appear.
     static func makePage(dataStore: WKWebsiteDataStore) -> WebPage {
+        if dataStore === WKWebsiteDataStore.default() {
+            return WebAuthenticationStore.makePage()
+        }
         var configuration = WebPage.Configuration()
         configuration.websiteDataStore = dataStore
         return WebPage(configuration: configuration)

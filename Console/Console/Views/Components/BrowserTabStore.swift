@@ -114,7 +114,7 @@ final class BrowserTabStore {
     }
 
     private func appendDynamicTab() -> BrowserTab {
-        let tab = BrowserTab(page: WebPage(), titleOverride: nil, isPinned: false)
+        let tab = BrowserTab(page: WebAuthenticationStore.makePage(), titleOverride: nil, isPinned: false)
         tabs.append(tab)
         activeTabID = tab.id
         contentStampedAt[tab.id] = now()
