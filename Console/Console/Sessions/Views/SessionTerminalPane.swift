@@ -81,12 +81,26 @@ struct SessionTerminalPane: View {
             if let url = HomeStorySessionMatcher.jiraURL(
                 for: session, configuredURL: webViewJiraURL, reviewItems: MRReviewScanController.shared.items
             ) {
-                Button("Open in JIRA") {
+                Button {
                     JiraDeepLink.shared.set(url: url)
                     ConsoleNavigation.show(.jira)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "text.page")
+                            .font(.caption2)
+                        Text("Open in JIRA")
+                            .font(.caption)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
+                    .overlay(Capsule().stroke(Color(nsColor: .separatorColor), lineWidth: 0.5))
+                    .contentShape(Capsule())
                 }
-                .font(.caption)
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
+                .help("Open this session's ticket in Jira")
+                .accessibilityLabel("Open in Jira")
                 .accessibilityIdentifier("Sessions.OpenInJira")
             }
 
