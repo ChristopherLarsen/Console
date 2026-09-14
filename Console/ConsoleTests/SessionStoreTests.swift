@@ -501,6 +501,90 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertTrue(store.sessionsNeedingAttention.isEmpty)
     }
 
+    // MARK: - In-focus completion suppression
+
+    private func sendLifecycle(
+        _ event: BridgeProtocol.LifecycleEventKind,
+        to id: UUID,
+        store: SessionStore
+    ) throws {
+        store.debugReceiveEnvelope(BridgeEnvelope(
+            sessionID: id.uuidString,
+            token: try XCTUnwrap(store.debugSessionToken(id)),
+            eventID: UUID().uuidString,
+            kind: .lifecycle,
+            lifecycleEvent: event
+        ))
+    }
+
+    private func sendAttention(
+        _ category: BridgeAttentionCategory,
+        to id: UUID,
+        store: SessionStore
+    ) throws {
+        store.debugReceiveEnvelope(BridgeEnvelope(
+            sessionID: id.uuidString,
+            token: try XCTUnwrap(store.debugSessionToken(id)),
+            eventID: UUID().uuidString,
+            kind: .attention,
+            attentionCategory: category
+        ))
+    }
+
+    func testCompletionForSessionInViewingFocusIsNotSurfacedAsUnread() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Watched", workingDirectory: tmpDirectory("Watched"))
+        store.select(sessionID: id)
+        store.viewingFocusDetector = { $0 == id }
+
+        try sendLifecycle(.turnCompleted, to: id, store: store)
+
+        XCTAssertEqual(store.session(withID: id)?.attention, SessionAttention.none)
+        XCTAssertEqual(store.session(withID: id)?.activity, .idle)
+        XCTAssertTrue(store.sessionsNeedingAttention.isEmpty, "a completion seen in focus must not surface the top-bar notification")
+    }
+
+    func testCompletionForUnviewedSessionStillNotifies() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Away", workingDirectory: tmpDirectory("Away"))
+        store.viewingFocusDetector = { _ in false }
+
+        try sendLifecycle(.turnCompleted, to: id, store: store)
+
+        XCTAssertEqual(store.session(withID: id)?.attention, .unreadCompletion)
+        XCTAssertEqual(store.sessionsNeedingAttention.map(\.id), [id])
+    }
+
+    func testViewingSuppressionNeverErasesAnExistingUnreadMarker() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Marker", workingDirectory: tmpDirectory("Marker"))
+        try sendLifecycle(.turnCompleted, to: id, store: store)
+        store.select(sessionID: id)
+        store.viewingFocusDetector = { $0 == id }
+
+        try sendLifecycle(.turnCompleted, to: id, store: store)
+
+        XCTAssertEqual(
+            store.session(withID: id)?.attention, .unreadCompletion,
+            "a completion while viewing must not clear an unread marker the user has not seen yet"
+        )
+        XCTAssertEqual(store.sessionsNeedingAttention.map(\.id), [id])
+    }
+
+    func testQuestionReportedWhileViewingStillNeedsInput() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Asked", workingDirectory: tmpDirectory("Asked"))
+        store.viewingFocusDetector = { $0 == id }
+
+        try sendAttention(.question, to: id, store: store)
+
+        XCTAssertEqual(
+            store.session(withID: id)?.attention, .question,
+            "blocking attention marks an outstanding input request and is never suppressed"
+        )
+        XCTAssertEqual(store.sessionsNeedingAttention.map(\.id), [id])
+    }
+
     func testCreateSessionGeneratesDistinctIDsAndLaunchesClaude() throws {
         let (store, launcher) = makeStore()
         let dir = tmpDirectory("Alpha")

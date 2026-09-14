@@ -64,6 +64,23 @@ final class BrowserTabStoreTests: XCTestCase {
 
     // MARK: - Opening
 
+    func testNotificationAlwaysOpensFreshTabEvenAtCap() {
+        let (store, pages) = makeStore(pinnedCount: 2)
+        while store.canOpenTab { store.openTab() }
+        store.select(store.tabs[0].id)
+        let previousIDs = store.tabs.map(\.id)
+        let url = URL(string: "https://example.test/team/project/-/merge_requests/1")!
+        let first = store.openNotificationTab(url: url)
+        XCTAssertEqual(store.tabs.count, previousIDs.count + 1)
+        XCTAssertEqual(store.activeTabID, first.id)
+        XCTAssertEqual(first.page.url, url)
+        XCTAssertNil(pages[0].url)
+        let second = store.openNotificationTab(url: url)
+        XCTAssertNotEqual(first.id, second.id)
+        XCTAssertEqual(store.activeTabID, second.id)
+        XCTAssertEqual(Array(store.tabs.prefix(previousIDs.count)).map(\.id), previousIDs)
+    }
+
     func testOpenTabAppendsActivatesAndLoadsProviderURL() throws {
         let url = URL(string: "https://example.test/list")!
         let (store, _) = makeStore(pinnedCount: 1, newTabURL: url)

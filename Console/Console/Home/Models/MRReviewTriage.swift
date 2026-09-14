@@ -47,6 +47,8 @@ struct MRReviewTriageResult: Codable, Sendable {
     let failure: String?
     let currentUsername: String
     let items: [MRReviewTriageItem]
+    var authoredComplete: Bool? = nil
+    var authoredItems: [AuthoredMRAttention]? = nil
 }
 
 enum MRReviewTriageError: Error {
@@ -120,13 +122,23 @@ enum MRReviewTriagePrompt {
             "latestMyCommentAt": nullableString, "latestAuthorActivityAt": nullableString,
             "jiraIssueKey": nullableString
         ]
+        let authoredProperties: [String: Any] = [
+            "project": string, "iid": ["type": "integer", "minimum": 1], "url": string,
+            "title": string, "authorUsername": string, "state": string,
+            "unresolvedDiscussionCount": ["type": "integer", "minimum": 0],
+            "externalApprovalCount": ["type": "integer", "minimum": 0],
+            "approvalRulesSatisfied": ["type": "boolean"], "jiraIssueKey": nullableString
+        ]
         let schema: [String: Any] = [
             "type": "object", "additionalProperties": false,
-            "required": ["complete", "failure", "currentUsername", "items"],
+            "required": ["complete", "failure", "currentUsername", "items", "authoredComplete", "authoredItems"],
             "properties": [
                 "complete": ["type": "boolean"],
                 "failure": ["type": ["string", "null"], "enum": ["authentication", "scope", "api", "evidence", NSNull()]],
                 "currentUsername": ["type": "string"],
+                "authoredComplete": ["type": "boolean"],
+                "authoredItems": ["type": "array", "items": ["type": "object", "additionalProperties": false,
+                    "required": authoredProperties.keys.sorted(), "properties": authoredProperties]],
                 "items": ["type": "array", "items": ["type": "object", "additionalProperties": false,
                     "required": properties.keys.sorted(), "properties": properties]]
             ]
@@ -138,6 +150,26 @@ enum MRReviewTriagePrompt {
         return ClaudeOperationInvocation(
             prompt: """
             \(configuredText(defaults))
+
+            Additional mandatory output: authoredItems is a SEPARATE collection of ALL open MRs
+            authored by the authenticated user within the supplied host/project/group scope and
+            non-personal filters. The review queue's exclusions of my own, draft, and approved MRs
+            apply ONLY to items, never to authoredItems. Reuse fetched evidence where possible.
+            Follow every page. For each authored MR, read all discussions and current approvals
+            plus approval_state (including all applicable required approval rules).
+            unresolvedDiscussionCount counts distinct discussions containing at least one note
+            with resolvable=true and resolved=false, including author-created discussions.
+            Ordinary non-resolvable comments and resolved threads do not count.
+            externalApprovalCount counts distinct CURRENT approved_by users other than the author;
+            historical or reset approvals never count. approvalRulesSatisfied is true ONLY when
+            GitLab confirms every applicable required approval rule is satisfied. A zero-required
+            rules list may be satisfied but is NOT evidence of any external approval.
+            Include jiraIssueKey only when one explicit associated story is known, otherwise null.
+            authoredComplete=true only after complete identity, pagination, discussion and approval
+            evidence for this collection. On any authored evidence failure return authoredComplete=false
+            and authoredItems=[]. The existing complete/failure/items fields describe ONLY the review
+            collection. Either collection may succeed independently; never discard one because the
+            other failed. Never infer missing approval-rule evidence as satisfied.
 
             Required execution/output contract: use only the supplied glab executable with Bash.
             Include jiraIssueKey from the MR title, source branch, or description when exactly one

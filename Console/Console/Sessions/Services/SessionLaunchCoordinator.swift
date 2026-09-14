@@ -57,6 +57,9 @@ final class SessionLaunchCoordinator {
 
     /// Contextual-launch failure. MainView presents it.
     private(set) var lastFailure: SessionLaunchFailure?
+    var pendingAuthoredMR: AuthoredMRAttention?
+    private(set) var isOpeningAuthoredMR = false
+    @ObservationIgnored private var resumingConversations = Set<UUID>()
 
     var lastFailureMessage: String? { lastFailure?.message }
 
@@ -157,6 +160,14 @@ final class SessionLaunchCoordinator {
     @discardableResult
     func launchResume(record: SessionRestorationRecord) async throws -> UUID {
         lastFailure = nil
+        if let active = store.sessions.first(where: { $0.claudeSessionID == record.id && $0.activity != .exited }) {
+            store.select(sessionID: active.id)
+            ConsoleNavigation.showSessions()
+            store.focusSelectedTerminal()
+            return active.id
+        }
+        guard resumingConversations.insert(record.id).inserted else { throw POSIXError(.EBUSY) }
+        defer { resumingConversations.remove(record.id) }
 
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(
@@ -169,13 +180,57 @@ final class SessionLaunchCoordinator {
             throw LaunchError.resumeTranscriptMissing
         }
 
-        var prepared = draft(purpose: .general, source: nil)
+        try await store.checkConversationAvailable(record)
+        try Task.checkCancellation()
+        if let active = store.sessions.first(where: { $0.claudeSessionID == record.id && $0.activity != .exited }) {
+            store.select(sessionID: active.id)
+            ConsoleNavigation.showSessions()
+            store.focusSelectedTerminal()
+            return active.id
+        }
+        var prepared = draft(purpose: record.purpose, source: nil)
         prepared.name = record.name
         return try await performLaunch(
             draft: prepared,
             workingDirectory: record.workingDirectory,
             action: .resume(record: record)
         )
+    }
+
+    func openAuthoredMR(_ item: AuthoredMRAttention) async {
+        guard !isOpeningAuthoredMR else { return }
+        isOpeningAuthoredMR = true
+        defer { isOpeningAuthoredMR = false }
+        lastFailure = nil
+        guard let conversation = store.associations.author(for: item.url) else {
+            pendingAuthoredMR = item
+            return
+        }
+        do {
+            let id = try await launchResume(record: conversation.record)
+            try store.linkAuthoredMR(item, sessionID: id)
+            store.focusSelectedTerminal()
+        } catch {
+            lastFailure = SessionLaunchFailure(error: error)
+            pendingAuthoredMR = item
+        }
+    }
+
+    /// Explicit choice: either an existing conversation or a fresh authoring session.
+    func linkAuthoredMR(_ item: AuthoredMRAttention, record: SessionRestorationRecord?) async throws {
+        guard !isOpeningAuthoredMR else { throw POSIXError(.EBUSY) }
+        isOpeningAuthoredMR = true
+        defer { isOpeningAuthoredMR = false }
+        let id: UUID
+        if let record {
+            id = try await launchResume(record: record)
+        } else {
+            id = try await launch(draft: draft(purpose: .general,
+                source: .mergeRequest(iid: String(item.iid), title: item.title, url: item.url)))
+        }
+        try store.linkAuthoredMR(item, sessionID: id)
+        pendingAuthoredMR = nil
+        store.focusSelectedTerminal()
     }
 
     /// The single Session Folder, validated for this purpose. Refuses —

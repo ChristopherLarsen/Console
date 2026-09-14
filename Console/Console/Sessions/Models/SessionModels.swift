@@ -27,7 +27,7 @@ enum SessionArtifactKind: String, Codable, Sendable, Equatable {
 }
 
 /// An informational artifact chip produced by the agent. Never fetched.
-struct SessionArtifact: Identifiable, Equatable, Sendable {
+struct SessionArtifact: Identifiable, Equatable, Codable, Sendable {
     let id: UUID
     let kind: SessionArtifactKind
     let label: String

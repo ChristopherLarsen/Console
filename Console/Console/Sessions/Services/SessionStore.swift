@@ -73,6 +73,8 @@ final class SessionStore {
     /// Remembers which ticket a Claude conversation belongs to so Previous
     /// Sessions classification survives Console restarts.
     @ObservationIgnored private let ticketAssociations: SessionTicketAssociations
+    @ObservationIgnored let associations: SessionAssociationStore
+    private(set) var associationPersistenceError: String?
 
     // Bridge plumbing. Tokens and event ids live only in memory.
     @ObservationIgnored private var sessionTokens: [UUID: String] = [:]
@@ -92,6 +94,10 @@ final class SessionStore {
     @ObservationIgnored var loginShellEnvironmentCapture: () -> [String: String]? = {
         SessionEnvironmentBuilder.captureLoginShellEnvironment()
     }
+    /// Answers whether the user is literally looking at a session right now:
+    /// the app is active, the session is selected, and keyboard focus sits in
+    /// its terminal view. Injectable so tests can stage focus without windows.
+    @ObservationIgnored var viewingFocusDetector: @MainActor (UUID) -> Bool = { _ in false }
 
     static let gracefulStopGraceSeconds: UInt64 = 3
 
@@ -109,6 +115,8 @@ final class SessionStore {
         self.restorationStore = restorationStore
         self.processInspector = processInspector
         self.ticketAssociations = ticketAssociations
+        self.associations = SessionAssociationStore(url: restorationStore?.url.deletingLastPathComponent()
+            .appendingPathComponent("SessionAssociations.json"))
         if let restorationStore {
             do {
                 savedSnapshot = try restorationStore.load()
@@ -128,6 +136,9 @@ final class SessionStore {
                 self?.sessionTokens[sessionID]
             }
         )
+        viewingFocusDetector = { [weak self] sessionID in
+            self?.isViewingFocus(sessionID: sessionID) ?? false
+        }
         if restorationStore != nil {
             Task { [weak self] in await self?.refreshHeadlessSessions() }
         }
@@ -368,7 +379,7 @@ final class SessionStore {
             activity: .starting,
             attention: .none,
             summary: nil,
-            artifacts: Self.initialArtifacts(for: request.source),
+            artifacts: associations.conversation(claudeID)?.artifacts ?? Self.initialArtifacts(for: request.source),
             bridgeStatus: bridgeStatus,
             purpose: request.purpose,
             instrumentationWarning: instrumentationWarning
@@ -399,6 +410,7 @@ final class SessionStore {
             throw error
         }
         if let record { pendingRestorations.removeAll { $0.id == record.id } }
+        rememberAssociation(for: session)
         persistRestorationSnapshot()
         return consoleID
     }
@@ -494,7 +506,7 @@ final class SessionStore {
     func resumeSession(from record: SessionRestorationRecord) throws -> UUID {
         try createSession(
             request: SessionCreationRequest(
-                purpose: .general,
+                purpose: record.purpose,
                 name: record.name,
                 workingDirectory: record.workingDirectory
             ),
@@ -1017,6 +1029,17 @@ final class SessionStore {
         }
     }
 
+    /// The literal "user is looking at this session" check behind
+    /// `viewingFocusDetector`: the app is active, the session is selected,
+    /// and keyboard focus sits inside its terminal view.
+    private func isViewingFocus(sessionID: UUID) -> Bool {
+        guard sessionID == selectedSessionID, NSApp.isActive else { return false }
+        guard let window = NSApp.keyWindow,
+              let firstResponder = window.firstResponder as? NSView,
+              let terminalView = session(withID: sessionID)?.terminalView else { return false }
+        return firstResponder.isDescendant(of: terminalView)
+    }
+
     private func applyEvent(_ event: SessionLifecycleEvent, to sessionID: UUID) {
         guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
         if case .sessionStarted = event {
@@ -1028,10 +1051,12 @@ final class SessionStore {
 
         if case .artifactLinked(let artifact) = event {
             appendArtifact(artifact, toSessionAt: index)
+            rememberAssociation(for: sessions[index])
             notifyLifecycle(sessionID: sessionID, event: event)
             return
         }
 
+        let viewing = viewingFocusDetector(sessionID)
         var state = SessionLifecycleState(
             activity: sessions[index].activity,
             attention: sessions[index].attention,
@@ -1039,6 +1064,16 @@ final class SessionStore {
             workingDirectoryPath: sessions[index].workingDirectory.path
         )
         state.apply(event)
+        if viewing,
+           state.attention == .unreadCompletion,
+           sessions[index].attention != .unreadCompletion {
+            // The user is literally watching this session finish, so a
+            // needs-attention notification would be redundant: the completion
+            // is never surfaced as unread. Blocking attention (permission,
+            // question, blocked, needs review) still applies — it marks an
+            // outstanding input request, not a completion ping.
+            state.attention = .none
+        }
         sessions[index].activity = state.activity
         sessions[index].attention = state.attention
         sessions[index].summary = state.summary
@@ -1098,6 +1133,42 @@ final class SessionStore {
 
     private func process(_ process: SessionProcessSnapshot, matches record: SessionRestorationRecord) -> Bool {
         process.identity == record.processIdentity || process.claudeSessionID == record.id
+    }
+
+    /// Used by history and notification resumption before starting another writer.
+    func checkConversationAvailable(_ record: SessionRestorationRecord) async throws {
+        guard !isRestoringSessions, headlessActionID == nil, !isTerminating else { throw POSIXError(.EBUSY) }
+        let running = try await processSnapshot()
+        guard !running.contains(where: { process($0, matches: record) }) else { throw POSIXError(.EBUSY) }
+    }
+
+    func linkAuthoredMR(_ item: AuthoredMRAttention, sessionID: UUID) throws {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { throw CocoaError(.fileNoSuchFile) }
+        appendArtifact(.init(kind: .gitlabMergeRequest, label: "!\(item.iid)", url: item.url), toSessionAt: index)
+        if let key = item.jiraIssueKey.flatMap({ JiraSourceContext.parseKey(from: $0) }) {
+            appendArtifact(.init(kind: .jiraIssue, label: key), toSessionAt: index)
+            ticketAssociations.associate(key, with: sessions[index].claudeSessionID)
+        }
+        let session = sessions[index]
+        try associations.remember(record: .init(claudeSessionID: session.claudeSessionID,
+            name: session.name, workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general),
+            artifacts: session.artifacts)
+        try associations.preferAuthor(session.claudeSessionID, for: item.url)
+    }
+
+    private func rememberAssociation(for session: ConsoleSession) {
+        guard session.purpose != .blank else { return }
+        do {
+            var artifacts = session.artifacts
+            if let key = ticketAssociations.allKeys()[session.claudeSessionID] {
+                artifacts.append(.init(kind: .jiraIssue, label: key))
+            }
+            try associations.remember(record: .init(claudeSessionID: session.claudeSessionID,
+                name: session.name, workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general),
+                artifacts: artifacts)
+        } catch {
+            associationPersistenceError = "Session work links could not be saved: \(error.localizedDescription)"
+        }
     }
 
     /// macOS cannot transfer a crashed forkpty owner's master to a new process.
@@ -1227,6 +1298,7 @@ final class SessionStore {
         // confirmed: dropping them here would discard recovery metadata while
         // the process is still alive and the termination can still fail.
         for session in sessions where session.activity != .exited {
+            rememberAssociation(for: session)
             let record = SessionRestorationRecord(claudeSessionID: session.claudeSessionID,
                 name: session.name, workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general,
                 processIdentity: HeadlessSessionProcesses.identity(for: session.terminalView.process?.shellPid ?? 0))

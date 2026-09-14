@@ -752,6 +752,59 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         XCTAssertEqual(session.claudeSessionID, historyID)
     }
 
+    private var authoredMR: AuthoredMRAttention {
+        .init(project: "team/project", iid: 7,
+              url: URL(string: "https://gitlab.example.test/team/project/-/merge_requests/7")!,
+              title: "ENG-42 Authoring work", authorUsername: "me", state: "opened",
+              unresolvedDiscussionCount: 1, externalApprovalCount: 1,
+              approvalRulesSatisfied: true, jiraIssueKey: "ENG-42")
+    }
+
+    func testAuthoredMRFallbackCreatesAndRemembersNewSessionThenFocusesIt() async throws {
+        let stack = makeStack()
+        try addWorkspace(stack, named: "Authoring")
+        await stack.coordinator.openAuthoredMR(authoredMR)
+        XCTAssertEqual(stack.coordinator.pendingAuthoredMR?.id, authoredMR.id)
+        XCTAssertEqual(stack.launcher.launchCount, 0)
+        try await stack.coordinator.linkAuthoredMR(authoredMR, record: nil)
+        let session = try XCTUnwrap(stack.store.selectedSession)
+        XCTAssertEqual(session.purpose, .general)
+        XCTAssertEqual(stack.store.associations.author(for: authoredMR.url)?.id, session.claudeSessionID)
+        XCTAssertTrue(session.artifacts.contains { $0.kind == .jiraIssue && $0.label == "ENG-42" })
+        XCTAssertNil(stack.coordinator.pendingAuthoredMR)
+        await stack.coordinator.openAuthoredMR(authoredMR)
+        XCTAssertEqual(stack.launcher.launchCount, 1, "A badge click reuses the live terminal")
+        XCTAssertEqual(stack.store.selectedSessionID, session.id)
+    }
+
+    func testAuthoredMRLinksPreviousConversationAndPreservesItsIdentity() async throws {
+        let stack = makeStack()
+        let folder = try addWorkspace(stack, named: "HistoricalAuthor")
+        let historyID = UUID()
+        try writeHistoryTranscript(historyID)
+        let record = resumeRecord(historyID, directory: folder.directoryURL)
+        try await stack.coordinator.linkAuthoredMR(authoredMR, record: record)
+        XCTAssertEqual(stack.store.selectedSession?.claudeSessionID, historyID)
+        XCTAssertEqual(stack.store.associations.author(for: authoredMR.url)?.id, historyID)
+        XCTAssertEqual(stack.launcher.lastArguments?.prefix(2), ["--resume", historyID.uuidString])
+        _ = try await stack.coordinator.launchResume(record: record)
+        XCTAssertEqual(stack.launcher.launchCount, 1, "History and notifications share duplicate protection")
+    }
+
+    func testAuthoredMRMissingTranscriptOffersFallbackWithoutLosingLink() async throws {
+        let stack = makeStack()
+        let folder = try addWorkspace(stack, named: "MissingHistory")
+        let record = resumeRecord(UUID(), directory: folder.directoryURL)
+        try stack.store.associations.remember(record: record, artifacts: [
+            .init(kind: .gitlabMergeRequest, label: "!7", url: authoredMR.url)
+        ])
+        await stack.coordinator.openAuthoredMR(authoredMR)
+        XCTAssertEqual(stack.coordinator.pendingAuthoredMR?.id, authoredMR.id)
+        XCTAssertNotNil(stack.coordinator.lastFailure)
+        XCTAssertEqual(stack.store.associations.author(for: authoredMR.url)?.id, record.id)
+        XCTAssertEqual(stack.launcher.launchCount, 0)
+    }
+
     func testResumeWithoutTranscriptThrowsActionableError() async throws {
         let stack = makeStack()
         let directory = tmpRoot!.appendingPathComponent("NoTranscript", isDirectory: true)

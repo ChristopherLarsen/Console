@@ -113,6 +113,14 @@ final class BrowserTabStore {
         return tab
     }
 
+    /// Explicit notification handoffs always get a fresh tab, never replace a pinned list.
+    @discardableResult
+    func openNotificationTab(url: URL) -> BrowserTab {
+        let tab = appendDynamicTab()
+        tab.page.load(URLRequest(url: url))
+        return tab
+    }
+
     private func appendDynamicTab() -> BrowserTab {
         let tab = BrowserTab(page: WebAuthenticationStore.makePage(), titleOverride: nil, isPinned: false)
         tabs.append(tab)

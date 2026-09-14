@@ -18,6 +18,7 @@ struct MainView: View {
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
     @Environment(SessionStore.self) private var sessionStore
     @Environment(SessionWorkspaceLayoutController.self) private var sessionWorkspaceLayout
+    @State private var mrScan = MRReviewScanController.shared
 
     private static let terminalMinExpandedHeight: CGFloat = 150
     private static let terminalDefaultExpandedHeight: CGFloat = 250
@@ -36,6 +37,25 @@ struct MainView: View {
         .frame(minWidth: 800, maxWidth: .infinity, minHeight: 500, maxHeight: .infinity)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                HStack(spacing: 6) {
+                    if let first = mrScan.discussionItems.first {
+                        mrAttentionButton(count: mrScan.discussionItems.count,
+                            label: "MRs with unresolved discussions", color: Color(red: 0.05, green: 0.19, blue: 0.42),
+                            identifier: "MergeRequests.DiscussionAttentionButton") {
+                            Task { await launchCoordinator.openAuthoredMR(first) }
+                        }.disabled(launchCoordinator.isOpeningAuthoredMR)
+                    }
+                    if let first = mrScan.approvedItems.first {
+                        mrAttentionButton(count: mrScan.approvedItems.count,
+                            label: "MRs with all required approvals", color: Color(red: 0.04, green: 0.30, blue: 0.14),
+                            identifier: "MergeRequests.ApprovedAttentionButton") {
+                            CodeHostWebSessionStore.shared.tabStore.openNotificationTab(url: first.url)
+                            sidebarSelection = .mergeRequests
+                        }
+                    }
+                }
+            }
             if let first = sessionStore.sessionsNeedingAttention.first {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
@@ -64,6 +84,10 @@ struct MainView: View {
             }
         }
         .environment(themeManager)
+        .sheet(item: Binding(get: { launchCoordinator.pendingAuthoredMR },
+                             set: { launchCoordinator.pendingAuthoredMR = $0 })) { item in
+            AuthoredMRSessionPicker(item: item)
+        }
         .tint(Color.accentColor)
         .preferredColorScheme(themeManager.colorScheme)
         // Shared host for unresolved contextual launches: Jira, GitLab,
@@ -142,6 +166,24 @@ struct MainView: View {
                 }
             }
         }
+    }
+
+    private func mrAttentionButton(count: Int, label: String, color: Color, identifier: String,
+                                   action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(count.formatted())
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .monospacedDigit().foregroundStyle(.white)
+                .minimumScaleFactor(0.5).lineLimit(1).padding(4)
+                .frame(width: 26, height: 26)
+                .background(color, in: RoundedRectangle(cornerRadius: 4))
+                .contentShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .help(label + (mrScan.authoredMessage.map { " — \($0)" } ?? ""))
+        .accessibilityLabel(label)
+        .accessibilityValue("\(count)" + (mrScan.authoredMessage == nil ? "" : ", out of date"))
+        .accessibilityIdentifier(identifier)
     }
 
     private var detailColumn: some View {
