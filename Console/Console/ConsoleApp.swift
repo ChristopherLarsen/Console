@@ -91,6 +91,7 @@ struct ConsoleApp: App {
     @State private var mrReviewScanScheduler = MRReviewScanScheduler()
     @State private var sessionWorkspaceLayout = SessionWorkspaceLayoutController()
     @State private var developerActions: DeveloperActionRunner
+    @State private var sessionNewRequest = SessionNewRequestController()
     private var syntheticTranscriptSource: SyntheticTranscriptSource?
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("tabSelection") private var tabSelection: TabSelection = .triggers
@@ -449,6 +450,7 @@ struct ConsoleApp: App {
             .environment(managedClaudeService)
             .environment(mrReviewScanScheduler)
             .environment(sessionWorkspaceLayout)
+            .environment(sessionNewRequest)
             .environment(developerActions)
             #if DEBUG
             .environment(developerModeManager)
@@ -463,6 +465,17 @@ struct ConsoleApp: App {
             runAppBootstrapIfNeeded()
         }
         .commands {
+            // Console is single-window: File > New Window (⌘N) is replaced so
+            // ⌘N never creates a second main window. It routes to the Sessions
+            // destination and opens the new-session launcher instead.
+            CommandGroup(replacing: .newItem) {
+                Button("New Session") {
+                    ConsoleWindowManager.bringToFront("main")
+                    ConsoleNavigation.showSessions()
+                    sessionNewRequest.request()
+                }
+                .keyboardShortcut("n", modifiers: .command)
+            }
             CommandGroup(replacing: .appInfo) {
                 Button("About Console") {
                     ConsoleWindowManager.bringToFront("about")

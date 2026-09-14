@@ -275,6 +275,7 @@ final class SessionStoreTests: XCTestCase {
         let view = SessionsView()
             .environment(store)
             .environment(SessionWorkspaceLayoutController())
+            .environment(SessionNewRequestController())
             .frame(width: 1000, height: 700)
         // ScrollView uses AppKit; ImageRenderer omits its contents. Render an
         // actual hosting view without requiring the system UI automation runner.

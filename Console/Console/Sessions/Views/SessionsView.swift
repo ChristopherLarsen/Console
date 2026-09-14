@@ -8,7 +8,10 @@ import SwiftUI
 struct SessionsView: View {
     @Environment(SessionStore.self) private var store
     @Environment(SessionWorkspaceLayoutController.self) private var layout
+    @Environment(SessionNewRequestController.self) private var newSessionRequest
     @State private var showingIntentPicker = false
+    /// Last request token the picker was presented for; gates repeat presses.
+    @State private var presentedNewRequestToken = 0
     @State private var pendingStopConfirmationID: UUID?
     @State private var pendingRenameID: UUID?
     @State private var renameText = ""
@@ -39,6 +42,10 @@ struct SessionsView: View {
                 if let id = store.selectedSessionID {
                     store.acknowledgeCompletion(sessionID: id)
                 }
+                presentPickerForPendingRequest()
+            }
+            .onChange(of: newSessionRequest.requestToken) { _, _ in
+                presentPickerForPendingRequest()
             }
             .onChange(of: geometry.size.width) { _, newWidth in
                 layout.relayout(availableWidth: newWidth)
@@ -213,6 +220,15 @@ struct SessionsView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("Sessions.List")
+    }
+
+    /// Cmd+N lands here too: a pending request from the menu presents the
+    /// same launcher as the list-header plus button. The async hop lets a
+    /// freshly-mounted column finish its first layout before presenting.
+    private func presentPickerForPendingRequest() {
+        guard newSessionRequest.requestToken != presentedNewRequestToken else { return }
+        presentedNewRequestToken = newSessionRequest.requestToken
+        DispatchQueue.main.async { showingIntentPicker = true }
     }
 
     private var listHeader: some View {
@@ -409,4 +425,5 @@ func sessionLauncherPreview(@ViewBuilder content: () -> some View) -> some View 
         .environment(workspaces)
         .environment(SessionLaunchCoordinator(store: store, workspaceStore: workspaces))
         .environment(layout)
+        .environment(SessionNewRequestController())
 }
