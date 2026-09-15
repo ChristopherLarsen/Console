@@ -38,7 +38,7 @@ struct PreviousSessionsView: View {
 
     private var header: some View {
         HStack {
-            Text("Previous Sessions")
+            Text("Select a previous session")
                 .font(.headline)
             Spacer(minLength: 8)
             Button {

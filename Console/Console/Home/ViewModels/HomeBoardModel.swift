@@ -13,7 +13,7 @@ final class HomeBoardModel {
     /// One navigation/handoff decision for a Home card.
     enum Action: Equatable, Sendable {
         case openJiraIssue(url: URL)
-        case openMergeRequest(url: URL, list: CodeHostListKind)
+        case openMergeRequest(url: URL)
         case openSettings
         case openJira
         case openGitLab
@@ -85,8 +85,8 @@ final class HomeBoardModel {
         perform(.openJiraIssue(url: ticket.issueURL))
     }
 
-    /// Review column rows: verify against current data, then deep-link to
-    /// the specific merge request.
+    /// Review column rows: verify against current data, then open the
+    /// specific merge request in its own GitLab tab.
     func openReview(_ item: MergeRequestSummary) {
         let snap = snapshot()
         if snap.reviewStatus.check == .current,
@@ -94,7 +94,7 @@ final class HomeBoardModel {
             noteVanished()
             return
         }
-        perform(.openMergeRequest(url: item.mergeRequestURL, list: .reviewsRequested))
+        perform(.openMergeRequest(url: item.mergeRequestURL))
     }
 
     /// In Progress: open the story's live session, or start one. Stale Jira
@@ -167,8 +167,10 @@ final class HomeBoardModel {
         case .openJiraIssue(let url):
             JiraDeepLink.shared.set(url: url)
             ConsoleNavigation.show(.jira)
-        case .openMergeRequest(let url, let list):
-            MergeRequestDeepLink.shared.set(url: url, kind: list)
+        case .openMergeRequest(let url):
+            // Review and story cards open the merge request in its own
+            // GitLab tab; at the tab cap the active tab navigates instead.
+            MergeRequestDeepLink.shared.setNewTab(url: url)
             ConsoleNavigation.show(.mergeRequests)
         case .openSettings:
             ConsoleNavigation.show(.settings)

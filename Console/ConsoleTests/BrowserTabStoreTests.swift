@@ -17,14 +17,12 @@ final class BrowserTabStoreTests: XCTestCase {
 
     private func makeStore(
         pinnedCount: Int = 1,
-        newTabURL: URL? = nil,
         now: (() -> Date)? = nil,
         pageReloader: (@MainActor (WebPage) -> Void)? = nil
     ) -> (BrowserTabStore, [WebPage]) {
         let pages = (0..<max(pinnedCount, 1)).map { _ in makePage() }
         let store = BrowserTabStore(
             pinnedTabs: pages.map { (page: $0, title: "Pinned \($0)") },
-            newTabURLProvider: { newTabURL },
             now: now ?? { Date() },
             pageReloader: pageReloader
         )
@@ -81,9 +79,8 @@ final class BrowserTabStoreTests: XCTestCase {
         XCTAssertEqual(Array(store.tabs.prefix(previousIDs.count)).map(\.id), previousIDs)
     }
 
-    func testOpenTabAppendsActivatesAndLoadsProviderURL() throws {
-        let url = URL(string: "https://example.test/list")!
-        let (store, _) = makeStore(pinnedCount: 1, newTabURL: url)
+    func testOpenTabAppendsActivatesAndStaysBlank() {
+        let (store, _) = makeStore(pinnedCount: 1)
 
         let tab = store.openTab()
 
@@ -91,21 +88,15 @@ final class BrowserTabStoreTests: XCTestCase {
         XCTAssertEqual(store.activeTabID, tab.id)
         XCTAssertFalse(tab.isPinned)
         XCTAssertEqual(store.tabs[1].titleOverride, nil)
-        let requested = try XCTUnwrap(tab.page.url)
-        XCTAssertEqual(requested, url)
-    }
-
-    func testOpenTabWithoutProviderURLStaysBlank() {
-        let (store, _) = makeStore(pinnedCount: 1, newTabURL: nil)
-        let tab = store.openTab()
+        // New tabs are blank: no URL is loaded and the strip falls back to
+        // its "New Tab" placeholder title.
         XCTAssertNil(tab.page.url)
-        XCTAssertEqual(store.activeTabID, tab.id)
+        XCTAssertEqual(tab.displayTitle, "New Tab")
     }
 
     func testOpenTabWithURLAppendsActivatesAndLoadsGivenURL() throws {
-        let providerURL = URL(string: "https://example.test/list")!
         let issueURL = URL(string: "https://example.test/browse/ENG-1")!
-        let (store, _) = makeStore(pinnedCount: 1, newTabURL: providerURL)
+        let (store, _) = makeStore(pinnedCount: 1)
 
         let tab = store.openTab(url: issueURL)
 
@@ -114,8 +105,8 @@ final class BrowserTabStoreTests: XCTestCase {
         XCTAssertFalse(tab.isPinned)
         let requested = try XCTUnwrap(tab.page.url)
         XCTAssertEqual(requested, issueURL)
-        // The provider URL must never load first and race the deep link; the
-        // pinned page is the only thing tracking the list.
+        // A deep link must never touch the pinned page; only the new tab
+        // navigates.
         XCTAssertNil(store.tabs[0].page.url)
     }
 
@@ -225,7 +216,6 @@ final class BrowserTabStoreTests: XCTestCase {
         let pages = (0..<max(pinnedCount, 1)).map { _ in makePage() }
         let store = BrowserTabStore(
             pinnedTabs: pages.map { (page: $0, title: "Pinned \($0)") },
-            newTabURLProvider: { nil },
             now: { [clock] in clock.date },
             pageReloader: { reloadedPages.append(ObjectIdentifier($0)) }
         )

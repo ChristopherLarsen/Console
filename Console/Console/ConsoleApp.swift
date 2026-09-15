@@ -1,7 +1,6 @@
 import SwiftUI
 import SwiftData
 import AppKit
-import ServiceManagement
 
 // Minimizes to the Dock on window close instead of destroying the window
 private struct WindowCloseInterceptor: NSViewRepresentable {
@@ -93,7 +92,6 @@ struct ConsoleApp: App {
     @State private var developerActions: DeveloperActionRunner
     @State private var sessionNewRequest = SessionNewRequestController()
     private var syntheticTranscriptSource: SyntheticTranscriptSource?
-    @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("tabSelection") private var tabSelection: TabSelection = .triggers
     #if DEBUG
     private var developerModeManager = DeveloperModeManager.shared
@@ -373,10 +371,6 @@ struct ConsoleApp: App {
                     }
                     #endif
 
-                Color.clear.allowsHitTesting(false)
-                    .onChange(of: launchAtLogin) { _, enabled in
-                        updateLaunchAtLogin(enabled)
-                    }
                 if let errorText = modelContainerError {
                     Color.black.opacity(0.4)
                         .ignoresSafeArea()
@@ -596,39 +590,6 @@ struct ConsoleApp: App {
         .windowResizability(.contentMinSize)
     }
 
-    private func updateLaunchAtLogin(_ enabled: Bool) {
-        do {
-            if enabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
-        } catch {
-            printDebug("Launch at login failed: \(error.localizedDescription)")
-            // Registration failed: the toggle must not claim a state the OS
-            // does not have.
-            launchAtLogin = launchAtLoginIsRegistered
-        }
-    }
-
-    /// True when the OS agrees the app should launch at login. `requiresApproval`
-    /// counts as on: registration is pending user approval in System Settings.
-    private var launchAtLoginIsRegistered: Bool {
-        switch SMAppService.mainApp.status {
-        case .enabled, .requiresApproval: return true
-        default: return false
-        }
-    }
-
-    /// Re-syncs the preference with the OS so an externally removed login item
-    /// does not leave the Settings toggle lying.
-    private func reconcileLaunchAtLoginWithSystem() {
-        let registered = launchAtLoginIsRegistered
-        if launchAtLogin != registered {
-            launchAtLogin = registered
-        }
-    }
-
     /// ⌘N: jump to the Nth session in store order, or open Sessions with no
     /// session selected when no session corresponds to that number.
     private func openHotkeySession(_ number: Int) {
@@ -714,7 +675,6 @@ struct ConsoleApp: App {
         didRunAppBootstrap = true
 
         GlobalHotkeyManager.shared.install()
-        reconcileLaunchAtLoginWithSystem()
         #if DEBUG
         if developerModeManager.isDeveloperModeEnabled {
             applyAlwaysOnTop(alwaysOnTop)

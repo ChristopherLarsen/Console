@@ -11,13 +11,9 @@ final class JiraWebSession {
     let panelController = JiraPanelController()
     /// Browser-style tabs for the full JIRA destination. The pinned first tab
     /// wraps `page`; Home cards and extraction always track that page.
-    /// New tabs start at the configured JIRA URL. Memory-only.
+    /// New tabs open blank. Memory-only.
     lazy var tabStore = BrowserTabStore(
-        pinnedTabs: [(page: page, title: "My Tickets")],
-        newTabURLProvider: {
-            UserDefaults.standard.string(forKey: "webViewJiraURL")
-                .flatMap(JiraView.normalizedURL(from:))
-        }
+        pinnedTabs: [(page: page, title: "My Tickets")]
     )
     /// Normalized URL string last loaded into `page`, if any.
     var lastLoadedURLString: String?
@@ -99,6 +95,8 @@ struct JiraView: View {
     /// the mount by one runloop hop guarantees the old presentation is gone
     /// before this one attaches.
     @State private var isWebViewMounted = false
+    /// Bumped by the ⌘L shortcut so `BrowserURLField` focuses itself.
+    @State private var urlFieldFocusToken = 0
 
     /// The page the tab strip currently presents. Home cards and DOM
     /// extraction always use `JiraWebSession.shared.page` (the pinned first
@@ -214,8 +212,22 @@ struct JiraView: View {
                 .accessibilityIdentifier("Jira.StartSessionButton")
             }
 
-            BrowserURLField(page: page, accessibilityIdentifier: "Jira.URLField")
+            BrowserURLField(
+                page: page,
+                accessibilityIdentifier: "Jira.URLField",
+                focusRequestToken: urlFieldFocusToken
+            )
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            // ⌘L selects the URL field, mirroring browser convention. The
+            // button renders no content; only its shortcut matters.
+            Button {
+                urlFieldFocusToken += 1
+            } label: {
+                EmptyView()
+            }
+            .keyboardShortcut("l", modifiers: .command)
+            .accessibilityHidden(true)
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 12)

@@ -121,8 +121,8 @@ final class SessionHistoryReader {
         associations: [UUID: String]
     ) -> SessionHistoryRecord {
         let title = [metadata.customTitle, metadata.summary, metadata.firstUserMessage]
-            .compactMap { $0 }
-            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? "Untitled Session"
+            .compactMap { $0.map(Self.strippingMarkupTags(from:)) }
+            .first { !$0.isEmpty } ?? "Untitled Session"
         let workingDirectory = URL(fileURLWithPath: metadata.lastCWD.isEmpty ? "/" : metadata.lastCWD, isDirectory: true)
         let isCustomTitle = !(metadata.customTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return SessionHistoryRecord(
@@ -247,6 +247,20 @@ final class SessionHistoryReader {
 
     nonisolated private static func collapseWhitespace(_ text: String) -> String {
         text.split(whereSeparator: \.isNewline).joined(separator: " ")
+    }
+
+    /// Transcript prompts and summaries embed markup such as
+    /// `<command-name>/model</command-name>`; the tags are removed and the
+    /// leftover whitespace collapsed so titles show only readable text.
+    nonisolated static func strippingMarkupTags(from text: String) -> String {
+        let stripped = text.replacingOccurrences(
+            of: "<[^>]+>",
+            with: " ",
+            options: .regularExpression
+        )
+        return stripped
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
     }
 
     /// Claude timestamps are ISO-8601, usually with fractional seconds.

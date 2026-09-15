@@ -20,7 +20,7 @@ class AppSettings {
     static let mrScanEnabledKey = "mrScanEnabled"
     static let mrScanIntervalMinutesKey = "mrScanIntervalMinutes"
     static let mrScanModelKey = "mrScanModel"
-    static let mrScanIntervalMinutesDefault = 15
+    static let mrScanIntervalMinutesDefault = 10
     static let mrScanModelDefault = "haiku"
     static let mrDispositionEnabledKey = "mrDispositionEnabled"
     static let mrDispositionPromptKey = "mrDispositionPrompt"
@@ -94,7 +94,6 @@ class AppSettings {
     @AppStorage(AppSettings.webViewGitLabMyMergeRequestsURLKey) var webViewGitLabMyMergeRequestsURL: String = ""
 
     // Automation settings (Phase 0.3)
-    @AppStorage("launchAtLogin") var launchAtLogin: Bool = false
     @AppStorage("listenOnStartup") var listenOnStartup: Bool = true
     @AppStorage("soundFeedbackEnabled") var soundFeedbackEnabled: Bool = true
     @AppStorage("visualFeedbackEnabled") var visualFeedbackEnabled: Bool = true

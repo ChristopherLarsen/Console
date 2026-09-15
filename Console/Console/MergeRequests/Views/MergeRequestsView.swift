@@ -124,7 +124,7 @@ struct MergeRequestsView: View {
 
     /// Home navigates the active tab to its configured base URL: the To
     /// Review tab to the reviews list, My MRs to the authored list, and a
-    /// free dynamic tab to the reviews URL (its open default). Pinned tabs
+    /// free dynamic tab to the reviews URL. Pinned tabs
     /// load through the session store so its requested-URL bookkeeping stays
     /// truthful; free tabs load directly.
     private func navigateHome() {

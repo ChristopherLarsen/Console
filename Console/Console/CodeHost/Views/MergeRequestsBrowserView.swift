@@ -13,6 +13,9 @@ struct MergeRequestsNavigationBar: View {
     var showCardsAction: (() -> Void)?
     var showCardsAvailable: Bool = true
 
+    /// Bumped by the ⌘L shortcut so `BrowserURLField` focuses itself.
+    @State private var urlFieldFocusToken = 0
+
     @Environment(SessionLaunchCoordinator.self) private var launchCoordinator
 
     /// Memory-only context parsed from the URL the retained WebView is
@@ -88,8 +91,22 @@ struct MergeRequestsNavigationBar: View {
                 .help("Return to native cards")
             }
 
-            BrowserURLField(page: page, accessibilityIdentifier: "MergeRequests.URLField")
+            BrowserURLField(
+                page: page,
+                accessibilityIdentifier: "MergeRequests.URLField",
+                focusRequestToken: urlFieldFocusToken
+            )
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            // ⌘L selects the URL field, mirroring browser convention. The
+            // button renders no content; only its shortcut matters.
+            Button {
+                urlFieldFocusToken += 1
+            } label: {
+                EmptyView()
+            }
+            .keyboardShortcut("l", modifiers: .command)
+            .accessibilityHidden(true)
         }
         .buttonStyle(.borderless)
         .controlSize(.small)

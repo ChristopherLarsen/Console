@@ -8,6 +8,9 @@ import WebKit
 struct BrowserURLField: View {
     let page: WebPage
     var accessibilityIdentifier: String = "BrowserURLField"
+    /// Incremented by the owning destination's ⌘L shortcut to select the
+    /// field. Zero (the default) never triggers focus.
+    var focusRequestToken: Int = 0
 
     @State private var editText = ""
     @FocusState private var isFocused: Bool
@@ -37,6 +40,9 @@ struct BrowserURLField: View {
             .onChange(of: page.url) { _, _ in
                 guard !isFocused else { return }
                 syncDisplayURL()
+            }
+            .onChange(of: focusRequestToken) { _, _ in
+                isFocused = true
             }
             .onKeyPress(.escape) {
                 syncDisplayURL()

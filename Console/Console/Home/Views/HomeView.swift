@@ -283,7 +283,15 @@ struct HomeView: View {
             bottomActions.append(HomeCardAction(label: actionLabel, handler: primaryJourney))
         }
         bottomActions.append(HomeCardAction(label: "Open in JIRA") { model.openStory(ticket) })
-        bottomActions.append(HomeCardAction(label: "Open in GitLab") { model.openGitLabSource() })
+        bottomActions.append(HomeCardAction(label: "Open in GitLab") {
+            if let url = mergeRequestURL(for: ticket) {
+                // Deep-link the GitLab destination to the story's merge
+                // request in its own tab; with no known MR, land on GitLab.
+                HomeBoardModel.executeNavigation(.openMergeRequest(url: url))
+            } else {
+                model.openGitLabSource()
+            }
+        })
 
         return HomeBoardTicketCard(
             ticket: ticket,
@@ -393,9 +401,18 @@ struct HomeView: View {
         }
         guard let iid = item.iidText, !launchingReviews.contains(item.id) else { return }
         launchingReviews.insert(item.id)
+        // Review sessions carry the story's key ("NMA-1234 Review"); MR-only
+        // items keep the automatic "Review !<iid>" name. The launch queues
+        // /rename + /color purple so the Claude session matches once live.
+        let jiraKey = item.jiraIssueKey ?? JiraSourceContext.issueKey(in: item.title)
         Task {
             defer { launchingReviews.remove(item.id) }
-            await launchCoordinator.beginMergeRequestReview(iid: iid, title: item.title, url: item.mergeRequestURL)
+            await launchCoordinator.beginMergeRequestReview(
+                iid: iid,
+                title: item.title,
+                url: item.mergeRequestURL,
+                displayName: jiraKey.map { "\($0) Review" }
+            )
         }
     }
 
@@ -413,6 +430,24 @@ struct HomeView: View {
             return ticket.issueURL
         }
         return JiraSourceContext.issueURL(key: key, configuredURL: webViewJiraURL)
+    }
+
+    /// The merge request associated with an in-progress story, mirroring
+    /// `jiraURL(for:)`: the story's session carries an MR artifact when it was
+    /// launched from GitLab, otherwise the review list's triage match by Jira
+    /// key wins. Nil when no merge request is known for the story.
+    private func mergeRequestURL(for ticket: JiraTicketSummary) -> URL? {
+        if let id = HomeStorySessionMatcher.sessionID(for: ticket, in: sessionStore?.sessions ?? []),
+           let session = sessionStore?.sessions.first(where: { $0.id == id }),
+           let artifact = session.artifacts.last(where: { $0.kind == .gitlabMergeRequest }),
+           let url = artifact.url {
+            return url
+        }
+        let item = model.snapshot().reviewItems.first { item in
+            item.jiraIssueKey?.caseInsensitiveCompare(ticket.key) == .orderedSame
+                || JiraSourceContext.issueKey(in: item.title)?.caseInsensitiveCompare(ticket.key) == .orderedSame
+        }
+        return item?.mergeRequestURL
     }
 
     /// Quiet count only — the column title already names the source.

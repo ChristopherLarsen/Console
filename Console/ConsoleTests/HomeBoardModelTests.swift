@@ -96,7 +96,20 @@ final class HomeBoardModelTests: XCTestCase {
             reviewStatus: .current
         ))
         model.openReview(item)
-        XCTAssertEqual(actions, [.openMergeRequest(url: item.mergeRequestURL, list: .reviewsRequested)])
+        XCTAssertEqual(actions, [.openMergeRequest(url: item.mergeRequestURL)])
+    }
+
+    func testExecuteNavigationQueuesMergeRequestNewTabHandoff() {
+        MergeRequestDeepLink.shared.reset()
+        let item = makeReviewItem()
+
+        HomeBoardModel.executeNavigation(.openMergeRequest(url: item.mergeRequestURL))
+
+        XCTAssertEqual(MergeRequestDeepLink.shared.consumeNewTab(), item.mergeRequestURL)
+        XCTAssertNil(
+            MergeRequestDeepLink.shared.consume(matching: .reviewsRequested),
+            "MR cards open their own tab; no pinned list page is targeted"
+        )
     }
 
     func testOpenReviewVanishedFromCurrentDataStaysAndNotices() {

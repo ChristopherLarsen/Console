@@ -133,9 +133,20 @@ final class SessionLaunchCoordinator {
         await startContextualLaunch(prepared)
     }
 
-    func beginMergeRequestReview(iid: String, title: String?, url: URL) async {
+    /// `displayName` overrides the automatic MR-based session name. Home's
+    /// review card passes the Jira-keyed review name ("NMA-1234 Review");
+    /// the MR page keeps the automatic name. A display name also queues
+    /// `/rename <name>` and `/color purple` so the running Claude Code
+    /// session matches once its bridge reports it live.
+    func beginMergeRequestReview(iid: String, title: String?, url: URL, displayName: String? = nil) async {
         let source = SessionLaunchSource.mergeRequest(iid: iid, title: title, url: url)
-        await startContextualLaunch(draft(purpose: .review, source: source))
+        var prepared = draft(purpose: .review, source: source)
+        if let displayName { prepared.name = displayName }
+        let sessionID = await startContextualLaunch(prepared)
+        guard let displayName, let sessionID,
+              let session = store.session(withID: sessionID) else { return }
+        store.queueSlashCommand("/rename \(session.name)", for: sessionID)
+        store.queueSlashCommand("/color purple", for: sessionID)
     }
 
     // MARK: - Launch
@@ -249,11 +260,15 @@ final class SessionLaunchCoordinator {
         return folder
     }
 
-    private func startContextualLaunch(_ draft: SessionDraft) async {
+    /// Validates the Session Folder and launches. Returns the created
+    /// session ID, or nil when the launch failed (the failure is recorded).
+    @discardableResult
+    private func startContextualLaunch(_ draft: SessionDraft) async -> UUID? {
         do {
-            _ = try await launch(draft: draft)
+            return try await launch(draft: draft)
         } catch {
             lastFailure = SessionLaunchFailure(error: error)
+            return nil
         }
     }
 

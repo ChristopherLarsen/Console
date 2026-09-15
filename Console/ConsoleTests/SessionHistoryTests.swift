@@ -319,6 +319,42 @@ final class SessionHistoryTests: XCTestCase {
         XCTAssertFalse(SessionTicketClassification.consoleStoryName("S-12x4"))
     }
 
+    // MARK: - Title sanitization
+
+    func testStrippingMarkupTagsLeavesReadableTextOnly() {
+        XCTAssertEqual(
+            SessionHistoryReader.strippingMarkupTags(from: "<command-name>/model</command-name>"),
+            "/model"
+        )
+        XCTAssertEqual(
+            SessionHistoryReader.strippingMarkupTags(from: "<command-message>model</command-message>\n<command-name>/model</command-name>"),
+            "model /model"
+        )
+        XCTAssertEqual(
+            SessionHistoryReader.strippingMarkupTags(from: "Fix <b>login</b> bug\nsecond line"),
+            "Fix login bug second line"
+        )
+        XCTAssertEqual(SessionHistoryReader.strippingMarkupTags(from: "<only-tags></only-tags>"), "")
+        XCTAssertEqual(SessionHistoryReader.strippingMarkupTags(from: "plain title"), "plain title")
+    }
+
+    func testScanRecordTitleStripsMarkupTags() async throws {
+        let id = UUID()
+        try writeTranscript(id, lines: [
+            line(
+                type: "user", timestamp: "2026-09-10T12:00:00.000Z",
+                message: userMessage("<command-name>/model</command-name>")
+            ),
+        ])
+
+        let root = historyRoot
+        let (records, _) = await Task.detached {
+            SessionHistoryReader.scan(root: root, associations: [:], cache: [:])
+        }.value
+
+        XCTAssertEqual(try XCTUnwrap(records.first).title, "/model")
+    }
+
     // MARK: - Formatting
 
     func testTranscriptSizeAndRelativeTimeFormatting() {

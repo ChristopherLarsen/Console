@@ -1128,6 +1128,57 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(store.displayedState(for: id), .idle)
     }
 
+    // MARK: - Queued slash commands
+
+    func testQueuedSlashCommandsFlushInOrderWhenBridgeActivates() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Review", workingDirectory: tmpDirectory("Queued"))
+        defer { store.terminateAll() }
+
+        store.queueSlashCommand("/rename NMA-1234 Review", for: id)
+        store.queueSlashCommand("/color purple", for: id)
+        XCTAssertFalse(
+            store.debugTerminalSendBytes.contains { $0.utf8.contains("/rename") },
+            "queued commands wait for Claude Code's bridge, never the pre-Claude shell"
+        )
+
+        store.debugReceiveEnvelope(BridgeEnvelope(
+            sessionID: id.uuidString,
+            token: try XCTUnwrap(store.debugSessionToken(id)),
+            eventID: UUID().uuidString,
+            kind: .lifecycle,
+            lifecycleEvent: .sessionStarted
+        ))
+
+        let sent = store.debugTerminalSendBytes
+            .filter { $0.sessionID == id }
+            .map(\.utf8)
+        XCTAssertTrue(sent.contains { $0.contains("/rename NMA-1234 Review") })
+        XCTAssertTrue(sent.contains { $0.contains("/color purple") })
+        let renameIndex = try XCTUnwrap(sent.firstIndex { $0.contains("/rename") })
+        let colorIndex = try XCTUnwrap(sent.firstIndex { $0.contains("/color") })
+        XCTAssertLessThan(renameIndex, colorIndex, "the rename runs before the color default")
+    }
+
+    func testQueuedSlashCommandSendsImmediatelyWhenBridgeAlreadyActive() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Live", workingDirectory: tmpDirectory("LiveQueue"))
+        defer { store.terminateAll() }
+        store.debugReceiveEnvelope(BridgeEnvelope(
+            sessionID: id.uuidString,
+            token: try XCTUnwrap(store.debugSessionToken(id)),
+            eventID: UUID().uuidString,
+            kind: .lifecycle,
+            lifecycleEvent: .sessionStarted
+        ))
+
+        store.queueSlashCommand("/rename NMA-1234 Review", for: id)
+
+        XCTAssertTrue(
+            store.debugTerminalSendBytes.contains { $0.sessionID == id && $0.utf8.contains("/rename NMA-1234 Review") }
+        )
+    }
+
     // MARK: - Optional instrumentation vs process creation
 
     func testPluginAssemblyFailureLaunchesUninstrumentedSession() throws {

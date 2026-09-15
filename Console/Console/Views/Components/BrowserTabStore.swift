@@ -38,8 +38,6 @@ final class BrowserTabStore {
 
     private(set) var tabs: [BrowserTab]
     private(set) var activeTabID: UUID
-    /// URL loaded into each newly opened dynamic tab.
-    var newTabURLProvider: () -> URL?
 
     /// When each tab's content last became current: seeded at tab creation
     /// (a new tab's page was just loaded or is blank) and refreshed whenever
@@ -51,11 +49,9 @@ final class BrowserTabStore {
 
     init(
         pinnedTabs: [(page: WebPage, title: String?)],
-        newTabURLProvider: @escaping () -> URL?,
         now: @escaping () -> Date = { Date() },
         pageReloader: (@MainActor (WebPage) -> Void)? = nil
     ) {
-        self.newTabURLProvider = newTabURLProvider
         self.now = now
         self.pageReloader = pageReloader ?? { $0.reload() }
         let stampedAt = now()
@@ -87,17 +83,12 @@ final class BrowserTabStore {
         activeTabID = id
     }
 
-    /// Opens a new tab, makes it active, and loads `newTabURLProvider`'s URL
-    /// when one is configured. Returns the active tab when the cap is
-    /// already reached.
+    /// Opens a new blank tab (no URL loaded) and makes it active. Returns
+    /// the active tab when the cap is already reached.
     @discardableResult
     func openTab() -> BrowserTab {
         guard canOpenTab else { return activeTab }
-        let tab = appendDynamicTab()
-        if let url = newTabURLProvider() {
-            tab.page.load(URLRequest(url: url))
-        }
-        return tab
+        return appendDynamicTab()
     }
 
     /// Opens a new tab, makes it active, and loads `url`. At the tab cap the

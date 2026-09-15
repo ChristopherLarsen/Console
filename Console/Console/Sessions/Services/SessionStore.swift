@@ -589,6 +589,10 @@ final class SessionStore {
         persistRestorationSnapshot()
     }
 
+    /// Renames the session locally and keeps the running Claude Code session
+    /// in sync by sending `/rename <name>` (the stored name is the uniqued
+    /// one, so the terminal shows exactly what Console displays). Exited
+    /// sessions reject the command and only rename locally.
     func renameSession(id: UUID, name: String) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty,
@@ -598,6 +602,7 @@ final class SessionStore {
             existingNames: sessions.filter { $0.id != id }.map(\.name)
         )
         persistRestorationSnapshot()
+        sendRenameCommand(sessions[index].name, to: id)
     }
 
     /// The toolbar follows the Sessions list's stable store order.
@@ -822,6 +827,7 @@ final class SessionStore {
         stopTargets.removeValue(forKey: id)
         sessions.removeAll(where: { $0.id == id })
         sessionTokens.removeValue(forKey: id)
+        pendingSlashCommands.removeValue(forKey: id)
         router.forget(sessionID: id)
         closeOnExitIDs.remove(id)
         startingRestorations.removeValue(forKey: id)
@@ -833,6 +839,7 @@ final class SessionStore {
 
     func handleProcessTerminated(sessionID: UUID, startExitShell: Bool = true) {
         stopTargets.removeValue(forKey: sessionID)
+        pendingSlashCommands.removeValue(forKey: sessionID)
         if !isTerminating, let record = startingRestorations.removeValue(forKey: sessionID) {
             if !pendingRestorations.contains(where: { $0.id == record.id }) {
                 pendingRestorations.append(record)
@@ -966,6 +973,17 @@ final class SessionStore {
         sendSlashCommand("/color \(argument)", to: sessionID)
     }
 
+    // MARK: - Session rename command
+
+    /// Sends Claude Code's `/rename <name>` slash command so the session's
+    /// own name matches the name the user set on its card. Runs through the
+    /// shared replacement-and-submit path; like `/color`, the local command
+    /// must not flip activity or attention, and exited sessions reject it.
+    @discardableResult
+    func sendRenameCommand(_ name: String, to sessionID: UUID) -> SubmissionResult {
+        sendSlashCommand("/rename \(name)", to: sessionID)
+    }
+
     #if DEBUG
     /// Test seam: the in-memory bridge token for one session so tests can
     /// craft envelopes the router accepts. Never used at runtime.
@@ -1026,6 +1044,34 @@ final class SessionStore {
         if let index = sessions.firstIndex(where: { $0.id == sessionID }),
            sessions[index].bridgeStatus != .active {
             sessions[index].bridgeStatus = .active
+            flushPendingSlashCommands(sessionID: sessionID)
+        }
+    }
+
+    // MARK: - Queued slash commands
+
+    /// Slash commands waiting for a session's Claude Code to start reading
+    /// input. Contextual launches (review rename + default color) enqueue
+    /// right after creation; sending earlier would type into the pre-Claude
+    /// login shell. Keyed by session, flushed in queue order.
+    private var pendingSlashCommands: [UUID: [String]] = [:]
+
+    /// Queues a slash command for a session whose Claude Code is not yet
+    /// live; flushed in order when the bridge first reports active. A
+    /// already-live session sends immediately; exited sessions drop it.
+    func queueSlashCommand(_ command: String, for sessionID: UUID) {
+        guard let session = session(withID: sessionID), session.activity != .exited else { return }
+        if session.bridgeStatus == .active {
+            sendSlashCommand(command, to: sessionID)
+            return
+        }
+        pendingSlashCommands[sessionID, default: []].append(command)
+    }
+
+    private func flushPendingSlashCommands(sessionID: UUID) {
+        guard let commands = pendingSlashCommands.removeValue(forKey: sessionID), !commands.isEmpty else { return }
+        for command in commands {
+            sendSlashCommand(command, to: sessionID)
         }
     }
 

@@ -4,7 +4,6 @@ import SwiftData
 struct SettingsView: View {
     @Environment(ThemeManager.self) private var themeManager
 
-    @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("webViewJiraURL") private var webViewJiraURL: String = ""
     @AppStorage("webViewMergeRequestsURL") private var webViewMergeRequestsURL: String = ""
     @AppStorage(AppSettings.webViewGitLabReviewsURLKey) private var webViewGitLabReviewsURL: String = ""
@@ -35,7 +34,6 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            generalSection
             claudeSection
             ManagedClaudeAccessSection()
             terminalSection
@@ -44,9 +42,9 @@ struct SettingsView: View {
             mrReviewScansSection
             appearanceSection
 
-            updatesSection
-
             aiProviderSection
+
+            updatesSection
         }
         .formStyle(.grouped)
         .onAppear {
@@ -56,15 +54,6 @@ struct SettingsView: View {
             detectedClaudePath = locator.locate()
             dispositionPromptDraft = mrDispositionPrompt
             quickCommands = AppSettings.decodeQuickCommands(from: quickCommandsJSON)
-        }
-    }
-
-    // MARK: - General
-
-    private var generalSection: some View {
-        Section("General") {
-            Toggle("Launch at login", isOn: $launchAtLogin)
-                .themedToggleStyle()
         }
     }
 

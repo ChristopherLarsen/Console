@@ -472,6 +472,39 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         assertSourceMetadataAbsent(from: stack)
     }
 
+    func testHomeReviewLaunchRenamesClaudeSessionAndSetsDefaultColor() async throws {
+        let stack = makeStack()
+        try addWorkspace(
+            stack,
+            named: "ReviewHomeJira",
+            gitRemote: "https://sentinel.example.test/grp/proj.git"
+        )
+
+        await stack.coordinator.beginMergeRequestReview(
+            iid: Sentinel.mrIID,
+            title: "NMA-1234: fix the login redirect",
+            url: Sentinel.mrURL,
+            displayName: "NMA-1234 Review"
+        )
+
+        let session = try XCTUnwrap(stack.store.selectedSession)
+        XCTAssertEqual(session.name, "NMA-1234 Review")
+        XCTAssertTrue(
+            stack.store.debugTerminalSendBytes.isEmpty,
+            "the rename and color commands wait for the bridge, never the pre-Claude shell"
+        )
+
+        receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-mr-review-naming")
+        let sent = stack.store.debugTerminalSendBytes
+            .filter { $0.sessionID == session.id }
+            .map(\.utf8)
+        XCTAssertTrue(
+            sent.contains { $0.contains("/rename NMA-1234 Review") },
+            "the Claude session is renamed to the stored Console name"
+        )
+        XCTAssertTrue(sent.contains { $0.contains("/color purple") })
+    }
+
     func testRetainedPageDraftLaunchKeepsSentinelOutOfClaude() async throws {
         let stack = makeStack()
         try addWorkspace(stack, named: "Retained")
