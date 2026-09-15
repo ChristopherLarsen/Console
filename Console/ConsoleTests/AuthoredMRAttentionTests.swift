@@ -13,9 +13,9 @@ final class AuthoredMRAttentionTests: XCTestCase {
     }
 
     private func item(discussions: Int = 1, approvals: Int = 1, satisfied: Bool = true,
-                      author: String = "me", host: String = "gitlab.example.test") -> AuthoredMRAttention {
-        .init(project: "team/project", iid: 1,
-              url: URL(string: "https://\(host)/team/project/-/merge_requests/1")!,
+                      author: String = "me", host: String = "gitlab.example.test", iid: Int = 1) -> AuthoredMRAttention {
+        .init(project: "team/project", iid: iid,
+              url: URL(string: "https://\(host)/team/project/-/merge_requests/\(iid)")!,
               title: "ENG-42 Work", authorUsername: author, state: "opened",
               unresolvedDiscussionCount: discussions, externalApprovalCount: approvals,
               approvalRulesSatisfied: satisfied, jiraIssueKey: "ENG-42")
@@ -77,6 +77,46 @@ final class AuthoredMRAttentionTests: XCTestCase {
         XCTAssertNil(source.authoredMessage)
     }
 
+    func testApprovedQueueConsumesInOrderAndRepopulatesOnlyWithCompleteAuthoredScan() async throws {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let fixture = ScanFixture()
+        fixture.authored = [item(iid: 2), item(), item(approvals: 0, iid: 3)]
+        let source = MRReviewScanController(defaults: defaults, urlProvider: { self.scope.absoluteString },
+            executableProvider: { "/bin/glab" })
+        source.configure { invocation in
+            let result = MRReviewTriageResult(complete: fixture.reviewsComplete, failure: nil,
+                currentUsername: fixture.username, items: [], authoredComplete: fixture.complete,
+                authoredItems: fixture.authored)
+            return ClaudeOperationOutput(correlationID: invocation.correlationID,
+                resultText: String(decoding: try JSONEncoder().encode(result), as: UTF8.self), sessionID: nil)
+        }
+
+        XCTAssertNil(source.dequeueApprovedNotification())
+        _ = await source.scan(trigger: .manual)
+        XCTAssertEqual(source.approvedItems.map(\.iid), [1, 2])
+        XCTAssertEqual(source.dequeueApprovedNotification()?.iid, 1)
+        XCTAssertEqual(source.approvedItems.map(\.iid), [2])
+        XCTAssertEqual(source.discussionItems.count, 3)
+        XCTAssertEqual(source.authoredItems.count, 3)
+
+        fixture.complete = false
+        _ = await source.scan(trigger: .background)
+        XCTAssertEqual(source.approvedItems.map(\.iid), [2])
+        XCTAssertEqual(source.dequeueApprovedNotification()?.iid, 2)
+        XCTAssertTrue(source.approvedItems.isEmpty)
+        XCTAssertNil(source.dequeueApprovedNotification())
+        _ = await source.scan(trigger: .manual)
+        XCTAssertTrue(source.approvedItems.isEmpty)
+
+        fixture.complete = true
+        fixture.reviewsComplete = false
+        _ = await source.scan(trigger: .manual)
+        XCTAssertEqual(source.approvedItems.map(\.iid), [1, 2])
+        fixture.authored = []
+        _ = await source.scan(trigger: .background)
+        XCTAssertTrue(source.approvedItems.isEmpty)
+    }
+
     func testCatalogPersistsScopeRoleAndExplicitPreference() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -131,6 +171,7 @@ final class AuthoredMRAttentionTests: XCTestCase {
         fixture.complete = false
         _ = await source.scan(trigger: .manual)
         XCTAssertTrue(source.discussionItems.isEmpty)
+        XCTAssertTrue(source.approvedItems.isEmpty)
         XCTAssertNil(source.authoredLastSuccessfulUpdate)
         fixture.complete = true
         _ = await source.scan(trigger: .manual)
@@ -138,5 +179,6 @@ final class AuthoredMRAttentionTests: XCTestCase {
         fixture.url = "https://other.example.test/dashboard/merge_requests"
         source.settingsChanged()
         XCTAssertTrue(source.discussionItems.isEmpty)
+        XCTAssertTrue(source.approvedItems.isEmpty)
     }
 }

@@ -13,7 +13,8 @@ final class MRReviewScanController {
     private(set) var authoredLastSuccessfulUpdate: Date?
     private(set) var authoredMessage: String?
     var discussionItems: [AuthoredMRAttention] { authoredItems.filter(\.hasDiscussions) }
-    var approvedItems: [AuthoredMRAttention] { authoredItems.filter(\.isApproved) }
+    /// Pending notifications, rebuilt by each successful authored-MR scan.
+    private(set) var approvedItems: [AuthoredMRAttention] = []
     private(set) var isScanning = false
     private(set) var lastSuccessfulUpdate: Date?
     private(set) var message: String?
@@ -41,6 +42,11 @@ final class MRReviewScanController {
     }
 
     func configure(performer: @escaping Performer) { self.performer = performer }
+
+    func dequeueApprovedNotification() -> AuthoredMRAttention? {
+        guard !approvedItems.isEmpty else { return nil }
+        return approvedItems.removeFirst()
+    }
 
     @discardableResult
     func checkGLabAvailability(manual: Bool) -> Bool {
@@ -72,6 +78,7 @@ final class MRReviewScanController {
         if let resultScope, resultScope != urlProvider() {
             items = []
             authoredItems = []
+            approvedItems = []
             authoredLastSuccessfulUpdate = nil
             authoredMessage = nil
             lastSuccessfulUpdate = nil
@@ -116,6 +123,7 @@ final class MRReviewScanController {
                         items = []
                         lastSuccessfulUpdate = nil
                         authoredItems = []
+                        approvedItems = []
                         authoredLastSuccessfulUpdate = nil
                     }
                     resultUsername = username
@@ -123,6 +131,7 @@ final class MRReviewScanController {
             }
             do {
                 authoredItems = try AuthoredMRAttention.decode(output, invocation: invocation, scope: url)
+                approvedItems = authoredItems.filter(\.isApproved)
                 authoredLastSuccessfulUpdate = now()
                 authoredMessage = nil
                 authoredUpdated = true

@@ -46,10 +46,11 @@ struct MainView: View {
                             Task { await launchCoordinator.openAuthoredMR(first) }
                         }.disabled(launchCoordinator.isOpeningAuthoredMR)
                     }
-                    if let first = mrScan.approvedItems.first {
+                    if !mrScan.approvedItems.isEmpty {
                         mrAttentionButton(count: mrScan.approvedItems.count,
                             label: "MRs with all required approvals", color: Color(red: 0.04, green: 0.30, blue: 0.14),
                             identifier: "MergeRequests.ApprovedAttentionButton") {
+                            guard let first = mrScan.dequeueApprovedNotification() else { return }
                             CodeHostWebSessionStore.shared.tabStore.openNotificationTab(url: first.url)
                             sidebarSelection = .mergeRequests
                         }
