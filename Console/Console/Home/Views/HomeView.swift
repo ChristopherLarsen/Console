@@ -83,10 +83,18 @@ struct HomeView: View {
             },
             accessory: {
                 HStack(spacing: 6) {
-                    HomeRefreshAgeLabel(
-                        lastRefresh: model.snapshot().jiraStatus.lastSuccessfulExtraction
-                    )
-                    .accessibilityIdentifier("HomeNextRefreshAge")
+                    // While the source refreshes, the age label gives way to
+                    // the spinner: a stale "last refresh" is noise mid-check.
+                    if isJiraRefreshing {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .accessibilityLabel("Refreshing Jira")
+                    } else {
+                        HomeRefreshAgeLabel(
+                            lastRefresh: model.snapshot().jiraStatus.lastSuccessfulExtraction
+                        )
+                        .accessibilityIdentifier("HomeNextRefreshAge")
+                    }
 
                     Button {
                         sources.refreshJira()
@@ -223,10 +231,18 @@ struct HomeView: View {
             },
             accessory: {
                 HStack(spacing: 6) {
-                    HomeRefreshAgeLabel(
-                        lastRefresh: model.snapshot().jiraStatus.lastSuccessfulExtraction
-                    )
-                    .accessibilityIdentifier("HomeInProgressRefreshAge")
+                    // While the source refreshes, the age label gives way to
+                    // the spinner: a stale "last refresh" is noise mid-check.
+                    if isJiraRefreshing {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .accessibilityLabel("Refreshing Jira")
+                    } else {
+                        HomeRefreshAgeLabel(
+                            lastRefresh: model.snapshot().jiraStatus.lastSuccessfulExtraction
+                        )
+                        .accessibilityIdentifier("HomeInProgressRefreshAge")
+                    }
 
                     Button {
                         sources.refreshJira()
@@ -358,15 +374,18 @@ struct HomeView: View {
             },
             accessory: {
                 HStack(spacing: 6) {
+                    // While the scan refreshes, the age label gives way to
+                    // the spinner: a stale "last refresh" is noise mid-check.
                     if isReviewRefreshing {
                         ProgressView()
                             .controlSize(.mini)
                             .accessibilityLabel("Triaging GitLab reviews")
+                    } else {
+                        HomeRefreshAgeLabel(
+                            lastRefresh: model.snapshot().reviewStatus.lastSuccessfulExtraction
+                        )
+                        .accessibilityIdentifier("HomeReviewRefreshAge")
                     }
-                    HomeRefreshAgeLabel(
-                        lastRefresh: model.snapshot().reviewStatus.lastSuccessfulExtraction
-                    )
-                    .accessibilityIdentifier("HomeReviewRefreshAge")
 
                     Button {
                         reviewScanScheduler?.scanNow()
@@ -387,6 +406,13 @@ struct HomeView: View {
 
     private var isReviewRefreshing: Bool {
         reviewScanScheduler?.isScanning == true
+    }
+
+    /// The retained Jira panel is mid-refresh. Both Jira columns track the
+    /// same controller instance the board model reads, so this is observable
+    /// inside the view body.
+    private var isJiraRefreshing: Bool {
+        JiraWebSession.shared.panelController.isRefreshing
     }
 
     private var reviewScanStatus: String? {
