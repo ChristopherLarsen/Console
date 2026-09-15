@@ -14,6 +14,7 @@ struct BrowserURLField: View {
 
     @State private var editText = ""
     @FocusState private var isFocused: Bool
+    @Environment(BrowserTabStore.self) private var tabStore: BrowserTabStore?
 
     var body: some View {
         TextField("Enter a URL", text: $editText)
@@ -40,6 +41,21 @@ struct BrowserURLField: View {
             .onChange(of: page.url) { _, _ in
                 guard !isFocused else { return }
                 syncDisplayURL()
+            }
+            .onChange(of: ObjectIdentifier(page)) { _, _ in
+                isFocused = false
+                syncDisplayURL()
+            }
+            .task(id: tabStore?.newTabInputID) {
+                // The GitLab address bar remounts with its WebView on tab
+                // switches; a task also handles that initial mount.
+                await Task.yield()
+                guard !Task.isCancelled, let tabStore,
+                      let id = tabStore.newTabInputID,
+                      tabStore.activeTabID == id, tabStore.activePage === page else { return }
+                editText = tabStore.newTabInputURL?.absoluteString ?? ""
+                isFocused = tabStore.newTabInputURL == nil
+                tabStore.finishNewTabInput(for: id)
             }
             .onChange(of: focusRequestToken) { _, _ in
                 isFocused = true

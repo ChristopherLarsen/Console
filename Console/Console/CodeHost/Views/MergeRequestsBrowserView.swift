@@ -146,6 +146,7 @@ struct MergeRequestsBrowserView: View {
             }
 
             WebView(page)
+                .modifier(BrowserLinkContextMenu(page: page))
                 .webViewBackForwardNavigationGestures(.enabled)
                 .webViewMagnificationGestures(.enabled)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -120,6 +120,7 @@ struct JiraView: View {
 
                     if isWebViewMounted {
                         WebView(page)
+                            .modifier(BrowserLinkContextMenu(page: page))
                             .webViewBackForwardNavigationGestures(.enabled)
                             .webViewMagnificationGestures(.enabled)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -154,6 +155,7 @@ struct JiraView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .environment(JiraWebSession.shared.tabStore)
     }
 
     private var navigationControls: some View {
@@ -236,6 +238,7 @@ struct JiraView: View {
         .overlay(alignment: .bottom) {
             Divider()
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("JiraWebViewControls")
     }
 

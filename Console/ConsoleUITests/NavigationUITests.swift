@@ -1,4 +1,36 @@
 import XCTest
+import AppKit
+import Network
+
+private final class BrowserLinkFixtureServer: @unchecked Sendable {
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "BrowserLinkFixtureServer")
+    var port: UInt16? { listener.port?.rawValue }
+
+    init() throws {
+        listener = try NWListener(using: .tcp, on: .any)
+    }
+
+    func start(ready: @escaping @Sendable () -> Void) {
+        listener.stateUpdateHandler = { state in
+            if case .ready = state { ready() }
+        }
+        listener.newConnectionHandler = { [queue] connection in
+            connection.start(queue: queue)
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, _, _ in
+                let request = String(decoding: data ?? Data(), as: UTF8.self)
+                let text = request.contains("GET /clipboard ") ? "Clipboard destination loaded" : "Browser fixture page"
+                let html = "<html><body style='padding:40px'><h1>\(text)</h1><a href='/destination'><span>Browser fixture link</span></a></body></html>"
+                let body = Data(html.utf8)
+                let header = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+                connection.send(content: Data(header.utf8) + body, completion: .contentProcessed { _ in connection.cancel() })
+            }
+        }
+        listener.start(queue: queue)
+    }
+
+    func stop() { listener.cancel() }
+}
 
 final class NavigationUITests: XCTestCase {
 
@@ -14,6 +46,77 @@ final class NavigationUITests: XCTestCase {
     }
 
     // MARK: - Sidebar Navigation
+
+    @MainActor
+    func testJiraLinkContextMenuAndNewTabInput() throws {
+        try verifyBrowserLinkMenuAndNewTabInput(destination: "jira", fieldID: "Jira.URLField", pinnedCount: 1)
+    }
+
+    @MainActor
+    func testGitLabLinkContextMenuAndNewTabInput() throws {
+        try verifyBrowserLinkMenuAndNewTabInput(destination: "mergeRequests", fieldID: "MergeRequests.URLField", pinnedCount: 2)
+    }
+
+    @MainActor
+    private func verifyBrowserLinkMenuAndNewTabInput(destination: String, fieldID: String, pinnedCount: Int) throws {
+        let server = try BrowserLinkFixtureServer()
+        let ready = expectation(description: "Local browser fixture ready")
+        server.start { ready.fulfill() }
+        wait(for: [ready], timeout: 5)
+        defer { server.stop() }
+        let base = "http://127.0.0.1:\(try XCTUnwrap(server.port))"
+        let pasteboard = NSPasteboard.general
+        let saved = pasteboard.pasteboardItems?.map { item in
+            Dictionary(uniqueKeysWithValues: item.types.compactMap { type in item.data(forType: type).map { (type, $0) } })
+        } ?? []
+        defer {
+            app.terminate()
+            pasteboard.clearContents()
+            pasteboard.writeObjects(saved.map { values in
+                let item = NSPasteboardItem()
+                for (type, data) in values { item.setData(data, forType: type) }
+                return item
+            })
+        }
+        app.launchArguments = ["-uiTestInMemoryStore", "-sidebarSelection", destination,
+            "-webViewJiraURL", base, "-webViewGitLabReviewsURL", base,
+            "-mrScanEnabled", "NO", "-listenOnStartup", "NO", "-isTerminalExpanded", "NO"]
+        app.launch()
+        let link = app.links["Browser fixture link"].firstMatch
+        XCTAssertTrue(link.waitForExistence(timeout: 15))
+        link.rightClick()
+        let menuItem = app.menuItems["Open Link in New Tab"].firstMatch
+        XCTAssertTrue(menuItem.waitForExistence(timeout: 5), "Must appear in the webpage link's actual right-click menu")
+        menuItem.click()
+        let field = app.textFields[fieldID].firstMatch
+        let destinationURL = base + "/destination"
+        expectation(for: NSPredicate(format: "value == %@", destinationURL), evaluatedWith: field)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue(app.descendants(matching: .any)["BrowserTabBar.Tab.\(pinnedCount)"].firstMatch.exists)
+
+        // Return to the original tab: its URL must not have been replaced.
+        app.descendants(matching: .any)["BrowserTabBar.Tab.0"].firstMatch.click()
+        expectation(for: NSPredicate(format: "value == %@ OR value == %@", base, base + "/"), evaluatedWith: field)
+        waitForExpectations(timeout: 10)
+
+        pasteboard.clearContents()
+        pasteboard.setString("not a URL", forType: .string)
+        app.buttons["BrowserTabBar.NewTabButton"].click()
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        // Type without clicking the field: proves real keyboard focus.
+        app.typeText(base + "/typed")
+        expectation(for: NSPredicate(format: "value == %@", base + "/typed"), evaluatedWith: field)
+        waitForExpectations(timeout: 5)
+        app.typeKey(.return, modifierFlags: [])
+
+        pasteboard.clearContents()
+        pasteboard.setString(base + "/clipboard", forType: .string)
+        app.typeKey("t", modifierFlags: .command)
+        expectation(for: NSPredicate(format: "value == %@", base + "/clipboard"), evaluatedWith: field)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue(app.staticTexts["Clipboard destination loaded"].firstMatch.waitForExistence(timeout: 10),
+                      "Clipboard URL must actually load, not merely appear in the field")
+    }
 
     func testSidebarHasPrimaryItems() throws {
         app.launch()

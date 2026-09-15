@@ -38,6 +38,9 @@ final class BrowserTabStore {
 
     private(set) var tabs: [BrowserTab]
     private(set) var activeTabID: UUID
+    /// One-shot address-bar handoff for the user's + / Command-T action.
+    private(set) var newTabInputID: UUID?
+    private(set) var newTabInputURL: URL?
 
     /// When each tab's content last became current: seeded at tab creation
     /// (a new tab's page was just loaded or is blank) and refreshed whenever
@@ -80,6 +83,7 @@ final class BrowserTabStore {
 
     func select(_ id: UUID) {
         guard tabs.contains(where: { $0.id == id }) else { return }
+        newTabInputID = nil
         activeTabID = id
     }
 
@@ -89,6 +93,34 @@ final class BrowserTabStore {
     func openTab() -> BrowserTab {
         guard canOpenTab else { return activeTab }
         return appendDynamicTab()
+    }
+
+    func createTabFromUserAction(pasteboard: NSPasteboard = .general) {
+        guard canOpenTab else { return }
+        let url = Self.clipboardURL(from: pasteboard.string(forType: .URL))
+            ?? Self.clipboardURL(from: pasteboard.string(forType: .string))
+        let tab = openTab()
+        newTabInputURL = url
+        newTabInputID = tab.id
+        if let url { tab.page.load(URLRequest(url: url)) }
+    }
+
+    /// Automatic navigation requires a whole, explicit web URL, not arbitrary
+    /// clipboard prose, a file path, or an executable URL scheme.
+    static func clipboardURL(from text: String?) -> URL? {
+        guard let text else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              let url = URL(string: trimmed),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              let host = url.host, !host.isEmpty else { return nil }
+        return url
+    }
+
+    func finishNewTabInput(for id: UUID) {
+        guard newTabInputID == id else { return }
+        newTabInputID = nil
+        newTabInputURL = nil
     }
 
     /// Opens a new tab, makes it active, and loads `url`. At the tab cap the
@@ -113,6 +145,7 @@ final class BrowserTabStore {
     }
 
     private func appendDynamicTab() -> BrowserTab {
+        newTabInputID = nil
         let tab = BrowserTab(page: WebAuthenticationStore.makePage(), titleOverride: nil, isPinned: false)
         tabs.append(tab)
         activeTabID = tab.id
@@ -174,7 +207,7 @@ struct BrowserTabBar: View {
             }
 
             Button {
-                store.openTab()
+                store.createTabFromUserAction()
             } label: {
                 Image(systemName: "plus")
             }
@@ -189,6 +222,7 @@ struct BrowserTabBar: View {
         .overlay(alignment: .bottom) {
             Divider()
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("BrowserTabBar")
     }
 
@@ -228,5 +262,43 @@ struct BrowserTabBar: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isActive ? [.isSelected, .isButton] : .isButton)
         .accessibilityIdentifier("BrowserTabBar.Tab.\(index)")
+    }
+}
+
+/// WebKit supplies the actual clicked hyperlink, including links around nested
+/// elements. A SwiftUI .contextMenu on the surrounding view cannot do that.
+struct BrowserLinkContextMenu: ViewModifier {
+    let page: WebPage
+    @Environment(BrowserTabStore.self) private var store: BrowserTabStore?
+
+    func body(content: Content) -> some View {
+        if let store {
+            content.webViewContextMenu { element in
+                if let url = element.linkURL {
+                    Button("Open Link in New Tab") {
+                        guard store.canOpenTab else { return }
+                        store.openTab(url: url)
+                    }
+                    .disabled(!store.canOpenTab)
+                    Button("Copy Link") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                    }
+                    Divider()
+                }
+                // This API replaces WebKit's default menu, so retain basic
+                // editing and navigation actions for non-link context clicks.
+                Button("Copy") { NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil) }
+                Button("Paste") { NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil) }
+                Divider()
+                Button("Back") {
+                    if let item = page.backForwardList.backList.last { page.load(item) }
+                }
+                .disabled(page.backForwardList.backList.isEmpty)
+                Button("Reload") { page.reload() }
+            }
+        } else {
+            content
+        }
     }
 }

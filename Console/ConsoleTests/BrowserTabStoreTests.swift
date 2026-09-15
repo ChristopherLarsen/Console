@@ -62,6 +62,42 @@ final class BrowserTabStoreTests: XCTestCase {
 
     // MARK: - Opening
 
+    func testNewTabClipboardNavigationAndBlankFocusRequest() {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        let (store, pages) = makeStore()
+        pasteboard.setString("ordinary clipboard text", forType: .string)
+        store.createTabFromUserAction(pasteboard: pasteboard)
+        XCTAssertNil(store.activePage.url)
+        XCTAssertEqual(store.newTabInputID, store.activeTabID)
+        XCTAssertNil(store.newTabInputURL)
+        store.finishNewTabInput(for: store.activeTabID)
+        XCTAssertNil(store.newTabInputID)
+
+        pasteboard.clearContents()
+        pasteboard.setString(" https://example.test/browse/ENG-42?view=full#notes\n", forType: .string)
+        store.createTabFromUserAction(pasteboard: pasteboard)
+        XCTAssertEqual(store.activePage.url?.absoluteString, "https://example.test/browse/ENG-42?view=full#notes")
+        XCTAssertEqual(store.newTabInputURL, store.activePage.url)
+        XCTAssertNil(pages[0].url)
+        store.select(store.tabs[0].id)
+        XCTAssertNil(store.newTabInputID)
+
+        while store.canOpenTab { store.openTab() }
+        store.createTabFromUserAction(pasteboard: pasteboard)
+        XCTAssertEqual(store.tabs.count, BrowserTabStore.maxTabs)
+        XCTAssertNil(store.newTabInputID)
+    }
+
+    func testClipboardAutoNavigationRejectsNonWebContent() {
+        for text in ["", "see https://example.test", "https://one.test\nhttps://two.test",
+                     "javascript:alert(1)", "file:///tmp/a", "mailto:me@example.test", "https://", "some words"] {
+            XCTAssertNil(BrowserTabStore.clipboardURL(from: text), text)
+        }
+        XCTAssertEqual(BrowserTabStore.clipboardURL(from: "https://example.test/a")?.host, "example.test")
+        XCTAssertEqual(BrowserTabStore.clipboardURL(from: "http://localhost:8080/a")?.port, 8080)
+    }
+
     func testNotificationAlwaysOpensFreshTabEvenAtCap() {
         let (store, pages) = makeStore(pinnedCount: 2)
         while store.canOpenTab { store.openTab() }
