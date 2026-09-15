@@ -80,6 +80,7 @@ struct MergeRequestsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .environment(tabStore)
     }
 
     // MARK: - Tabs
