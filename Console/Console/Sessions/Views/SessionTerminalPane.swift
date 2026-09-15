@@ -160,6 +160,15 @@ struct SessionTerminalPane: View {
         ConsoleNavigation.show(.mergeRequests)
     }
 
+    /// Menu labels truncate to this many characters so long commands stay
+    /// scannable; the full text is still sent when picked.
+    private static let quickCommandMenuLabelLimit = 65
+
+    private func quickCommandMenuLabel(_ command: String) -> String {
+        guard command.count > Self.quickCommandMenuLabelLimit else { return command }
+        return String(command.prefix(Self.quickCommandMenuLabelLimit)) + "..."
+    }
+
     /// Quick Commands configured in Settings, rendered as a capsule menu
     /// immediately left of the color picker. Selecting an entry routes through
     /// the shared replacement-and-submit path: the current line is cleared, the
@@ -174,7 +183,7 @@ struct SessionTerminalPane: View {
                     .accessibilityIdentifier("Sessions.QuickCommand.EmptyState")
             } else {
                 ForEach(Array(commands.enumerated()), id: \.offset) { index, command in
-                    Button(command) {
+                    Button(quickCommandMenuLabel(command)) {
                         onQuickCommand(command)
                     }
                     .accessibilityIdentifier("Sessions.QuickCommand.\(index)")
