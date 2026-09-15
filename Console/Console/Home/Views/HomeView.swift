@@ -176,7 +176,7 @@ struct HomeView: View {
                 HomeCardAction(label: isLaunching ? "Starting…" : "Start story") {
                     guard !isLaunching else { return }
                     Task {
-                        await model.continueTicket(story, sessions: sessions)
+                        await model.continueTicket(story, sessions: sessions, associations: sessionStore?.associations)
                     }
                 }
             ],
@@ -271,7 +271,7 @@ struct HomeView: View {
         sessions: [ConsoleSession],
         index: Int
     ) -> some View {
-        let hasLiveSession = HomeStorySessionMatcher.sessionID(for: ticket, in: sessions) != nil
+        let hasLiveSession = HomeStorySessionMatcher.sessionID(for: ticket, in: sessions, associations: sessionStore?.associations) != nil
         let isLaunching = model.launchingTicketKeys.contains(ticket.key)
         // Testing shares the in-review presentation: verbatim state line, no
         // start-session button, whole-card tap opens the story.
@@ -290,7 +290,7 @@ struct HomeView: View {
         let primaryJourney: () -> Void = {
             guard !isLaunching else { return }
             Task {
-                await model.continueTicket(ticket, sessions: sessions)
+                await model.continueTicket(ticket, sessions: sessions, associations: sessionStore?.associations)
             }
         }
 
@@ -443,10 +443,19 @@ struct HomeView: View {
     }
 
     private func reviewSession(for item: MergeRequestSummary) -> ConsoleSession? {
-        HomeStorySessionMatcher.reviewSession(for: item.mergeRequestURL, in: sessionStore?.sessions ?? [])
+        HomeStorySessionMatcher.reviewSession(for: item.mergeRequestURL, in: sessionStore?.sessions ?? [], associations: sessionStore?.associations)
     }
 
     private func jiraURL(for item: MergeRequestSummary) -> URL? {
+        if let catalog = sessionStore?.associations {
+            let links = catalog.relatedArtifacts(to: item.mergeRequestURL, kind: .gitlabMergeRequest, workKind: .review)
+                .filter { $0.kind == .jiraIssue }
+            if !links.isEmpty {
+                let urls = Set(links.compactMap(\.url))
+                if urls.count == 1 { return urls.first }
+                if urls.count > 1 { return nil }
+            }
+        }
         if let session = reviewSession(for: item),
            let url = HomeStorySessionMatcher.jiraURL(for: session, configuredURL: webViewJiraURL) {
             return url
@@ -463,7 +472,12 @@ struct HomeView: View {
     /// launched from GitLab, otherwise the review list's triage match by Jira
     /// key wins. Nil when no merge request is known for the story.
     private func mergeRequestURL(for ticket: JiraTicketSummary) -> URL? {
-        if let id = HomeStorySessionMatcher.sessionID(for: ticket, in: sessionStore?.sessions ?? []),
+        if let catalog = sessionStore?.associations {
+            let urls = Set(catalog.relatedArtifacts(to: ticket.issueURL, kind: .jiraIssue, workKind: .implementation)
+                .filter { $0.kind == .gitlabMergeRequest }.compactMap(\.url))
+            if !urls.isEmpty { return urls.count == 1 ? urls.first : nil }
+        }
+        if let id = HomeStorySessionMatcher.sessionID(for: ticket, in: sessionStore?.sessions ?? [], associations: sessionStore?.associations),
            let session = sessionStore?.sessions.first(where: { $0.id == id }),
            let artifact = session.artifacts.last(where: { $0.kind == .gitlabMergeRequest }),
            let url = artifact.url {

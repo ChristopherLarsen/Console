@@ -11,7 +11,8 @@ import Foundation
 @MainActor
 enum HomeStorySessionMatcher {
     /// MR IIDs are project-scoped; compare parsed project identity as well.
-    static func reviewSession(for url: URL, in sessions: [ConsoleSession]) -> ConsoleSession? {
+    static func reviewSession(for url: URL, in sessions: [ConsoleSession], associations: SessionAssociationStore? = nil) -> ConsoleSession? {
+        if let associations { return associations.session(for: url, kind: .gitlabMergeRequest, role: .reviewer, in: sessions) }
         guard let target = GitLabSourceContext.parseMergeRequest(fromURL: url) else { return nil }
         let matches = sessions.reversed().filter { session in
             session.purpose == .review && session.artifacts.contains { artifact in
@@ -42,8 +43,12 @@ enum HomeStorySessionMatcher {
     static func sessionID(
         for key: String,
         issueURL: URL?,
-        in sessions: [ConsoleSession]
+        in sessions: [ConsoleSession],
+        associations: SessionAssociationStore? = nil
     ) -> UUID? {
+        if let associations, let issueURL {
+            return associations.session(for: issueURL, kind: .jiraIssue, role: .author, in: sessions)?.id
+        }
         var bestID: UUID?
         var bestIsLive = false
         // Scan newest-first so equal-liveness matches keep the latest store
@@ -51,9 +56,11 @@ enum HomeStorySessionMatcher {
         for session in sessions.reversed() {
             let matches = session.artifacts.contains { artifact in
                 guard artifact.kind == .jiraIssue else { return false }
-                let labelMatches = artifact.label.caseInsensitiveCompare(key) == .orderedSame
-                let urlMatches = issueURL != nil && artifact.url == issueURL
-                return labelMatches || urlMatches
+                if let artifactURL = artifact.url, let issueURL {
+                    guard let identity = WorkArtifact.identity(kind: .jiraIssue, url: artifactURL) else { return artifactURL == issueURL }
+                    return identity == WorkArtifact.identity(kind: .jiraIssue, url: issueURL)
+                }
+                return artifact.label.caseInsensitiveCompare(key) == .orderedSame
             }
             guard matches else { continue }
             let isLive = session.activity != .exited
@@ -68,8 +75,9 @@ enum HomeStorySessionMatcher {
     /// Convenience for a whole ticket summary.
     static func sessionID(
         for ticket: JiraTicketSummary,
-        in sessions: [ConsoleSession]
+        in sessions: [ConsoleSession],
+        associations: SessionAssociationStore? = nil
     ) -> UUID? {
-        sessionID(for: ticket.key, issueURL: ticket.issueURL, in: sessions)
+        sessionID(for: ticket.key, issueURL: ticket.issueURL, in: sessions, associations: associations)
     }
 }

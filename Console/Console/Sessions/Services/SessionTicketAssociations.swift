@@ -1,9 +1,7 @@
 import Foundation
 
-/// Persistent mapping from a Claude session ID to the ticket key Console
-/// associated it with at launch. Written when a session is created from a
-/// Jira source (or Console's `S-1234` new-ticket naming) and read by the
-/// Previous Sessions history so classification survives Console restarts.
+/// Version-1 ticket mapping, retained as an import source for the work catalog.
+/// Production association writes now go through SessionAssociationStore.
 ///
 /// Local display data only — never sent to Claude.
 struct SessionTicketAssociations {

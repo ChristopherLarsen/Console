@@ -74,6 +74,22 @@ final class SessionHistoryTests: XCTestCase {
 
     // MARK: - Transcript parsing
 
+    func testWorkCatalogReclassifiesCachedHistoryWithoutTranscriptChanges() async throws {
+        let id = UUID()
+        try writeTranscript(id, lines: [line(type: "user", message: userMessage("Ordinary work"))])
+        let legacy = SessionTicketAssociations(defaults: defaults)
+        legacy.associate("OLD-1", with: id)
+        let catalog = SessionAssociationStore(url: nil)
+        let reader = SessionHistoryReader(ticketAssociations: legacy, root: historyRoot)
+        reader.useWorkAssociations(catalog)
+        let before = await reader.loadRecords()
+        XCTAssertNil(before.first?.ticketKey, "The catalog replaces legacy lookup in production")
+        try catalog.remember(record: .init(claudeSessionID: id, name: "Work", workingDirectory: fixtureRoot, purpose: .existingTicket),
+            artifacts: [.init(kind: .jiraIssue, label: "ENG-42", url: URL(string: "https://jira.test/browse/ENG-42")!)])
+        let after = await reader.loadRecords()
+        XCTAssertEqual(after.first?.ticketKey, "ENG-42")
+    }
+
     func testTranscriptMetadataPrefersCustomTitleThenSummaryThenFirstUserMessage() throws {
         let fileURL = try writeTranscript(UUID(), lines: [
             line(

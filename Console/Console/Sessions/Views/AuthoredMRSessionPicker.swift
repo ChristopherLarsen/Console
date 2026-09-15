@@ -61,18 +61,8 @@ struct AuthoredMRSessionPicker: View {
         .frame(width: 580, height: 480)
         .interactiveDismissDisabled(busy)
         .task {
+            model.useWorkAssociations(store.associations)
             await model.loadAllSessions()
-            for record in model.records {
-                do {
-                    try store.associations.remember(record: .init(claudeSessionID: record.claudeSessionID,
-                        name: record.title, workingDirectory: record.workingDirectory,
-                        purpose: store.associations.conversation(record.claudeSessionID)?.record.purpose ?? .general),
-                        artifacts: record.ticketKey.map { [.init(kind: .jiraIssue, label: $0)] } ?? [])
-                } catch {
-                    errorMessage = "Previous Session links could not be saved: \(error.localizedDescription)"
-                    break
-                }
-            }
         }
     }
 

@@ -824,13 +824,28 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         XCTAssertEqual(stack.launcher.launchCount, 1, "History and notifications share duplicate protection")
     }
 
+    func testReviewActionResumesKnownConversationThenReusesItsLiveSession() async throws {
+        let stack = makeStack()
+        let folder = try addWorkspace(stack, named: "ReviewHistory", gitRemote: "https://gitlab.test/team/project.git")
+        let id = UUID()
+        try writeHistoryTranscript(id)
+        let record = SessionRestorationRecord(claudeSessionID: id, name: "Review", workingDirectory: folder.directoryURL, purpose: .review)
+        try stack.store.associations.remember(record: record,
+            artifacts: [.init(kind: .gitlabMergeRequest, label: "!7", url: authoredMR.url)])
+        await stack.coordinator.beginMergeRequestReview(iid: "7", title: nil, url: authoredMR.url)
+        XCTAssertEqual(stack.store.selectedSession?.claudeSessionID, id)
+        XCTAssertEqual(stack.launcher.lastArguments?.prefix(2), ["--resume", id.uuidString])
+        await stack.coordinator.beginMergeRequestReview(iid: "7", title: nil, url: authoredMR.url)
+        XCTAssertEqual(stack.launcher.launchCount, 1)
+    }
+
     func testAuthoredMRMissingTranscriptOffersFallbackWithoutLosingLink() async throws {
         let stack = makeStack()
         let folder = try addWorkspace(stack, named: "MissingHistory")
         let record = resumeRecord(UUID(), directory: folder.directoryURL)
         try stack.store.associations.remember(record: record, artifacts: [
             .init(kind: .gitlabMergeRequest, label: "!7", url: authoredMR.url)
-        ])
+        ], authoredMR: authoredMR.url)
         await stack.coordinator.openAuthoredMR(authoredMR)
         XCTAssertEqual(stack.coordinator.pendingAuthoredMR?.id, authoredMR.id)
         XCTAssertNotNil(stack.coordinator.lastFailure)

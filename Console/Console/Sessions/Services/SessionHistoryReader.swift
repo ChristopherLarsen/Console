@@ -27,17 +27,26 @@ final class SessionHistoryReader {
 
     private var cache: [String: CachedMetadata] = [:]
     private let ticketAssociations: SessionTicketAssociations
+    private let root: URL
+    private var workAssociations: SessionAssociationStore?
+    private var lastAssociationKeys: [UUID: String] = [:]
 
-    init(ticketAssociations: SessionTicketAssociations = SessionTicketAssociations()) {
+    func useWorkAssociations(_ store: SessionAssociationStore) { workAssociations = store }
+
+    init(ticketAssociations: SessionTicketAssociations = SessionTicketAssociations(), root: URL = SessionHistoryReader.claudeProjectsRoot) {
         self.ticketAssociations = ticketAssociations
+        self.root = root
     }
 
     /// Loads resumable transcripts, most recently active first. The heavy
     /// scan runs off the main actor; cached files return instantly. The
     /// default limit keeps the first open fast; pass nil for all sessions.
     func loadRecords(limit: Int? = SessionHistoryReader.defaultScanLimit) async -> [SessionHistoryRecord] {
-        let root = Self.claudeProjectsRoot
-        let associations = ticketAssociations.allKeys()
+        let root = self.root
+        let associations = workAssociations?.ticketKeys() ?? ticketAssociations.allKeys()
+        // Relationship edits can change classification without changing a
+        // transcript's bytes or modification date.
+        if associations != lastAssociationKeys { cache = [:]; lastAssociationKeys = associations }
         let cached = cache
         let (records, updatedCache) = await Task.detached(priority: .userInitiated) {
             Self.scan(root: root, associations: associations, cache: cached, limit: limit)

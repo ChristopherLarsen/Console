@@ -33,8 +33,8 @@ struct SessionArtifact: Identifiable, Equatable, Codable, Sendable {
     let label: String
     let url: URL?
 
-    init(kind: SessionArtifactKind, label: String, url: URL? = nil) {
-        self.id = UUID()
+    init(id: UUID = UUID(), kind: SessionArtifactKind, label: String, url: URL? = nil) {
+        self.id = id
         self.kind = kind
         self.label = label
         self.url = url

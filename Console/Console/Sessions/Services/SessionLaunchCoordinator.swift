@@ -139,6 +139,19 @@ final class SessionLaunchCoordinator {
     /// `/rename <name>` and `/color purple` so the running Claude Code
     /// session matches once its bridge reports it live.
     func beginMergeRequestReview(iid: String, title: String?, url: URL, displayName: String? = nil) async {
+        lastFailure = nil
+        if let existing = store.associations.session(for: url, kind: .gitlabMergeRequest, role: .reviewer, in: store.sessions),
+           existing.activity != .exited {
+            store.select(sessionID: existing.id)
+            ConsoleNavigation.showSessions()
+            store.focusSelectedTerminal()
+            return
+        }
+        if let previous = store.associations.review(for: url) {
+            do { _ = try await launchResume(record: previous.record) }
+            catch { lastFailure = SessionLaunchFailure(error: error) }
+            return
+        }
         let source = SessionLaunchSource.mergeRequest(iid: iid, title: title, url: url)
         var prepared = draft(purpose: .review, source: source)
         if let displayName { prepared.name = displayName }

@@ -100,7 +100,7 @@ final class HomeBoardModel {
     /// In Progress: open the story's live session, or start one. Stale Jira
     /// data may open an existing session but never launch; clicking then
     /// requests a refresh instead.
-    func continueTicket(_ ticket: JiraTicketSummary, sessions: [ConsoleSession]) async {
+    func continueTicket(_ ticket: JiraTicketSummary, sessions: [ConsoleSession], associations: SessionAssociationStore? = nil) async {
         let snap = snapshot()
         if snap.jiraStatus.check == .current,
            !snap.jiraTickets.contains(ticket) {
@@ -108,7 +108,7 @@ final class HomeBoardModel {
             return
         }
 
-        if let sessionID = HomeStorySessionMatcher.sessionID(for: ticket, in: sessions) {
+        if let sessionID = HomeStorySessionMatcher.sessionID(for: ticket, in: sessions, associations: associations) {
             perform(.selectSession(sessionID))
             return
         }

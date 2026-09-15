@@ -80,9 +80,7 @@ final class SessionStore {
     @ObservationIgnored let locator: ClaudeExecutableLocator
     @ObservationIgnored private var launcher: any SessionProcessLaunching
     @ObservationIgnored private let pluginAssembler: any ConsoleClaudePluginAssembling
-    /// Remembers which ticket a Claude conversation belongs to so Previous
-    /// Sessions classification survives Console restarts.
-    @ObservationIgnored private let ticketAssociations: SessionTicketAssociations
+    /// Durable work identity shared by Home, history, and MR session routing.
     @ObservationIgnored let associations: SessionAssociationStore
     private(set) var associationPersistenceError: String?
 
@@ -124,9 +122,9 @@ final class SessionStore {
         self.pluginAssembler = pluginAssembler
         self.restorationStore = restorationStore
         self.processInspector = processInspector
-        self.ticketAssociations = ticketAssociations
         self.associations = SessionAssociationStore(url: restorationStore?.url.deletingLastPathComponent()
-            .appendingPathComponent("SessionAssociations.json"))
+            .appendingPathComponent("SessionAssociations.json"), legacyTickets: ticketAssociations.allKeys())
+        associationPersistenceError = associations.persistenceError
         if let restorationStore {
             do {
                 savedSnapshot = try restorationStore.load()
@@ -389,7 +387,9 @@ final class SessionStore {
             activity: .starting,
             attention: .none,
             summary: nil,
-            artifacts: associations.conversation(claudeID)?.artifacts ?? Self.initialArtifacts(for: request.source),
+            artifacts: associations.artifacts(for: claudeID) + Self.initialArtifacts(for: request.source)
+                + (request.purpose == .newTicket && SessionTicketClassification.consoleStoryName(request.name)
+                    ? [.init(kind: .jiraIssue, label: request.name)] : []),
             bridgeStatus: bridgeStatus,
             purpose: request.purpose,
             instrumentationWarning: instrumentationWarning
@@ -402,7 +402,6 @@ final class SessionStore {
         }
         selectedSessionID = consoleID
         if let record { startingRestorations[consoleID] = record }
-        persistTicketAssociation(for: request, claudeID: claudeID)
 
         do {
             try launcher.launch(
@@ -474,18 +473,6 @@ final class SessionStore {
         if let record { pendingRestorations.removeAll { $0.id == record.id } }
         persistRestorationSnapshot()
         return consoleID
-    }
-
-    /// Remembers the ticket a launch belongs to: the Jira source key
-    /// directly, or Console's `S-1234` new-ticket display name. Read later by
-    /// the Previous Sessions history for card classification.
-    private func persistTicketAssociation(for request: SessionCreationRequest, claudeID: UUID) {
-        if case let .jira(key, _, _) = request.source {
-            ticketAssociations.associate(key, with: claudeID)
-        } else if request.purpose == .newTicket,
-                  SessionTicketClassification.consoleStoryName(request.name) {
-            ticketAssociations.associate(request.name, with: claudeID)
-        }
     }
 
     /// Initial informational chips for a launch's source context so the row
@@ -1200,30 +1187,36 @@ final class SessionStore {
 
     func linkAuthoredMR(_ item: AuthoredMRAttention, sessionID: UUID) throws {
         guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { throw CocoaError(.fileNoSuchFile) }
-        appendArtifact(.init(kind: .gitlabMergeRequest, label: "!\(item.iid)", url: item.url), toSessionAt: index)
+        // A review conversation can also be explicitly chosen for authoring,
+        // but its other reviewed MRs are not evidence of authored work.
+        var artifacts = sessions[index].purpose == .review ? [] : sessions[index].artifacts
+        artifacts.append(.init(kind: .gitlabMergeRequest, label: "!\(item.iid)", url: item.url))
         if let key = item.jiraIssueKey.flatMap({ JiraSourceContext.parseKey(from: $0) }) {
-            appendArtifact(.init(kind: .jiraIssue, label: key), toSessionAt: index)
-            ticketAssociations.associate(key, with: sessions[index].claudeSessionID)
+            artifacts.append(.init(kind: .jiraIssue, label: key))
         }
         let session = sessions[index]
         try associations.remember(record: .init(claudeSessionID: session.claudeSessionID,
             name: session.name, workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general),
-            artifacts: session.artifacts)
-        try associations.preferAuthor(session.claudeSessionID, for: item.url)
+            artifacts: artifacts, authoredMR: item.url)
+        refreshWorkArtifactProjections()
     }
 
     private func rememberAssociation(for session: ConsoleSession) {
         guard session.purpose != .blank else { return }
         do {
-            var artifacts = session.artifacts
-            if let key = ticketAssociations.allKeys()[session.claudeSessionID] {
-                artifacts.append(.init(kind: .jiraIssue, label: key))
-            }
             try associations.remember(record: .init(claudeSessionID: session.claudeSessionID,
                 name: session.name, workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general),
-                artifacts: artifacts)
+                artifacts: session.artifacts)
+            refreshWorkArtifactProjections()
+            associationPersistenceError = nil
         } catch {
             associationPersistenceError = "Session work links could not be saved: \(error.localizedDescription)"
+        }
+    }
+
+    private func refreshWorkArtifactProjections() {
+        for index in sessions.indices where sessions[index].purpose != .blank {
+            sessions[index].artifacts = associations.artifacts(for: sessions[index].claudeSessionID)
         }
     }
 

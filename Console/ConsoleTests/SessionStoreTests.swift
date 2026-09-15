@@ -797,7 +797,8 @@ final class SessionStoreTests: XCTestCase {
         ))
 
         let session = try XCTUnwrap(store.session(withID: id))
-        XCTAssertEqual(associations.key(for: session.claudeSessionID), "ENG-456")
+        XCTAssertEqual(store.associations.ticketKeys()[session.claudeSessionID], "ENG-456")
+        XCTAssertNil(associations.key(for: session.claudeSessionID), "New writes use the work catalog, not legacy defaults")
     }
 
     func testNewTicketStoryNamePersistsAssociationAndGeneralLaunchDoesNot() throws {
@@ -809,13 +810,13 @@ final class SessionStoreTests: XCTestCase {
             request: SessionCreationRequest(purpose: .newTicket, name: "S-777", workingDirectory: tmpDirectory("Story"))
         )
         let story = try XCTUnwrap(store.session(withID: storyID))
-        XCTAssertEqual(associations.key(for: story.claudeSessionID), "S-777")
+        XCTAssertEqual(store.associations.ticketKeys()[story.claudeSessionID], "S-777")
 
         let generalID = try store.createSession(
             request: SessionCreationRequest(purpose: .general, name: "General", workingDirectory: tmpDirectory("Gen"))
         )
         let general = try XCTUnwrap(store.session(withID: generalID))
-        XCTAssertNil(associations.key(for: general.claudeSessionID))
+        XCTAssertNil(store.associations.ticketKeys()[general.claudeSessionID])
     }
 
     func testResumeSessionLaunchesExactResumeArguments() throws {

@@ -31,7 +31,10 @@ struct PreviousSessionsView: View {
         .onExitCommand { dismiss() }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("PreviousSessions")
-        .task { await model.load() }
+        .task {
+            model.useWorkAssociations(store.associations)
+            await model.load()
+        }
     }
 
     // MARK: - Header
@@ -266,6 +269,10 @@ final class PreviousSessionsModel {
 
     init(reader: SessionHistoryReader? = nil) {
         self.reader = reader ?? SessionHistoryReader()
+    }
+
+    func useWorkAssociations(_ store: SessionAssociationStore) {
+        reader.useWorkAssociations(store)
     }
 
     func load() async {

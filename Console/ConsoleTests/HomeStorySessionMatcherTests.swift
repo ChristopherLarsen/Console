@@ -30,6 +30,21 @@ final class HomeStorySessionMatcherTests: XCTestCase {
 
     private let issueURL = URL(string: "https://jira.example.test/browse/PROJ-9")!
 
+    func testCatalogMatchingUsesDurableIdentityRoleAndSiteInsteadOfChipLabels() throws {
+        let catalog = SessionAssociationStore(url: nil)
+        let author = makeSession(artifacts: [])
+        let reviewer = makeSession(artifacts: [])
+        let artifacts: [SessionArtifact] = [.init(kind: .jiraIssue, label: "Renamed story", url: issueURL)]
+        try catalog.remember(record: .init(claudeSessionID: author.claudeSessionID, name: "Author",
+            workingDirectory: author.workingDirectory, purpose: .existingTicket), artifacts: artifacts)
+        try catalog.remember(record: .init(claudeSessionID: reviewer.claudeSessionID, name: "Reviewer",
+            workingDirectory: reviewer.workingDirectory, purpose: .review), artifacts: artifacts)
+        XCTAssertEqual(HomeStorySessionMatcher.sessionID(for: "PROJ-9", issueURL: issueURL,
+            in: [author, reviewer], associations: catalog), author.id)
+        XCTAssertNil(HomeStorySessionMatcher.sessionID(for: "PROJ-9", issueURL: URL(string: "https://other.test/browse/PROJ-9"),
+            in: [author, reviewer], associations: catalog))
+    }
+
     func testReviewMatchingScopesIIDToProjectAndPrefersLiveSession() {
         let url = URL(string: "https://gitlab.example.test/team/app/-/merge_requests/42")!
         var live = makeSession(artifacts: [.init(kind: .gitlabMergeRequest, label: "MR !42", url: url)])
