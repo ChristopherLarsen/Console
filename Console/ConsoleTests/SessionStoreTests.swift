@@ -310,6 +310,33 @@ final class SessionStoreTests: XCTestCase {
         add(attachment)
     }
 
+    func testRestoreSidebarDismissalPreservesSavedSessionsAndResetsOnNextLaunch() throws {
+        let directory = tmpDirectory("restore-sidebar")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let (empty, _) = makeStore(restorationStore: disk)
+        XCTAssertFalse(empty.isRestoreSessionsSidebarVisible)
+
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Saved",
+            workingDirectory: directory, purpose: .general)
+        let snapshot = SessionRestorationSnapshot(sessions: [record], selectedClaudeSessionID: record.id)
+        try disk.save(snapshot)
+        let (store, launcher) = makeStore(restorationStore: disk)
+        XCTAssertTrue(store.isRestoreSessionsSidebarVisible)
+        store.dismissRestoreSessionsSidebar()
+        XCTAssertFalse(store.isRestoreSessionsSidebarVisible)
+        XCTAssertTrue(store.canRestoreSessions, "Hiding the sidebar action must not discard restoration eligibility")
+        XCTAssertEqual(store.pendingRestorations, [record])
+        XCTAssertEqual(launcher.launchCount, 0, "The X must never restore sessions")
+        XCTAssertEqual(try disk.load(), snapshot)
+        store.terminateAll()
+
+        let (nextLaunch, _) = makeStore(restorationStore: disk)
+        XCTAssertTrue(nextLaunch.isRestoreSessionsSidebarVisible)
+        XCTAssertEqual(nextLaunch.pendingRestorations, [record])
+        nextLaunch.terminateAll()
+    }
+
     func testRestoreResumesConversationAndPreservesSelectionAcrossQuit() async throws {
         let directory = tmpDirectory("restore")
         defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
@@ -325,6 +352,7 @@ final class SessionStoreTests: XCTestCase {
 
         let (restored, launcher) = makeStore(restorationStore: disk)
         XCTAssertTrue(restored.canRestoreSessions)
+        XCTAssertTrue(restored.isRestoreSessionsSidebarVisible)
         await restored.restoreSessions()
         XCTAssertEqual(restored.sessions.map(\.name), ["Renamed", "Second"])
         XCTAssertEqual(restored.selectedSession?.claudeSessionID, identity)
@@ -332,6 +360,7 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(launcher.lastArguments).contains("--resume"))
         XCTAssertFalse(try XCTUnwrap(launcher.lastArguments).contains("--session-id"))
         XCTAssertFalse(restored.canRestoreSessions)
+        XCTAssertFalse(restored.isRestoreSessionsSidebarVisible)
         await restored.restoreSessions()
         XCTAssertEqual(launcher.launchCount, 2)
         restored.terminateAll()
@@ -381,6 +410,7 @@ final class SessionStoreTests: XCTestCase {
         await store.restoreSessions()
         XCTAssertEqual(store.sessions.count, 1)
         XCTAssertEqual(store.pendingRestorations.map(\.id), [second.id])
+        XCTAssertTrue(store.isRestoreSessionsSidebarVisible, "Failed restorations must remain available for retry")
         XCTAssertNotNil(store.restorationMessage)
         XCTAssertEqual(try disk.load().sessions.map(\.id), [first.id, second.id])
         launcher.failingClaudeID = nil

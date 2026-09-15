@@ -40,6 +40,8 @@ final class SessionStore {
     private(set) var awaitingForceStopSessionID: UUID?
     private(set) var pendingRestorations: [SessionRestorationRecord] = []
     private(set) var isRestoringSessions = false
+    /// Process-only dismissal; saved restoration records remain untouched.
+    private var isRestoreSessionsSidebarDismissed = false
     private(set) var restorationMessage: String?
     private(set) var restorationPersistenceError: String?
     private(set) var headlessSessions: [HeadlessSession] = []
@@ -58,6 +60,14 @@ final class SessionStore {
 
     var canRestoreSessions: Bool {
         !pendingRestorations.isEmpty && !isRestoringSessions && !isTerminating && headlessActionID == nil
+    }
+
+    var isRestoreSessionsSidebarVisible: Bool {
+        !pendingRestorations.isEmpty && !isRestoreSessionsSidebarDismissed
+    }
+
+    func dismissRestoreSessionsSidebar() {
+        isRestoreSessionsSidebarDismissed = true
     }
     /// Sessions the user terminated; closed (removed) as soon as their
     /// process exits instead of lingering as dead terminals.

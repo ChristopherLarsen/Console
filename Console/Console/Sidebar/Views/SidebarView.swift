@@ -7,6 +7,8 @@ struct SidebarView: View {
     /// expansion preference and the Focus Mode guard).
     @Binding var isTerminalExpanded: Bool
     @Environment(ThemeManager.self) private var themeManager
+    @Environment(SessionStore.self) private var sessionStore: SessionStore?
+    @State private var isRestoreHovered = false
     /// The AI Provider destination only exists when enabled in Settings.
     @AppStorage(AppSettings.aiProviderEnabledKey) private var isAIProviderEnabled = false
 
@@ -57,6 +59,10 @@ struct SidebarView: View {
                             isSelected: selection == .sessions
                         ) {
                             selection = .sessions
+                        }
+
+                        if let sessionStore, sessionStore.isRestoreSessionsSidebarVisible {
+                            restoreSessionsRow(store: sessionStore)
                         }
 
                         SidebarRow(
@@ -134,6 +140,45 @@ struct SidebarView: View {
             .opacity(0)
             .accessibilityHidden(true)
         }
+    }
+
+    private func restoreSessionsRow(store: SessionStore) -> some View {
+        HStack(spacing: 0) {
+            SidebarRow(
+                label: "Restore Sessions",
+                icon: "arrow.counterclockwise",
+                isSelected: false,
+                isDisabled: !store.canRestoreSessions
+            ) {
+                selection = .sessions
+                Task { await store.restoreSessions() }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .help(store.isRestoringSessions ? "Restoring sessions…" : "Resume sessions from before Console quit")
+
+            // A sibling button, never nested inside the restoration action.
+            // Reserve its width so hovering does not shift the row's label.
+            Button {
+                store.dismissRestoreSessionsSidebar()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(isRestoreHovered ? 1 : 0)
+            .allowsHitTesting(isRestoreHovered)
+            .accessibilityHidden(!isRestoreHovered)
+            .accessibilityLabel("Hide Restore Sessions until next launch")
+            .accessibilityIdentifier("Sidebar.DismissRestoreSessions")
+            .help("Hide until next launch; saved sessions are kept")
+        }
+        .onHover { isRestoreHovered = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("Sidebar.RestoreSessionsRow")
     }
 
     private var navigableDestinations: [SidebarSelection] {

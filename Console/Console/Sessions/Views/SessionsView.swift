@@ -193,14 +193,6 @@ struct SessionsView: View {
                     .lineLimit(3)
                     .help(message)
             }
-            Button("Restore Sessions") {
-                Task { await store.restoreSessions() }
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(store.canRestoreSessions ? Color.black : Color(nsColor: .lightGray))
-            .disabled(!store.canRestoreSessions)
-            .accessibilityIdentifier("Sessions.RestoreButton")
-            .help(store.isRestoringSessions ? "Restoring sessions…" : "Resume sessions from before Console quit")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -363,7 +355,9 @@ struct SessionsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
-            restorationFooter
+            if store.headlessMessage != nil || store.restorationPersistenceError != nil || store.restorationMessage != nil {
+                restorationFooter
+            }
         }
     }
 
