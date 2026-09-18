@@ -172,7 +172,7 @@ struct HomeView: View {
             ticket: story,
             stateLine: story.status,
             bottomActions: [
-                HomeCardAction(label: "Open in JIRA") { model.openStory(story) },
+                HomeCardAction(label: "Open in JIRA", kind: .jira) { model.openStory(story) },
                 HomeCardAction(label: isLaunching ? "Starting…" : "Start story") {
                     guard !isLaunching else { return }
                     Task {
@@ -298,8 +298,8 @@ struct HomeView: View {
         if !inReview {
             bottomActions.append(HomeCardAction(label: actionLabel, handler: primaryJourney))
         }
-        bottomActions.append(HomeCardAction(label: "Open in JIRA") { model.openStory(ticket) })
-        bottomActions.append(HomeCardAction(label: "Open in GitLab") {
+        bottomActions.append(HomeCardAction(label: "Open in JIRA", kind: .jira) { model.openStory(ticket) })
+        bottomActions.append(HomeCardAction(label: "Open in GitLab", kind: .gitlab) {
             if let url = mergeRequestURL(for: ticket) {
                 // Deep-link the GitLab destination to the story's merge
                 // request in its own tab; with no known MR, land on GitLab.

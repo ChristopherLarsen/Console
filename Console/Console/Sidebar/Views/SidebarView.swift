@@ -61,10 +61,6 @@ struct SidebarView: View {
                             selection = .sessions
                         }
 
-                        if let sessionStore, sessionStore.isRestoreSessionsSidebarVisible {
-                            restoreSessionsRow(store: sessionStore)
-                        }
-
                         SidebarRow(
                             label: SidebarSelection.commands.label,
                             icon: SidebarSelection.commands.icon,
@@ -96,6 +92,11 @@ struct SidebarView: View {
                 Spacer(minLength: 0)
 
                 SidebarSeparator()
+
+                if let sessionStore, sessionStore.isRestoreSessionsSidebarVisible {
+                    restoreSessionsRow(store: sessionStore)
+                        .padding(.horizontal, 8)
+                }
 
                 SidebarRow(
                     label: "Terminal",

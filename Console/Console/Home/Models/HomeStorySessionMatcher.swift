@@ -36,6 +36,7 @@ enum HomeStorySessionMatcher {
         }
         guard let key = review?.jiraIssueKey
             ?? review.flatMap({ JiraSourceContext.issueKey(in: $0.title) })
+            ?? NewTicketSessionNaming.jiraKey(forDisplayName: session.name)
             ?? JiraSourceContext.issueKey(in: session.name) else { return nil }
         return JiraSourceContext.issueURL(key: key, configuredURL: configuredURL)
     }

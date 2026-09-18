@@ -89,7 +89,7 @@ struct HomeBoard: Equatable, Sendable {
     /// the "next MR to review".
     var reviewQueue: [MergeRequestSummary] = []
     /// Stories whose host status is actively in progress or in review,
-    /// source order.
+    /// testing first, then source order.
     var inProgressTickets: [JiraTicketSummary] = []
 
     /// The one parked story the user should start next.
@@ -125,12 +125,7 @@ enum HomeBoardBuilder {
         if board.jiraHealth.retainsContent {
             board.nextStories = nextStories(in: snapshot.jiraTickets)
             board.nextUpCount = snapshot.jiraTickets.filter { isNextUp($0) }.count
-            board.inProgressTickets = snapshot.jiraTickets.filter {
-                switch AttentionChannel.forTicketStatus($0.status) {
-                case .active, .inFlight, .testing: return true
-                default: return false
-                }
-            }
+            board.inProgressTickets = inProgressTickets(in: snapshot.jiraTickets)
         }
         if board.reviewHealth.retainsContent {
             board.reviewQueue = reviewQueue(in: snapshot.reviewItems)
@@ -161,6 +156,25 @@ enum HomeBoardBuilder {
     /// The single best parked story: the head of `nextStories(in:)`.
     static func nextStoryTicket(in tickets: [JiraTicketSummary]) -> JiraTicketSummary? {
         nextStories(in: tickets).first
+    }
+
+    /// The In Progress column's cards. Stories in the testing state always
+    /// float above every other in-progress state; host order (`sourceOrder`)
+    /// is preserved within each tier.
+    static func inProgressTickets(in tickets: [JiraTicketSummary]) -> [JiraTicketSummary] {
+        tickets
+            .filter {
+                switch AttentionChannel.forTicketStatus($0.status) {
+                case .active, .inFlight, .testing: return true
+                default: return false
+                }
+            }
+            .sorted { lhs, rhs in
+                let lhsTesting = AttentionChannel.forTicketStatus(lhs.status) == .testing
+                let rhsTesting = AttentionChannel.forTicketStatus(rhs.status) == .testing
+                if lhsTesting != rhsTesting { return lhsTesting }
+                return lhs.sourceOrder < rhs.sourceOrder
+            }
     }
 
     /// True only for the exact host status "Next Up".

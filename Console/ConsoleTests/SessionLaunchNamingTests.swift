@@ -84,6 +84,10 @@ final class SessionLaunchNamingTests: XCTestCase {
     func testStoryNumberDisplayNameIsAlwaysTheSForm() {
         XCTAssertEqual(NewTicketSessionNaming.displayName(forStoryNumber: "1234"), "S-1234")
         XCTAssertEqual(NewTicketSessionNaming.displayName(forStoryNumber: "9"), "S-9")
+        XCTAssertEqual(NewTicketSessionNaming.jiraKey(forDisplayName: "S-1234"), "NMA-1234")
+        XCTAssertEqual(NewTicketSessionNaming.jiraKey(forDisplayName: "s-9"), "NMA-9")
+        XCTAssertNil(NewTicketSessionNaming.jiraKey(forDisplayName: "ENG-123"))
+        XCTAssertNil(NewTicketSessionNaming.jiraKey(forDisplayName: "Existing Ticket"))
     }
 
     // MARK: - Starter prompts (never generated)

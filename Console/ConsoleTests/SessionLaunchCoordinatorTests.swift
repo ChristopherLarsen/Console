@@ -494,15 +494,17 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             "the rename and color commands wait for the bridge, never the pre-Claude shell"
         )
 
+        stack.store.queuedCommandSpacing = 0
         receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-mr-review-naming")
         let sent = stack.store.debugTerminalSendBytes
             .filter { $0.sessionID == session.id }
             .map(\.utf8)
-        XCTAssertTrue(
-            sent.contains { $0.contains("/rename NMA-1234 Review") },
-            "the Claude session is renamed to the stored Console name"
-        )
-        XCTAssertTrue(sent.contains { $0.contains("/color purple") })
+        XCTAssertEqual(sent, [
+            "\u{15}\u{0B}/rename NMA-1234 Review",
+            "\r",
+            "\u{15}\u{0B}/color purple",
+            "\r",
+        ], "each command is submitted by its own carriage return")
     }
 
     func testRetainedPageDraftLaunchKeepsSentinelOutOfClaude() async throws {

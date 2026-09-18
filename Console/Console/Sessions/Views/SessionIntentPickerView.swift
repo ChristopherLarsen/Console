@@ -293,21 +293,184 @@ struct SessionIntentPickerView: View {
         }
     }
 
+    /// Start Review offers three routes to the same launch: a Jira story key,
+    /// a GitLab merge-request number, or picking one of the open merge
+    /// requests the shared review scan already found.
     private var mergeRequestContextStep: some View {
-        inlineContextStep(
-            title: "Start Review",
-            caption: "Paste the GitLab merge-request URL to name the session. Type the review into Claude yourself.",
-            placeholder: "https://gitlab.example.com/group/project/-/merge_requests/42",
-            purpose: .review,
-            identifierPrefix: "Sessions.Launcher.MergeRequest"
-        ) { raw in
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let info = MergeRequestSourceContext.parse(from: trimmed),
-                  let mrURL = URL(string: trimmed) else { return nil }
-            // Keep the full MR URL (matching retained-page launches) so
-            // artifact URLs point at the merge request, not the project root.
-            return .source(.mergeRequest(iid: info.iid, title: nil, url: mrURL))
+        VStack(alignment: .leading, spacing: 10) {
+            inlineBackButton(identifierPrefix: reviewStepIdentifier)
+
+            Text("Start Review")
+                .font(.headline)
+            Text("Enter an NMA story number, a GitLab !merge-request number, or a merge-request URL — or pick an open merge request below.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            TextField("NMA-1234, !42, or MR URL", text: $inlineContext)
+                .textFieldStyle(.roundedBorder)
+                .focused($isInlineFieldFocused)
+                .onSubmit(submitReviewContext)
+                .accessibilityIdentifier("\(reviewStepIdentifier).Field")
+
+            if let inlineError {
+                Text(inlineError)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("\(reviewStepIdentifier).Error")
+            }
+
+            HStack {
+                Spacer()
+                Button("Start Review") {
+                    submitReviewContext()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(
+                    inlineContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
+                .accessibilityIdentifier("\(reviewStepIdentifier).StartButton")
+            }
+
+            if !reviewCandidates.isEmpty {
+                Divider()
+
+                Text("Open merge requests")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                ForEach(Array(reviewCandidates.enumerated()), id: \.element.id) { index, item in
+                    Button {
+                        launchReview(item)
+                    } label: {
+                        reviewCandidateRow(item)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(reviewCandidateAccessibilityLabel(item))
+                    .accessibilityIdentifier("\(reviewStepIdentifier).Candidate.\(index)")
+                }
+            }
         }
+        .onAppear {
+            DispatchQueue.main.async { isInlineFieldFocused = true }
+        }
+    }
+
+    private var reviewStepIdentifier: String { "Sessions.Launcher.MergeRequest" }
+
+    /// At most three open merge requests, most urgent first, from the same
+    /// scan the Home Review column reads.
+    private var reviewCandidates: [MergeRequestSummary] {
+        Array(
+            HomeBoardBuilder.reviewQueue(in: MRReviewScanController.shared.items)
+                .prefix(Self.maxReviewCandidates)
+        )
+    }
+
+    private static let maxReviewCandidates = 3
+
+    private func submitReviewContext() {
+        guard let target = ReviewLaunchResolver.resolve(raw: inlineContext, candidates: reviewCandidates) else {
+            inlineError = "Enter an NMA story number, a GitLab !merge-request number, or a merge-request URL."
+            return
+        }
+        inlineError = nil
+        launchReview(target)
+    }
+
+    private func launchReview(_ item: MergeRequestSummary) {
+        guard let target = ReviewLaunchResolver.target(for: item) else { return }
+        launchReview(target)
+    }
+
+    private func launchReview(_ target: ReviewLaunchResolver.Target) {
+        errorMessage = nil
+        showsSettingsRoute = false
+        Task { @MainActor in
+            await coordinator.beginMergeRequestReview(
+                iid: target.iid,
+                title: target.title,
+                url: target.url,
+                displayName: target.jiraIssueKey.map { "\($0) Review" }
+            )
+            if coordinator.lastFailure == nil {
+                dismiss()
+            } else {
+                errorMessage = coordinator.lastFailure?.message
+                showsSettingsRoute = coordinator.lastFailure?.offersSettingsRoute ?? false
+            }
+        }
+    }
+
+    private func reviewCandidateRow(_ item: MergeRequestSummary) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.triangle.merge")
+                .font(.caption)
+                .foregroundStyle(Color.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    if let iid = item.iidText {
+                        Text("!\(iid)")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    }
+                    if let key = ReviewLaunchResolver.jiraIssueKey(for: item) {
+                        Text(key)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    if let project = item.projectDisplayName {
+                        Text(project)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Text(item.title)
+                    .font(.system(size: 12))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        )
+        .contentShape(Rectangle())
+    }
+
+    private func reviewCandidateAccessibilityLabel(_ item: MergeRequestSummary) -> String {
+        var parts: [String] = []
+        if let iid = item.iidText { parts.append("Merge request !\(iid)") }
+        parts.append(item.title)
+        if let project = item.projectDisplayName { parts.append(project) }
+        if let key = ReviewLaunchResolver.jiraIssueKey(for: item) { parts.append(key) }
+        return parts.joined(separator: ", ")
+    }
+
+    private func inlineBackButton(identifierPrefix: String) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                step = .intents
+                inlineContext = ""
+                inlineError = nil
+            }
+        } label: {
+            Label("Back", systemImage: "chevron.left")
+                .labelStyle(.titleAndIcon)
+        }
+        .buttonStyle(.plain)
+        .font(.caption)
+        .accessibilityIdentifier("\(identifierPrefix).Back")
     }
 
     private func inlineContextStep(

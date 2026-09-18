@@ -109,9 +109,9 @@ struct SessionListRow: View {
 
     private var contextMenuItems: some View {
         Group {
-            Button("Rename…", action: onRename)
+            Button("Rename", action: onRename)
             if session.activity != .exited {
-                Button("Terminate…", action: onTerminate)
+                Button("Terminate", action: onTerminate)
             } else {
                 Button("Remove", action: onRemove)
             }

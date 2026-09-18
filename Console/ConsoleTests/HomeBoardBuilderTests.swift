@@ -153,7 +153,19 @@ final class HomeBoardBuilderTests: XCTestCase {
         ]
         let snapshot = HomeBoardSnapshot(jiraTickets: tickets, jiraStatus: .current)
         let board = HomeBoardBuilder.build(snapshot)
-        XCTAssertEqual(board.inProgressTickets.map(\.key), ["A", "B", "D"])
+        XCTAssertEqual(board.inProgressTickets.map(\.key), ["D", "A", "B"])
+    }
+
+    func testInProgressTestingFloatsAboveOtherStatesPreservingHostOrder() {
+        let tickets = [
+            ticket(key: "A", status: "In Progress", order: 0),
+            ticket(key: "B", status: "Testing", order: 1),
+            ticket(key: "C", status: "In Review", order: 2),
+            ticket(key: "D", status: "Testing", order: 3),
+        ]
+        let snapshot = HomeBoardSnapshot(jiraTickets: tickets, jiraStatus: .current)
+        let board = HomeBoardBuilder.build(snapshot)
+        XCTAssertEqual(board.inProgressTickets.map(\.key), ["B", "D", "A", "C"])
     }
 
     // MARK: - Review queue ordering

@@ -33,8 +33,10 @@ final class BrowserTabStore {
     static let maxTabs = 8
 
     /// Tabs whose content stamp is at least this old are reloaded when their
-    /// destination is entered.
-    static let staleTabReloadInterval: TimeInterval = 10 * 60
+    /// destination is entered. Five minutes keeps the GitLab and JIRA
+    /// destinations from presenting stale list pages without reloading on
+    /// every visit.
+    static let staleTabReloadInterval: TimeInterval = 5 * 60
 
     private(set) var tabs: [BrowserTab]
     private(set) var activeTabID: UUID

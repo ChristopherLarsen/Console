@@ -11,13 +11,14 @@ final class HomeStorySessionMatcherTests: XCTestCase {
 
     private func makeSession(
         activity: SessionActivity = .idle,
+        name: String? = nil,
         artifacts: [SessionArtifact]
     ) -> ConsoleSession {
         counter += 1
         return ConsoleSession(
             id: UUID(),
             claudeSessionID: UUID(),
-            name: "S\(counter)",
+            name: name ?? "S\(counter)",
             workingDirectory: URL(fileURLWithPath: "/tmp/s\(counter)"),
             terminalView: ConsoleTerminalView(),
             activity: activity,
@@ -70,6 +71,13 @@ final class HomeStorySessionMatcherTests: XCTestCase {
             configuredURL: "https://jira.example.test/jira/secure/RapidBoard.jspa?rapidView=1")?.absoluteString,
             "https://jira.example.test/jira/browse/PROJ-9")
         XCTAssertNil(HomeStorySessionMatcher.jiraURL(for: keyOnly, configuredURL: ""))
+    }
+
+    func testJiraNavigationMapsNewTicketDisplayNameToNMAKey() {
+        let session = makeSession(name: "S-1234", artifacts: [])
+        XCTAssertEqual(HomeStorySessionMatcher.jiraURL(for: session,
+            configuredURL: "https://jira.example.test")?.absoluteString,
+            "https://jira.example.test/browse/NMA-1234")
     }
 
     func testJiraTitleResolutionRejectsAmbiguousStories() {

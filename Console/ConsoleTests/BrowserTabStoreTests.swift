@@ -282,18 +282,17 @@ final class BrowserTabStoreTests: XCTestCase {
         clock.advance(by: 5 * 60)
         let dynamic = store.openTab()
 
-        // One minute after the dynamic tab was opened: still fresh.
+        // One minute after the dynamic tab was opened the pinned tab has aged
+        // out (6 min) while the young dynamic tab stays.
         clock.advance(by: 1 * 60)
-        store.reloadStaleTabs()
+        let firstPass = store.reloadStaleTabs()
+        XCTAssertEqual(firstPass.map(\.id), [store.tabs[0].id])
         XCTAssertFalse(reloaded().contains(ObjectIdentifier(dynamic.page)))
 
-        // Six more minutes (pinned 12 min old, dynamic 7 min old): the aged
-        // pinned tab reloads, the young dynamic tab stays.
-        clock.advance(by: 6 * 60)
-        let reloadedTabs = store.reloadStaleTabs()
-        XCTAssertEqual(reloadedTabs.map(\.id), [store.tabs[0].id])
-        XCTAssertFalse(reloaded().contains(ObjectIdentifier(dynamic.page)))
-        XCTAssertTrue(reloaded().contains(ObjectIdentifier(store.tabs[0].page)))
+        // Once the dynamic tab itself passes the window it reloads too.
+        clock.advance(by: 4 * 60)
+        let secondPass = store.reloadStaleTabs()
+        XCTAssertEqual(secondPass.map(\.id), [dynamic.id])
     }
 
     func testReloadStaleTabsSkippedYoungTabKeepsOwnStampUntilItAges() {
@@ -301,20 +300,16 @@ final class BrowserTabStoreTests: XCTestCase {
         clock.advance(by: 5 * 60)
         let dynamic = store.openTab()
 
-        // 11 minutes in: pinned reloads; the 6-minute-old dynamic tab is
+        // The pinned tab has aged out, but the 4-minute-old dynamic tab is
         // skipped and keeps its creation stamp.
-        clock.advance(by: 6 * 60)
+        clock.advance(by: 4 * 60)
         store.reloadStaleTabs()
         XCTAssertEqual(reloaded().count, 1)
 
-        // 14 minutes in: the dynamic tab is 9 minutes old — still skipped.
-        clock.advance(by: 3 * 60)
+        // Two minutes later the dynamic tab has reached the window and
+        // reloads; the freshly stamped pinned tab does not.
+        clock.advance(by: 2 * 60)
         let reloadedTabs = store.reloadStaleTabs()
-        XCTAssertTrue(reloadedTabs.isEmpty)
-
-        // 15 minutes in: the dynamic tab is 10 minutes old and reloads.
-        clock.advance(by: 1 * 60)
-        let reloadedTabsSecondPass = store.reloadStaleTabs()
-        XCTAssertEqual(reloadedTabsSecondPass.map(\.id), [dynamic.id])
+        XCTAssertEqual(reloadedTabs.map(\.id), [dynamic.id])
     }
 }

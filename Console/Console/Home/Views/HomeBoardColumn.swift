@@ -161,21 +161,37 @@ struct HomeBoardPlaceholderCard: View {
     }
 }
 
-/// One bottom-row action on a Home card.
+/// One bottom-row action on a Home card. `kind` selects the cross-app hand-off
+/// variant so Open in JIRA / Open in GitLab render with the same capsule
+/// grammar as the rest of the app.
 struct HomeCardAction: Identifiable {
+    enum Kind {
+        case plain
+        case jira
+        case gitlab
+    }
+
     let label: String
+    var kind: Kind = .plain
     let handler: () -> Void
 
     var id: String { label }
 }
 
-/// Light grey bar separating the bottom-row buttons on a Home card.
-struct HomeCardButtonSeparator: View {
+/// Renders one `HomeCardAction` with the shared compact capsule style.
+struct HomeCardActionButton: View {
+    let item: HomeCardAction
+    var isDisabled = false
+
     var body: some View {
-        Text("|")
-            .font(.system(size: 10))
-            .foregroundStyle(Color(nsColor: .separatorColor))
-            .accessibilityHidden(true)
+        switch item.kind {
+        case .plain:
+            CapsuleActionButton(item.label, isDisabled: isDisabled, action: item.handler)
+        case .jira:
+            ServiceCapsuleButton(.jira, isDisabled: isDisabled, action: item.handler)
+        case .gitlab:
+            ServiceCapsuleButton(.gitlab, isDisabled: isDisabled, action: item.handler)
+        }
     }
 }
 
@@ -229,19 +245,14 @@ struct HomeBoardTicketCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 6) {
-                Spacer(minLength: 0)
-                ForEach(Array(bottomActions.enumerated()), id: \.element.id) { index, item in
-                    if index > 0 {
-                        HomeCardButtonSeparator()
-                    }
-                    Button(item.label) {
-                        item.handler()
-                    }
-                    .disabled(isLaunching)
+                ForEach(serviceActions) { item in
+                    HomeCardActionButton(item: item, isDisabled: isLaunching)
+                }
+                Spacer(minLength: 8)
+                ForEach(plainActions) { item in
+                    HomeCardActionButton(item: item, isDisabled: isLaunching)
                 }
             }
-            .font(.system(size: 10, weight: .medium))
-            .buttonStyle(.borderless)
             .padding(.top, 8)
         }
         .padding(HomeCardMetrics.padding)
@@ -256,6 +267,16 @@ struct HomeBoardTicketCard: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier("HomeBoardTicketCard")
+    }
+
+    /// Cross-app hand-offs (Open in JIRA / Open in GitLab) sit bottom-left;
+    /// every other action sits bottom-right.
+    private var serviceActions: [HomeCardAction] {
+        bottomActions.filter { $0.kind != .plain }
+    }
+
+    private var plainActions: [HomeCardAction] {
+        bottomActions.filter { $0.kind == .plain }
     }
 
     /// Testing cards tint their surface light green (#F2FFF2); every other
@@ -334,18 +355,16 @@ struct HomeBoardReviewRequestCard: View {
             }
 
             HStack(spacing: 6) {
-                Spacer(minLength: 0)
-                Button("Open in GitLab", action: open)
-                HomeCardButtonSeparator()
-                Button("Open in JIRA", action: openJira)
-                    .disabled(!canOpenJira)
+                ServiceCapsuleButton(.gitlab, action: open)
+                ServiceCapsuleButton(.jira, isDisabled: !canOpenJira, action: openJira)
                     .help(canOpenJira ? "Open the associated story in a new JIRA tab" : "No associated JIRA story is available")
-                HomeCardButtonSeparator()
-                Button(isLaunching ? "Starting…" : (hasReviewSession ? "Open Review Session" : "Start Review"), action: startReview)
-                    .disabled(isLaunching)
+                Spacer(minLength: 8)
+                CapsuleActionButton(
+                    isLaunching ? "Starting…" : (hasReviewSession ? "Open Review Session" : "Start Review"),
+                    isDisabled: isLaunching,
+                    action: startReview
+                )
             }
-            .font(.system(size: 10, weight: .medium))
-            .buttonStyle(.borderless)
             .padding(.top, 8)
         }
         .padding(HomeCardMetrics.padding)

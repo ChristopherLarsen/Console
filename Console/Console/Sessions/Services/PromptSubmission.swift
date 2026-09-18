@@ -65,6 +65,15 @@ enum PromptSubmissionEngine {
     /// `/color`: clear the editor's current line, insert `command`, then
     /// press Return. Header-menu commands are always single-line.
     static func replacementCommandBytes(_ command: String) -> [UInt8] {
-        clearDraftBytes + Array(command.utf8) + returnBytes
+        replacementCommandText(command) + returnBytes
+    }
+
+    /// A header-menu command's clear-and-text bytes without the submit
+    /// Return. Queued slash commands send this and `returnBytes` as separate
+    /// writes: two commands written back-to-back in one burst are read by
+    /// Claude Code as a single paste, where the embedded carriage returns do
+    /// not submit.
+    static func replacementCommandText(_ command: String) -> [UInt8] {
+        clearDraftBytes + Array(command.utf8)
     }
 }

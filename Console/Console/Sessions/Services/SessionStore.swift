@@ -1053,6 +1053,13 @@ final class SessionStore {
     /// login shell. Keyed by session, flushed in queue order.
     private var pendingSlashCommands: [UUID: [String]] = [:]
 
+    /// Spacing between a queued command's text, its Return, and the next
+    /// queued command. Two slash commands written in immediate succession are
+    /// read by Claude Code as one pasted burst, so the embedded carriage
+    /// returns never submit. Tests shorten this to zero and take the
+    /// synchronous path.
+    var queuedCommandSpacing: TimeInterval = 0.2
+
     /// Queues a slash command for a session whose Claude Code is not yet
     /// live; flushed in order when the bridge first reports active. A
     /// already-live session sends immediately; exited sessions drop it.
@@ -1067,8 +1074,44 @@ final class SessionStore {
 
     private func flushPendingSlashCommands(sessionID: UUID) {
         guard let commands = pendingSlashCommands.removeValue(forKey: sessionID), !commands.isEmpty else { return }
-        for command in commands {
-            sendSlashCommand(command, to: sessionID)
+        submitQueuedCommands(commands, index: 0, sessionID: sessionID)
+    }
+
+    /// Submits queued commands one at a time. Each command's clear-and-text
+    /// bytes and its own carriage return are separate writes, spaced apart,
+    /// so Claude Code submits each command individually instead of reading
+    /// them as one pasted line.
+    private func submitQueuedCommands(_ commands: [String], index: Int, sessionID: UUID) {
+        guard index < commands.count,
+              let session = session(withID: sessionID),
+              session.activity != .exited else { return }
+        sendToTerminal(
+            PromptSubmissionEngine.replacementCommandText(commands[index]),
+            sessionID: sessionID,
+            terminalView: session.terminalView
+        )
+        afterQueuedCommandSpacing { [weak self] in
+            guard let self,
+                  let session = self.session(withID: sessionID),
+                  session.activity != .exited else { return }
+            self.sendToTerminal(
+                PromptSubmissionEngine.returnBytes,
+                sessionID: sessionID,
+                terminalView: session.terminalView
+            )
+            self.afterQueuedCommandSpacing { [weak self] in
+                self?.submitQueuedCommands(commands, index: index + 1, sessionID: sessionID)
+            }
+        }
+    }
+
+    /// Runs `block` after `queuedCommandSpacing`; with zero spacing it runs
+    /// synchronously so tests can assert the exact write sequence.
+    private func afterQueuedCommandSpacing(_ block: @escaping () -> Void) {
+        if queuedCommandSpacing > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + queuedCommandSpacing, execute: block)
+        } else {
+            block()
         }
     }
 

@@ -1165,6 +1165,7 @@ final class SessionStoreTests: XCTestCase {
         let (store, _) = makeStore()
         let id = try store.createSession(name: "Review", workingDirectory: tmpDirectory("Queued"))
         defer { store.terminateAll() }
+        store.queuedCommandSpacing = 0
 
         store.queueSlashCommand("/rename NMA-1234 Review", for: id)
         store.queueSlashCommand("/color purple", for: id)
@@ -1184,11 +1185,12 @@ final class SessionStoreTests: XCTestCase {
         let sent = store.debugTerminalSendBytes
             .filter { $0.sessionID == id }
             .map(\.utf8)
-        XCTAssertTrue(sent.contains { $0.contains("/rename NMA-1234 Review") })
-        XCTAssertTrue(sent.contains { $0.contains("/color purple") })
-        let renameIndex = try XCTUnwrap(sent.firstIndex { $0.contains("/rename") })
-        let colorIndex = try XCTUnwrap(sent.firstIndex { $0.contains("/color") })
-        XCTAssertLessThan(renameIndex, colorIndex, "the rename runs before the color default")
+        XCTAssertEqual(sent, [
+            "\u{15}\u{0B}/rename NMA-1234 Review",
+            "\r",
+            "\u{15}\u{0B}/color purple",
+            "\r",
+        ], "each queued command is submitted by its own carriage return")
     }
 
     func testQueuedSlashCommandSendsImmediatelyWhenBridgeAlreadyActive() throws {

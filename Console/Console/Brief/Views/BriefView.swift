@@ -90,11 +90,13 @@ struct BriefView: View {
             VStack(alignment: .leading, spacing: 14) {
                 section(title: "PREVIOUS WORK DAY") {
                     DatePicker(
-                        "Choose date",
                         selection: workdayBinding,
                         displayedComponents: .date
-                    )
+                    ) { EmptyView() }
                     .accessibilityIdentifier("BriefWorkdayPicker")
+
+                    Divider()
+                        .padding(.horizontal, -12)
 
                     if let lines = viewModel.brief?.yesterdayLines, !lines.isEmpty {
                         ForEach(Array(lines.enumerated()), id: \.offset) { _, line in

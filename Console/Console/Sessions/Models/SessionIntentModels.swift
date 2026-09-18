@@ -173,6 +173,15 @@ nonisolated enum NewTicketSessionNaming {
     static func displayName(forStoryNumber number: String) -> String {
         displayName(forJiraKey: "NMA-\(number)")
     }
+
+    /// Inverse of `displayName`: a new-ticket session display name `S-1234`
+    /// resolves back to its full Jira key `NMA-1234`. Any other name is
+    /// rejected so callers can fall through to generic key parsing.
+    static func jiraKey(forDisplayName name: String) -> String? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let match = trimmed.firstMatch(of: /^(?i)S-(\d+)$/) else { return nil }
+        return "NMA-\(match.1)"
+    }
 }
 
 // MARK: - Source context parsing (memory-only)

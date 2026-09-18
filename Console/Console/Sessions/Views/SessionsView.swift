@@ -10,8 +10,6 @@ struct SessionsView: View {
     @Environment(SessionWorkspaceLayoutController.self) private var layout
     @Environment(SessionNewRequestController.self) private var newSessionRequest
     @State private var showingIntentPicker = false
-    /// Last request token the picker was presented for; gates repeat presses.
-    @State private var presentedNewRequestToken = 0
     @State private var pendingStopConfirmationID: UUID?
     @State private var pendingRenameID: UUID?
     @State private var renameText = ""
@@ -215,11 +213,12 @@ struct SessionsView: View {
     }
 
     /// Cmd+N lands here too: a pending request from the menu presents the
-    /// same launcher as the list-header plus button. The async hop lets a
-    /// freshly-mounted column finish its first layout before presenting.
+    /// same launcher as the list-header plus button — exactly once, tracked
+    /// in the controller so re-entering Sessions never re-presents. The
+    /// async hop lets a freshly-mounted column finish its first layout
+    /// before presenting.
     private func presentPickerForPendingRequest() {
-        guard newSessionRequest.requestToken != presentedNewRequestToken else { return }
-        presentedNewRequestToken = newSessionRequest.requestToken
+        guard newSessionRequest.consumePendingRequest() else { return }
         DispatchQueue.main.async { showingIntentPicker = true }
     }
 
