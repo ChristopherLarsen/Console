@@ -337,6 +337,26 @@ final class SessionStoreTests: XCTestCase {
         nextLaunch.terminateAll()
     }
 
+    func testCreatingASessionRetiresSavedRestorations() throws {
+        let directory = tmpDirectory("stale-restore")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Saved",
+            workingDirectory: directory, purpose: .general)
+        try disk.save(.init(sessions: [record]))
+        let (store, _) = makeStore(restorationStore: disk)
+        XCTAssertTrue(store.isRestoreSessionsSidebarVisible)
+
+        _ = try store.createSession(name: "Fresh", workingDirectory: directory)
+
+        XCTAssertTrue(store.pendingRestorations.isEmpty)
+        XCTAssertFalse(store.isRestoreSessionsSidebarVisible, "a new session retires the stale restore offer")
+        XCTAssertFalse(store.canRestoreSessions)
+        XCTAssertFalse(try disk.load().sessions.contains { $0.id == record.id },
+                       "the superseded session is dropped from the saved snapshot")
+        store.terminateAll()
+    }
+
     func testRestoreResumesConversationAndPreservesSelectionAcrossQuit() async throws {
         let directory = tmpDirectory("restore")
         defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
@@ -381,7 +401,7 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(try disk.load().sessions.map(\.name), ["Keep"])
     }
 
-    func testQuitWithoutRestoringPreservesPendingWorkspaceAndNewSessions() throws {
+    func testCreatingASessionSupersedesSavedRestorationsOnQuit() throws {
         let directory = tmpDirectory("pending")
         defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
         let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
@@ -395,7 +415,8 @@ final class SessionStoreTests: XCTestCase {
         let (next, _) = makeStore(restorationStore: disk)
         _ = try next.createSession(name: "New", workingDirectory: directory)
         next.terminateAll()
-        XCTAssertEqual(try disk.load().sessions.map(\.name), ["Saved", "New"])
+        XCTAssertEqual(try disk.load().sessions.map(\.name), ["New"],
+            "starting new work drops the superseded saved snapshot")
     }
 
     func testPartialRestoreRetriesOnlyFailures() async throws {

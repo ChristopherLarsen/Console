@@ -310,7 +310,21 @@ final class SessionStore {
     /// terminal-send bytes.
     @discardableResult
     func createSession(request: SessionCreationRequest) throws -> UUID {
-        try createSession(request: request, resuming: nil)
+        let sessionID = try createSession(request: request, resuming: nil)
+        // A brand-new session supersedes whatever was saved from a previous
+        // launch: retire the restore offer so the sidebar row disappears and
+        // the saved snapshot holds only the work the user has actually started.
+        invalidateSavedRestorations()
+        return sessionID
+    }
+
+    /// Drops the restore offer for sessions saved before this launch. Resuming
+    /// goes through `resumeSession(from:)` instead, which keeps the offer.
+    private func invalidateSavedRestorations() {
+        guard !pendingRestorations.isEmpty else { return }
+        pendingRestorations.removeAll()
+        savedSnapshot = SessionRestorationSnapshot()
+        persistRestorationSnapshot()
     }
 
     private func createSession(request: SessionCreationRequest, resuming record: SessionRestorationRecord?) throws -> UUID {
