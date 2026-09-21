@@ -33,8 +33,32 @@ final class MRReviewScanSchedulerTests: XCTestCase {
         XCTAssertNil(scheduler.lastScanFinishedAt, "Cancelled work must not publish completion")
     }
 
-    func testDefaultsNotificationEnablesLiveScheduler() async {
+    /// The live loop must rescan every interval once its scan completes.
+    func testLiveLoopRescansEveryInterval() async {
         let defaults = makeDefaults()
+        configure(defaults: defaults, enabled: true, intervalMinutes: 10)
+        var current = Date(timeIntervalSince1970: 1_000_000)
+        var scans = 0
+        let scheduler = MRReviewScanScheduler(
+            defaults: defaults,
+            reviewsURLProvider: { "https://gitlab.example.com/project/-/merge_requests" },
+            performer: { scans += 1 },
+            now: { current },
+            sleep: { interval in
+                current.addTimeInterval(max(interval, 0))
+                await Task.yield()
+            },
+            notificationCenter: NotificationCenter()
+        )
+        scheduler.start()
+        for _ in 0..<200 where scans < 3 {
+            await Task.yield()
+        }
+        scheduler.stop()
+        XCTAssertGreaterThanOrEqual(scans, 3, "The timer must rescan every 10-minute interval")
+    }
+
+    func testDefaultsNotificationEnablesLiveScheduler() async {        let defaults = makeDefaults()
         configure(defaults: defaults, enabled: false)
         let center = NotificationCenter()
         var scans = 0

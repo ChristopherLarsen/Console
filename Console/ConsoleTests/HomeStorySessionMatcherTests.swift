@@ -80,6 +80,13 @@ final class HomeStorySessionMatcherTests: XCTestCase {
             "https://jira.example.test/browse/NMA-1234")
     }
 
+    func testJiraNavigationMapsNewTicketArtifactLabelToNMAKey() {
+        let session = makeSession(artifacts: [.init(kind: .jiraIssue, label: "S-1234")])
+        XCTAssertEqual(HomeStorySessionMatcher.jiraURL(for: session,
+            configuredURL: "https://jira.example.test")?.absoluteString,
+            "https://jira.example.test/browse/NMA-1234")
+    }
+
     func testJiraTitleResolutionRejectsAmbiguousStories() {
         XCTAssertEqual(JiraSourceContext.issueKey(in: "[PROJ-9] Fix login (PROJ-9)"), "PROJ-9")
         XCTAssertNil(JiraSourceContext.issueKey(in: "PROJ-9 and PROJ-10"))

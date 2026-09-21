@@ -73,6 +73,21 @@ final class MRReviewTriageTests: XCTestCase {
         XCTAssertThrowsError(try decode([item(category: .alreadyReviewed, myComment: "yesterday")]))
     }
 
+    func testCategoryTitlesDescribeTheActualState() {
+        XCTAssertEqual(MRReviewCategory.needsReview.title, "Needs review")
+        XCTAssertEqual(MRReviewCategory.alreadyReviewed.title, "Awaiting author")
+        XCTAssertEqual(MRReviewCategory.activeReview.title, "Author responded")
+    }
+
+    func testPromptTreatsMyCommentsAsReviewEvidenceAndForbidsNeedsReviewAfterReview() throws {
+        let invocation = try MRReviewTriagePrompt.invocation(
+            url: scope, executable: "/opt/homebrew/bin/glab", defaults: defaults
+        )
+        XCTAssertTrue(invocation.prompt.contains("ALWAYS count as developer comments"))
+        XCTAssertTrue(invocation.prompt.contains("NEVER needsReview"))
+        XCTAssertTrue(invocation.prompt.contains("waiting on the author"))
+    }
+
     func testPromptUsesNewPreferenceReadOnlyGLabAndCompleteDiscovery() throws {
         defaults.set("Do not use tools or fetch additional data.", forKey: AppSettings.mrDispositionPromptKey)
         let invocation = try MRReviewTriagePrompt.invocation(url: scope, executable: "/opt/homebrew/bin/glab", defaults: defaults)

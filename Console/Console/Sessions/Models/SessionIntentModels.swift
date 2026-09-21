@@ -189,10 +189,19 @@ nonisolated enum NewTicketSessionNaming {
 /// Parses Jira keys and URLs out of strings the retained WebView already
 /// rendered. Results live only in memory.
 nonisolated enum JiraSourceContext {
+    /// Console renders a new-ticket session's `NMA-<n>` key as the local
+    /// `S-<n>` display form. Any key parsed out of a Console label, session
+    /// name, or title must resolve back to the real story key so every
+    /// Open in JIRA link and association points at `NMA-<n>`, never `S-<n>`.
+    static func normalizedConsoleKey(_ key: String) -> String {
+        NewTicketSessionNaming.jiraKey(forDisplayName: key) ?? key
+    }
+
     /// Only resolve an unambiguous issue key; never guess among multiple stories.
     static func issueKey(in text: String) -> String? {
         let keys = Set(text.matches(of: /\b[A-Z][A-Z0-9]*-\d+\b/).map { String($0.output) })
-        return keys.count == 1 ? keys.first : nil
+        guard keys.count == 1, let key = keys.first else { return nil }
+        return normalizedConsoleKey(key)
     }
 
     static func issueURL(key: String, configuredURL: String) -> URL? {
@@ -217,7 +226,7 @@ nonisolated enum JiraSourceContext {
 
     /// Uppercase project prefix of a key like `ENG-123` → `ENG`.
     static func projectKeyPrefix(of key: String) -> String? {
-        guard let match = key.firstMatch(of: /^([A-Za-z][A-Za-z0-9]*)-\d+$/) else { return nil }
+        guard let match = normalizedConsoleKey(key).firstMatch(of: /^([A-Za-z][A-Za-z0-9]*)-\d+$/) else { return nil }
         return String(match.1).uppercased()
     }
 
@@ -226,7 +235,7 @@ nonisolated enum JiraSourceContext {
     static func parseKey(from raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.range(of: #"^[A-Za-z][A-Za-z0-9]*-\d+$"#, options: .regularExpression) != nil {
-            return trimmed.uppercased()
+            return normalizedConsoleKey(trimmed.uppercased())
         }
         guard let url = URL(string: trimmed), let host = url.host, !host.isEmpty else { return nil }
         return parseIssueKey(fromURL: url)
@@ -239,7 +248,7 @@ nonisolated enum JiraSourceContext {
         if let index = pathComponents.firstIndex(of: "browse"), index + 1 < pathComponents.count {
             let candidate = pathComponents[index + 1]
             if candidate.range(of: #"^[A-Za-z][A-Za-z0-9]*-\d+$"#, options: .regularExpression) != nil {
-                return candidate.uppercased()
+                return normalizedConsoleKey(candidate.uppercased())
             }
         }
 
@@ -247,7 +256,7 @@ nonisolated enum JiraSourceContext {
         if let index = pathComponents.firstIndex(of: "issues"), index + 1 < pathComponents.count {
             let candidate = pathComponents[index + 1]
             if candidate.range(of: #"^[A-Za-z][A-Za-z0-9]*-\d+$"#, options: .regularExpression) != nil {
-                return candidate.uppercased()
+                return normalizedConsoleKey(candidate.uppercased())
             }
         }
 
@@ -255,7 +264,7 @@ nonisolated enum JiraSourceContext {
         if let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
            let value = items.first(where: { $0.name == "selectedIssue" })?.value,
            value.range(of: #"^[A-Za-z][A-Za-z0-9]*-\d+$"#, options: .regularExpression) != nil {
-            return value.uppercased()
+            return normalizedConsoleKey(value.uppercased())
         }
 
         return nil

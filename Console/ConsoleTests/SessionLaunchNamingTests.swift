@@ -152,6 +152,16 @@ final class SessionLaunchNamingTests: XCTestCase {
         XCTAssertEqual(JiraSourceContext.projectKeyPrefix(of: "Ab2-9"), "AB2")
     }
 
+    func testConsoleStoryDisplayKeyResolvesToTheRealNMAKey() {
+        XCTAssertEqual(JiraSourceContext.parseKey(from: "s-1234"), "NMA-1234")
+        XCTAssertEqual(JiraSourceContext.parseKey(from: "https://acme.atlassian.net/browse/S-1234"), "NMA-1234")
+        XCTAssertEqual(JiraSourceContext.parseIssueKey(fromURL: URL(string: "https://acme.atlassian.net/browse/s-9")!), "NMA-9")
+        XCTAssertEqual(JiraSourceContext.issueKey(in: "S-1234"), "NMA-1234")
+        XCTAssertEqual(JiraSourceContext.issueKey(in: "S-1234 Review"), "NMA-1234")
+        XCTAssertEqual(JiraSourceContext.projectKeyPrefix(of: "s-1234"), "NMA")
+        XCTAssertEqual(JiraSourceContext.parseKey(from: "ENG-123"), "ENG-123")
+    }
+
     // MARK: - GitLab parsing and normalization
 
     func testMergeRequestParsingExtractsIIDAndProject() {

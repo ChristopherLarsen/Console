@@ -6,9 +6,9 @@ enum MRReviewCategory: String, Codable, CaseIterable, Sendable {
     var priority: Int { Self.allCases.firstIndex(of: self)! }
     var title: String {
         switch self {
-        case .activeReview: return "Active review"
+        case .activeReview: return "Author responded"
         case .needsReview: return "Needs review"
-        case .alreadyReviewed: return "Already reviewed"
+        case .alreadyReviewed: return "Awaiting author"
         }
     }
 }
@@ -82,14 +82,25 @@ enum MRReviewTriagePrompt {
     A historical approval event that has been reset is not current approval. If approval or identity
     evidence cannot be read, the scan is incomplete; never assume unapproved.
 
-    Count only non-system human comments by developers other than the author. Exclude bots.
-    My comments count as developer comments. Author-only discussion does not mean reviewed.
-    Assign these categories in priority order:
-    1. activeReview: I have commented and the author replied anywhere or pushed changes AFTER my
-       latest comment. Read actual reply/push events; generic updated_at or commit authored_date
-       is not proof of who pushed or when. My latest comment resets this comparison.
-    2. needsReview: no developer other than the author has commented.
-    3. alreadyReviewed: developer comments exist, with no newer author activity after my latest comment.
+    A developer comment is any non-system human note or inline diff/review comment, from the
+    authenticated user (identity == currentUsername) OR from any developer other than the author.
+    Exclude bots. Comments the authenticated user left ALWAYS count as developer comments, including
+    inline review comments and comments on threads that were later resolved. Author-only discussion
+    does not mean reviewed. Assign exactly one category in priority order:
+    1. activeReview: the authenticated user has commented AND the author replied anywhere or pushed
+       changes AFTER the user's latest comment, so the review is back with the user. Read actual
+       reply/push events; generic updated_at or commit authored_date is not proof of who pushed or
+       when. The user's latest comment resets this comparison.
+    2. alreadyReviewed: the authenticated user (or another non-author developer) has commented, and
+       the author has NOT replied or pushed since the user's latest comment. This is the "I reviewed,
+       waiting on the author" state.
+    3. needsReview: the authenticated user has NOT commented and no developer other than the author
+       has commented.
+
+    A merge request the authenticated user has already reviewed is NEVER needsReview: if the user
+    left any comment or review note and the author is silent, classify alreadyReviewed even when the
+    user's comment is the only one. Reserve needsReview for merge requests with no non-author
+    developer comments at all.
     Supply latestMyCommentAt and latestAuthorActivityAt as ISO-8601 timestamps (null if absent).
     Explain the specific reason in one short sentence, identifying relevant reviewer/author activity.
 

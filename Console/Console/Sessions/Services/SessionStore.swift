@@ -349,7 +349,8 @@ final class SessionStore {
             arguments = Self.launchArguments(
                 claudeSessionID: claudeID,
                 pluginDirectory: pluginRoot.path,
-                resume: record != nil
+                resume: record != nil,
+                agent: request.purpose == .review ? Self.reviewAgentName : nil
             )
             environment = childEnvironment(
                 bridgeEnvironment: [
@@ -367,7 +368,8 @@ final class SessionStore {
             arguments = Self.launchArguments(
                 claudeSessionID: claudeID,
                 pluginDirectory: nil,
-                resume: record != nil
+                resume: record != nil,
+                agent: request.purpose == .review ? Self.reviewAgentName : nil
             )
             environment = childEnvironment(bridgeEnvironment: [:])
             bridgeStatus = .unavailable
@@ -511,17 +513,29 @@ final class SessionStore {
         )
     }
 
+    /// Claude Code agent every review session runs under. The agent is
+    /// expected to exist in the user's Claude configuration.
+    static let reviewAgentName = "agent-review"
+
     /// Exact launch arguments: Claude session identity with bypassed
-    /// permission prompts, and when a plugin directory is available the
-    /// bundled plugin plus preapproval of only the three Console MCP tool
-    /// names. The local Console display name is omitted — it must not reach
-    /// the child CLI. Uninstrumented launches pass identity only so a missing
-    /// plugin cannot block Claude.
-    static func launchArguments(claudeSessionID: UUID, pluginDirectory: String?, resume: Bool = false) -> [String] {
+    /// permission prompts, an optional named agent, and when a plugin
+    /// directory is available the bundled plugin plus preapproval of only the
+    /// three Console MCP tool names. The local Console display name is omitted
+    /// — it must not reach the child CLI. Uninstrumented launches pass identity
+    /// only so a missing plugin cannot block Claude.
+    static func launchArguments(
+        claudeSessionID: UUID,
+        pluginDirectory: String?,
+        resume: Bool = false,
+        agent: String? = nil
+    ) -> [String] {
         var arguments = [
             resume ? "--resume" : "--session-id", claudeSessionID.uuidString,
             "--dangerously-skip-permissions",
         ]
+        if let agent {
+            arguments += ["--agent", agent]
+        }
         if let pluginDirectory {
             arguments += ["--plugin-dir", pluginDirectory]
             arguments += ["--allowedTools"] + ConsoleClaudePluginAssembler.allowedToolNames

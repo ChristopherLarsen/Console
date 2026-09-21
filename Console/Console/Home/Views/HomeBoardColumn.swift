@@ -326,13 +326,6 @@ struct HomeBoardReviewRequestCard: View {
                     .lineLimit(1)
 
                 Spacer(minLength: 4)
-
-                if let age = RelativeAge.compact(from: item.updatedText) {
-                    Text(age)
-                        .font(HomeCardMetrics.ageFont)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
             }
 
             Text(item.title)

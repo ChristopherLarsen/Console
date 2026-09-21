@@ -143,6 +143,29 @@ final class SessionsPackagingTests: XCTestCase {
         XCTAssertFalse(args.contains { $0.hasPrefix("mcp__plugin_console-bridge_console__") })
     }
 
+    @MainActor
+    func testReviewLaunchArgumentsSelectTheReviewAgent() {
+        let args = SessionStore.launchArguments(
+            claudeSessionID: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
+            pluginDirectory: "/tmp/plugins/console-bridge",
+            agent: SessionStore.reviewAgentName
+        )
+
+        let agentIndex = args.firstIndex(of: "--agent")
+        XCTAssertNotNil(agentIndex)
+        XCTAssertEqual(agentIndex.map { args[$0 + 1] }, "agent-review")
+        XCTAssertTrue(args.contains("--plugin-dir"), "the agent flag does not drop plugin instrumentation")
+    }
+
+    @MainActor
+    func testNonReviewLaunchArgumentsOmitTheReviewAgent() {
+        let args = SessionStore.launchArguments(
+            claudeSessionID: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
+            pluginDirectory: nil
+        )
+        XCTAssertFalse(args.contains("--agent"))
+    }
+
     func testAssemblerSeamThrowsWithoutWritingAPlugin() throws {
         struct FailingAssembler: ConsoleClaudePluginAssembling {
             func materialize(in baseDirectory: URL) throws -> URL {
