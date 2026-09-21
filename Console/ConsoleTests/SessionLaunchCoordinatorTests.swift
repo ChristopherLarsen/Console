@@ -826,6 +826,39 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         XCTAssertEqual(stack.launcher.launchCount, 1, "History and notifications share duplicate protection")
     }
 
+    func testRepeatedHomeReviewLaunchReusesTheCreatedSession() async throws {
+        let stack = makeStack()
+        try addWorkspace(
+            stack,
+            named: "ReviewHomeAgain",
+            gitRemote: "https://sentinel.example.test/grp/proj.git"
+        )
+
+        await stack.coordinator.beginMergeRequestReview(
+            iid: Sentinel.mrIID,
+            title: "NMA-1234: fix the login redirect",
+            url: Sentinel.mrURL,
+            displayName: "NMA-1234 Review"
+        )
+        XCTAssertEqual(stack.launcher.launchCount, 1)
+        XCTAssertNotNil(
+            HomeStorySessionMatcher.reviewSession(
+                for: Sentinel.mrURL,
+                in: stack.store.sessions,
+                associations: stack.store.associations
+            ),
+            "the freshly created review session must be discoverable for the card label"
+        )
+
+        await stack.coordinator.beginMergeRequestReview(
+            iid: Sentinel.mrIID,
+            title: "NMA-1234: fix the login redirect",
+            url: Sentinel.mrURL,
+            displayName: "NMA-1234 Review"
+        )
+        XCTAssertEqual(stack.launcher.launchCount, 1, "a second Start Review opens the existing session")
+    }
+
     func testReviewActionResumesKnownConversationThenReusesItsLiveSession() async throws {
         let stack = makeStack()
         let folder = try addWorkspace(stack, named: "ReviewHistory", gitRemote: "https://gitlab.test/team/project.git")

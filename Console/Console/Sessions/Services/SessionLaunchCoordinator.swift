@@ -140,7 +140,7 @@ final class SessionLaunchCoordinator {
     /// session matches once its bridge reports it live.
     func beginMergeRequestReview(iid: String, title: String?, url: URL, displayName: String? = nil) async {
         lastFailure = nil
-        if let existing = store.associations.session(for: url, kind: .gitlabMergeRequest, role: .reviewer, in: store.sessions),
+        if let existing = HomeStorySessionMatcher.reviewSession(for: url, in: store.sessions, associations: store.associations),
            existing.activity != .exited {
             store.select(sessionID: existing.id)
             ConsoleNavigation.showSessions()

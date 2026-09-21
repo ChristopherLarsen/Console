@@ -12,7 +12,13 @@ import Foundation
 enum HomeStorySessionMatcher {
     /// MR IIDs are project-scoped; compare parsed project identity as well.
     static func reviewSession(for url: URL, in sessions: [ConsoleSession], associations: SessionAssociationStore? = nil) -> ConsoleSession? {
-        if let associations { return associations.session(for: url, kind: .gitlabMergeRequest, role: .reviewer, in: sessions) }
+        if let associations,
+           let linked = associations.session(for: url, kind: .gitlabMergeRequest, role: .reviewer, in: sessions) {
+            return linked
+        }
+        // Fall back to the session's own MR chip: a missing or unreadable
+        // catalog link must not hide a review session the user already has,
+        // which would relabel the card "Start Review" and launch a duplicate.
         guard let target = GitLabSourceContext.parseMergeRequest(fromURL: url) else { return nil }
         let matches = sessions.reversed().filter { session in
             session.purpose == .review && session.artifacts.contains { artifact in

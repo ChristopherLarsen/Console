@@ -597,6 +597,10 @@ final class SessionStore {
 
     func select(sessionID: UUID) {
         selectedSessionID = sessionID
+        // Navigating to a session is seeing it: any pending completion
+        // notification for it clears. Outstanding input requests (permission,
+        // question) are never cleared by viewing.
+        acknowledgeCompletion(sessionID: sessionID)
         persistRestorationSnapshot()
     }
 

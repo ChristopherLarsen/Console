@@ -8,7 +8,7 @@ enum MRReviewCategory: String, Codable, CaseIterable, Sendable {
         switch self {
         case .activeReview: return "Author responded"
         case .needsReview: return "Needs review"
-        case .alreadyReviewed: return "Awaiting author"
+        case .alreadyReviewed: return "Reviewed - Waiting for Author"
         }
     }
 }

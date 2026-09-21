@@ -75,7 +75,7 @@ final class MRReviewTriageTests: XCTestCase {
 
     func testCategoryTitlesDescribeTheActualState() {
         XCTAssertEqual(MRReviewCategory.needsReview.title, "Needs review")
-        XCTAssertEqual(MRReviewCategory.alreadyReviewed.title, "Awaiting author")
+        XCTAssertEqual(MRReviewCategory.alreadyReviewed.title, "Reviewed - Waiting for Author")
         XCTAssertEqual(MRReviewCategory.activeReview.title, "Author responded")
     }
 

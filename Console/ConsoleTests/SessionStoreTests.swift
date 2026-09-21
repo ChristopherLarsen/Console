@@ -589,7 +589,6 @@ final class SessionStoreTests: XCTestCase {
         let (store, _) = makeStore()
         let id = try store.createSession(name: "Marker", workingDirectory: tmpDirectory("Marker"))
         try sendLifecycle(.turnCompleted, to: id, store: store)
-        store.select(sessionID: id)
         store.viewingFocusDetector = { $0 == id }
 
         try sendLifecycle(.turnCompleted, to: id, store: store)
@@ -599,6 +598,21 @@ final class SessionStoreTests: XCTestCase {
             "a completion while viewing must not clear an unread marker the user has not seen yet"
         )
         XCTAssertEqual(store.sessionsNeedingAttention.map(\.id), [id])
+    }
+
+    func testSelectingASessionAcknowledgesItsCompletionNotification() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Notify", workingDirectory: tmpDirectory("Notify"))
+        try sendLifecycle(.turnCompleted, to: id, store: store)
+        XCTAssertEqual(store.sessionsNeedingAttention.map(\.id), [id])
+
+        store.select(sessionID: id)
+
+        XCTAssertEqual(store.session(withID: id)?.attention, SessionAttention.none)
+        XCTAssertTrue(
+            store.sessionsNeedingAttention.isEmpty,
+            "opening the session clears its top-bar completion notification"
+        )
     }
 
     func testQuestionReportedWhileViewingStillNeedsInput() throws {
@@ -810,7 +824,8 @@ final class SessionStoreTests: XCTestCase {
             request: SessionCreationRequest(purpose: .newTicket, name: "S-777", workingDirectory: tmpDirectory("Story"))
         )
         let story = try XCTUnwrap(store.session(withID: storyID))
-        XCTAssertEqual(store.associations.ticketKeys()[story.claudeSessionID], "S-777")
+        XCTAssertEqual(store.associations.ticketKeys()[story.claudeSessionID], "NMA-777",
+            "Console's S-#### display name resolves to the real NMA story key")
 
         let generalID = try store.createSession(
             request: SessionCreationRequest(purpose: .general, name: "General", workingDirectory: tmpDirectory("Gen"))
