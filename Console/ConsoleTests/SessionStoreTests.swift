@@ -817,6 +817,43 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(launcher.exitShellStartCount, shellStartsAfterLaunch + 1)
     }
 
+    // MARK: - Merge request connection
+
+    func testConnectMergeRequestAttachesArtifactAndReviewerLink() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(request: SessionCreationRequest(
+            purpose: .review, name: "NMA-1 Review", workingDirectory: tmpDirectory("ConnectMR")
+        ))
+        let url = URL(string: "https://gitlab.example.test/grp/proj/-/merge_requests/7")!
+
+        try store.connectMergeRequest(sessionID: id, url: url)
+
+        let session = try XCTUnwrap(store.session(withID: id))
+        XCTAssertTrue(session.artifacts.contains { $0.kind == .gitlabMergeRequest && $0.url == url })
+        XCTAssertEqual(
+            store.associations.session(for: url, kind: .gitlabMergeRequest, role: .reviewer, in: store.sessions)?.id,
+            id
+        )
+
+        try store.connectMergeRequest(sessionID: id, url: url)
+        XCTAssertEqual(
+            store.session(withID: id)?.artifacts.filter { $0.kind == .gitlabMergeRequest }.count, 1,
+            "connecting the same merge request twice is a no-op"
+        )
+    }
+
+    func testConnectMergeRequestRejectsANonMergeRequestURL() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Reject", workingDirectory: tmpDirectory("Reject"))
+
+        XCTAssertThrowsError(try store.connectMergeRequest(
+            sessionID: id,
+            url: URL(string: "https://gitlab.example.test/grp/proj/-/issues/3")!
+        )) { error in
+            XCTAssertEqual(error as? MergeRequestConnector.ConnectionError, .invalidURL)
+        }
+    }
+
     // MARK: - Ticket associations
 
     func testJiraSourceLaunchPersistsTicketAssociation() throws {

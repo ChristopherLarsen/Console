@@ -438,7 +438,7 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         )
 
         let session = try XCTUnwrap(stack.store.selectedSession)
-        XCTAssertEqual(session.name, "S-1234", "new-ticket launches render the story number as S-XXXX")
+        XCTAssertEqual(session.name, "NMA-1234", "new-ticket launches render the story number as NMA-XXXX")
         XCTAssertTrue(
             session.artifacts.contains { $0.label == "NMA-1234" && $0.kind == .jiraIssue },
             "the seeded Jira artifact keeps the full key so Home story matching still resolves"
@@ -501,6 +501,80 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             .map(\.utf8)
         XCTAssertEqual(sent, [
             "\u{15}\u{0B}/rename NMA-1234 Review",
+            "\r",
+            "\u{15}\u{0B}/color purple",
+            "\r",
+        ], "each command is submitted by its own carriage return")
+    }
+
+    func testSelfReviewLaunchUsesReviewAgentAndQueuesRenameAndColor() async throws {
+        let stack = makeStack()
+        try addWorkspace(
+            stack,
+            named: "SelfReviewHome",
+            gitRemote: "https://sentinel.example.test/grp/proj.git"
+        )
+
+        await stack.coordinator.beginSelfReview(
+            iid: Sentinel.mrIID,
+            title: Sentinel.mrTitle,
+            url: Sentinel.mrURL
+        )
+
+        let session = try XCTUnwrap(stack.store.selectedSession)
+        XCTAssertEqual(session.name, "MR-\(Sentinel.mrIID) Self Review")
+        XCTAssertEqual(session.purpose, .review)
+
+        let args = stack.launcher.lastArguments ?? []
+        XCTAssertTrue(args.contains("--agent"), "self review launches under an explicit agent")
+        XCTAssertEqual(args.firstIndex(of: "--agent").map { args[$0 + 1] }, SessionStore.reviewAgentName)
+        XCTAssertTrue(
+            stack.store.debugTerminalSendBytes.isEmpty,
+            "the rename and color commands wait for the bridge, never the pre-Claude shell"
+        )
+
+        stack.store.queuedCommandSpacing = 0
+        receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-self-review-naming")
+        let sent = stack.store.debugTerminalSendBytes
+            .filter { $0.sessionID == session.id }
+            .map(\.utf8)
+        XCTAssertEqual(sent, [
+            "\u{15}\u{0B}/rename MR-\(Sentinel.mrIID) Self Review",
+            "\r",
+            "\u{15}\u{0B}/color purple",
+            "\r",
+        ], "each command is submitted by its own carriage return")
+    }
+
+    func testAgentReviewLaunchUsesReviewAgentAndQueuesRenameAndColor() async throws {
+        let stack = makeStack()
+        try addWorkspace(
+            stack,
+            named: "AgentReviewHome",
+            gitRemote: "https://sentinel.example.test/grp/proj.git"
+        )
+
+        await stack.coordinator.beginAgentReview()
+
+        let session = try XCTUnwrap(stack.store.selectedSession)
+        XCTAssertEqual(session.name, "agent-review")
+        XCTAssertEqual(session.purpose, .review)
+
+        let args = stack.launcher.lastArguments ?? []
+        XCTAssertTrue(args.contains("--agent"), "agent review launches under an explicit agent")
+        XCTAssertEqual(args.firstIndex(of: "--agent").map { args[$0 + 1] }, SessionStore.reviewAgentName)
+        XCTAssertTrue(
+            stack.store.debugTerminalSendBytes.isEmpty,
+            "the rename and color commands wait for the bridge, never the pre-Claude shell"
+        )
+
+        stack.store.queuedCommandSpacing = 0
+        receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-agent-review-naming")
+        let sent = stack.store.debugTerminalSendBytes
+            .filter { $0.sessionID == session.id }
+            .map(\.utf8)
+        XCTAssertEqual(sent, [
+            "\u{15}\u{0B}/rename agent-review",
             "\r",
             "\u{15}\u{0B}/color purple",
             "\r",

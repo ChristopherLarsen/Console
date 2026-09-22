@@ -236,6 +236,13 @@ struct HomeBoardTicketCard: View {
                 }
 
                 Spacer(minLength: 4)
+
+                if let fixVersion = ticket.fixVersion {
+                    Text(fixVersion)
+                        .font(HomeCardMetrics.identityFont)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
 
             Text(ticket.summary)
@@ -290,6 +297,7 @@ struct HomeBoardTicketCard: View {
             ticket.key,
             ticket.summary,
             stateLine,
+            ticket.fixVersion,
         ]
         .compactMap { $0 }
         .joined(separator: ", ")

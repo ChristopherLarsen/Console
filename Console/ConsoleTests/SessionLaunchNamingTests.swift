@@ -52,12 +52,12 @@ final class SessionLaunchNamingTests: XCTestCase {
         )
     }
 
-    // MARK: - New-ticket display names (S-XXXX rule)
+    // MARK: - New-ticket display names (NMA-XXXX rule)
 
-    func testNMAKeysRenderAsSNames() {
-        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "NMA-1234"), "S-1234")
-        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "NMA-42"), "S-42")
-        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "nma-7"), "S-7")
+    func testNMAKeysKeepTheirFullKey() {
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "NMA-1234"), "NMA-1234")
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "NMA-42"), "NMA-42")
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "nma-7"), "NMA-7")
     }
 
     func testNonNMAKeysKeepTheirFullKey() {
@@ -81,9 +81,9 @@ final class SessionLaunchNamingTests: XCTestCase {
         XCTAssertNil(NewTicketSessionNaming.storyNumber(fromRaw: "fix login"))
     }
 
-    func testStoryNumberDisplayNameIsAlwaysTheSForm() {
-        XCTAssertEqual(NewTicketSessionNaming.displayName(forStoryNumber: "1234"), "S-1234")
-        XCTAssertEqual(NewTicketSessionNaming.displayName(forStoryNumber: "9"), "S-9")
+    func testStoryNumberDisplayNameIsAlwaysTheNMAForm() {
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forStoryNumber: "1234"), "NMA-1234")
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forStoryNumber: "9"), "NMA-9")
         XCTAssertEqual(NewTicketSessionNaming.jiraKey(forDisplayName: "S-1234"), "NMA-1234")
         XCTAssertEqual(NewTicketSessionNaming.jiraKey(forDisplayName: "s-9"), "NMA-9")
         XCTAssertNil(NewTicketSessionNaming.jiraKey(forDisplayName: "ENG-123"))

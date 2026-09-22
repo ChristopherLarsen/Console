@@ -3,19 +3,19 @@ import Foundation
 /// Why a session exists. Drives generated local names, icons, and
 /// remembered workspace choices. Source metadata never becomes a Claude prompt.
 enum SessionPurpose: String, Codable, CaseIterable {
+    case blank
     case newTicket
     case existingTicket
     case review
     case general
-    case blank
 
     var displayName: String {
         switch self {
         case .newTicket: return "New Ticket"
         case .existingTicket: return "Existing Ticket"
-        case .review: return "Review"
-        case .general: return "General"
-        case .blank: return "Blank"
+        case .review: return "Review an MR"
+        case .general: return "Agent NHL"
+        case .blank: return "New Terminal Session"
         }
     }
 
@@ -110,17 +110,21 @@ struct SessionCreationRequest: Equatable {
     let name: String
     let workingDirectory: URL
     let source: SessionLaunchSource?
+    /// Explicit Claude Code agent; nil falls back to the purpose's default.
+    let agent: String?
 
     init(
         purpose: SessionPurpose,
         name: String,
         workingDirectory: URL,
-        source: SessionLaunchSource? = nil
+        source: SessionLaunchSource? = nil,
+        agent: String? = nil
     ) {
         self.purpose = purpose
         self.name = name
         self.workingDirectory = workingDirectory
         self.source = source
+        self.agent = agent
     }
 }
 
@@ -144,16 +148,13 @@ struct SessionWorkspace: Identifiable, Codable, Equatable {
 // MARK: - New-ticket display names
 
 /// Display-name rules for new-ticket session creation. The story number is
-/// the identity the developer recognizes: `NMA-1234` renders as `S-1234`.
+/// the identity the developer recognizes: `NMA-1234` renders as `NMA-1234`.
 /// Any other project key keeps its full key. Local display only — the name
 /// never reaches Claude.
 nonisolated enum NewTicketSessionNaming {
-    /// `NMA-1234` → `S-1234`; any other key keeps its full uppercased key.
+    /// `NMA-1234` → `NMA-1234`; any other key keeps its full uppercased key.
     static func displayName(forJiraKey key: String) -> String {
-        if let match = key.firstMatch(of: /^(?i)NMA-(\d+)$/) {
-            return "S-\(match.1)"
-        }
-        return key.uppercased()
+        key.uppercased()
     }
 
     /// Parses user-typed story input — `1234`, `S-1234`, `NMA-1234`, or
@@ -168,15 +169,16 @@ nonisolated enum NewTicketSessionNaming {
         return nil
     }
 
-    /// Display name for a parsed story number: always the `S-` form, since
+    /// Display name for a parsed story number: always the `NMA-` form, since
     /// the picker's New Ticket step asks for NMA story numbers.
     static func displayName(forStoryNumber number: String) -> String {
         displayName(forJiraKey: "NMA-\(number)")
     }
 
-    /// Inverse of `displayName`: a new-ticket session display name `S-1234`
-    /// resolves back to its full Jira key `NMA-1234`. Any other name is
-    /// rejected so callers can fall through to generic key parsing.
+    /// Resolves a legacy Console new-ticket display name `S-1234` back to its
+    /// full Jira key `NMA-1234`. Current names are already full keys and need
+    /// no translation; anything unrecognized returns nil so callers can fall
+    /// through to generic key parsing.
     static func jiraKey(forDisplayName name: String) -> String? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let match = trimmed.firstMatch(of: /^(?i)S-(\d+)$/) else { return nil }
@@ -189,10 +191,9 @@ nonisolated enum NewTicketSessionNaming {
 /// Parses Jira keys and URLs out of strings the retained WebView already
 /// rendered. Results live only in memory.
 nonisolated enum JiraSourceContext {
-    /// Console renders a new-ticket session's `NMA-<n>` key as the local
-    /// `S-<n>` display form. Any key parsed out of a Console label, session
-    /// name, or title must resolve back to the real story key so every
-    /// Open in JIRA link and association points at `NMA-<n>`, never `S-<n>`.
+    /// Console names new-ticket sessions with the real story key `NMA-<n>`.
+    /// Legacy `S-<n>` names still resolve to the same key, so any key parsed
+    /// out of a Console label, session name, or title points at `NMA-<n>`.
     static func normalizedConsoleKey(_ key: String) -> String {
         NewTicketSessionNaming.jiraKey(forDisplayName: key) ?? key
     }

@@ -6,6 +6,7 @@ import SwiftUI
 struct SessionIntentPickerView: View {
     @Environment(SessionStore.self) private var store
     @Environment(SessionLaunchCoordinator.self) private var coordinator
+    @Environment(MRReviewScanScheduler.self) private var reviewScanScheduler: MRReviewScanScheduler?
     @Environment(\.dismiss) private var dismiss
 
     enum Step {
@@ -13,6 +14,7 @@ struct SessionIntentPickerView: View {
         case awaitingNewTicketNumber
         case awaitingJiraContext
         case awaitingMergeRequestContext
+        case awaitingSelfReviewContext
     }
 
     /// What one inline-context submission resolves to before launch: a
@@ -24,6 +26,8 @@ struct SessionIntentPickerView: View {
     }
 
     @State private var step: Step = .intents
+    /// Observed so the Self Review list updates as the shared scan lands.
+    @State private var scan = MRReviewScanController.shared
     @State private var draft: SessionDraft?
     @State private var isCustomizing = false
     @State private var customName = ""
@@ -36,6 +40,10 @@ struct SessionIntentPickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Text("New Session")
+                .font(.headline)
+                .accessibilityIdentifier("Sessions.Launcher.Title")
+
             switch step {
             case .intents:
                 intentRows
@@ -46,6 +54,8 @@ struct SessionIntentPickerView: View {
                 jiraContextStep
             case .awaitingMergeRequestContext:
                 mergeRequestContextStep
+            case .awaitingSelfReviewContext:
+                selfReviewContextStep
             }
 
             if let errorMessage {
@@ -68,7 +78,7 @@ struct SessionIntentPickerView: View {
             }
         }
         .padding(16)
-        .frame(width: 380)
+        .frame(width: 304)
         .sheet(isPresented: $showsPreviousSessions) {
             PreviousSessionsView(onFinished: { dismiss() })
                 .frame(
@@ -102,12 +112,28 @@ struct SessionIntentPickerView: View {
             Button {
                 errorMessage = nil
                 showsSettingsRoute = false
+                inlineError = nil
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    step = .awaitingSelfReviewContext
+                }
+            } label: {
+                selfReviewRowLabel
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("6")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Self Review. Pick one of your open merge requests to review yourself.")
+            .accessibilityIdentifier("Sessions.Launcher.SelfReview")
+
+            Button {
+                errorMessage = nil
+                showsSettingsRoute = false
                 showsPreviousSessions = true
             } label: {
                 resumeSessionRowLabel
             }
             .buttonStyle(.plain)
-            .keyboardShortcut("6")
+            .keyboardShortcut("7")
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Resume Session. Reopen a previous Claude conversation from its transcript history.")
             .accessibilityIdentifier("Sessions.Launcher.ResumeSession")
@@ -174,6 +200,35 @@ struct SessionIntentPickerView: View {
         .contentShape(Rectangle())
     }
 
+    private var selfReviewRowLabel: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "person.crop.circle.badge.checkmark")
+                .font(.system(size: 18))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 24)
+
+            Text("Self Review")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+
+            Spacer(minLength: 0)
+
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        )
+        .contentShape(Rectangle())
+    }
+
     private func showsInlineBadge(_ purpose: SessionPurpose) -> Bool {
         switch purpose {
         case .newTicket: return true
@@ -206,7 +261,7 @@ struct SessionIntentPickerView: View {
             }
 
         case .general:
-            launch(purpose: purpose, source: nil)
+            launch(purpose: purpose, source: nil, agent: SessionStore.newStoryAgentName)
 
         case .existingTicket:
             if let source = retainedJiraSource {
@@ -234,10 +289,12 @@ struct SessionIntentPickerView: View {
     private func launch(
         purpose: SessionPurpose,
         source: SessionLaunchSource?,
-        nameOverride: String? = nil
+        nameOverride: String? = nil,
+        agent: String? = nil
     ) {
         var resolvedDraft = coordinator.draft(purpose: purpose, source: source)
         resolvedDraft.name = nameOverride ?? effectiveName(for: resolvedDraft)
+        resolvedDraft.agent = agent
         draft = resolvedDraft
 
         Task { @MainActor in
@@ -263,11 +320,11 @@ struct SessionIntentPickerView: View {
     // MARK: - Inline context steps
 
     /// New Ticket always expands here: the story number is the only input,
-    /// and it names the session (`S-1234`). No ticket source is attached.
+    /// and it names the session (`NMA-1234`). No ticket source is attached.
     private var newTicketNumberStep: some View {
         inlineContextStep(
             title: "Start New Ticket",
-            caption: "Enter the NMA story number — the session is named S-1234. Type the work into Claude yourself.",
+            caption: "Enter the NMA story number — the session is named NMA-1234. Type the work into Claude yourself.",
             placeholder: "1234",
             purpose: .newTicket,
             identifierPrefix: "Sessions.Launcher.NewTicket"
@@ -283,7 +340,8 @@ struct SessionIntentPickerView: View {
             caption: "Enter a Jira issue key or URL to name the session. Type the work into Claude yourself.",
             placeholder: "ENG-123",
             purpose: .existingTicket,
-            identifierPrefix: "Sessions.Launcher.Jira"
+            identifierPrefix: "Sessions.Launcher.Jira",
+            prefill: "NMA-"
         ) { raw in
             guard let key = JiraSourceContext.parseKey(from: raw) else { return nil }
             let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
@@ -322,6 +380,11 @@ struct SessionIntentPickerView: View {
 
             HStack {
                 Spacer()
+                Button("Agent Review") {
+                    launchAgentReview()
+                }
+                .accessibilityIdentifier("\(reviewStepIdentifier).AgentReviewButton")
+
                 Button("Start Review") {
                     submitReviewContext()
                 }
@@ -403,6 +466,22 @@ struct SessionIntentPickerView: View {
         }
     }
 
+    /// Fresh review session with no merge request attached: launches under the
+    /// review agent, renames itself to "agent-review", and turns purple.
+    private func launchAgentReview() {
+        errorMessage = nil
+        showsSettingsRoute = false
+        Task { @MainActor in
+            await coordinator.beginAgentReview()
+            if coordinator.lastFailure == nil {
+                dismiss()
+            } else {
+                errorMessage = coordinator.lastFailure?.message
+                showsSettingsRoute = coordinator.lastFailure?.offersSettingsRoute ?? false
+            }
+        }
+    }
+
     private func reviewCandidateRow(_ item: MergeRequestSummary) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.triangle.merge")
@@ -457,6 +536,123 @@ struct SessionIntentPickerView: View {
         return parts.joined(separator: ", ")
     }
 
+    // MARK: - Self Review
+
+    private var selfReviewStepIdentifier: String { "Sessions.Launcher.SelfReview" }
+
+    /// The user's own open merge requests, from the same shared scan the Home
+    /// authored panel and notifications read.
+    private var selfReviewCandidates: [AuthoredMRAttention] {
+        scan.authoredItems
+    }
+
+    private var selfReviewContextStep: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            inlineBackButton(identifierPrefix: selfReviewStepIdentifier)
+
+            Text("Start Self Review")
+                .font(.headline)
+            Text("Pick one of your open merge requests. Starts a review session named MR-XXXX Self Review.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if selfReviewCandidates.isEmpty {
+                Text("No open merge requests authored by you.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("\(selfReviewStepIdentifier).Empty")
+            } else {
+                ScrollView {
+                    VStack(spacing: 6) {
+                        ForEach(Array(selfReviewCandidates.enumerated()), id: \.element.id) { index, item in
+                            Button {
+                                launchSelfReview(item)
+                            } label: {
+                                selfReviewCandidateRow(item)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(selfReviewCandidateAccessibilityLabel(item))
+                            .accessibilityIdentifier("\(selfReviewStepIdentifier).Candidate.\(index)")
+                        }
+                    }
+                }
+                .frame(maxHeight: 300)
+            }
+        }
+        .onAppear {
+            reviewScanScheduler?.scanOnAppearance()
+        }
+    }
+
+    private func launchSelfReview(_ item: AuthoredMRAttention) {
+        errorMessage = nil
+        showsSettingsRoute = false
+        Task { @MainActor in
+            await coordinator.beginSelfReview(
+                iid: String(item.iid),
+                title: item.title,
+                url: item.url
+            )
+            if coordinator.lastFailure == nil {
+                dismiss()
+            } else {
+                errorMessage = coordinator.lastFailure?.message
+                showsSettingsRoute = coordinator.lastFailure?.offersSettingsRoute ?? false
+            }
+        }
+    }
+
+    private func selfReviewCandidateRow(_ item: AuthoredMRAttention) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.triangle.merge")
+                .font(.caption)
+                .foregroundStyle(Color.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("MR-\(item.iid)")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    if let key = item.jiraIssueKey {
+                        Text(key)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(item.project)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Text(item.title)
+                    .font(.system(size: 12))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        )
+        .contentShape(Rectangle())
+    }
+
+    private func selfReviewCandidateAccessibilityLabel(_ item: AuthoredMRAttention) -> String {
+        var parts: [String] = ["Self review merge request MR-\(item.iid)"]
+        parts.append(item.title)
+        parts.append(item.project)
+        if let key = item.jiraIssueKey { parts.append(key) }
+        return parts.joined(separator: ", ")
+    }
+
     private func inlineBackButton(identifierPrefix: String) -> some View {
         Button {
             withAnimation(.easeInOut(duration: 0.15)) {
@@ -479,6 +675,7 @@ struct SessionIntentPickerView: View {
         placeholder: String,
         purpose: SessionPurpose,
         identifierPrefix: String,
+        prefill: String = "",
         parse: @escaping (String) -> InlineLaunch?
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -528,9 +725,10 @@ struct SessionIntentPickerView: View {
             }
         }
         .onAppear {
-            // The story number is the only input on this step; land the
-            // caret without a click. The async hop lets the popover finish
-            // presenting before focus lands.
+            // Land the caret without a click, and seed the field with the
+            // step's prefix when it is still empty. The async hop lets the
+            // popover finish presenting before focus lands.
+            if inlineContext.isEmpty { inlineContext = prefill }
             DispatchQueue.main.async { isInlineFieldFocused = true }
         }
     }

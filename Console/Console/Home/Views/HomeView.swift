@@ -176,7 +176,12 @@ struct HomeView: View {
                 HomeCardAction(label: isLaunching ? "Starting…" : "Start story") {
                     guard !isLaunching else { return }
                     Task {
-                        await model.continueTicket(story, sessions: sessions, associations: sessionStore?.associations)
+                        await model.continueTicket(
+                            story,
+                            sessions: sessions,
+                            associations: sessionStore?.associations,
+                            agent: SessionStore.newStoryAgentName
+                        )
                     }
                 }
             ],
@@ -535,12 +540,13 @@ struct HomeView: View {
             sessionStore?.select(sessionID: id)
             ConsoleNavigation.showSessions()
         }
-        model.startSessionHandler = { [launchCoordinator] key, title, url in
+        model.startSessionHandler = { [launchCoordinator] key, title, url, agent in
             await launchCoordinator.beginJiraTicketLaunch(
                 key: key,
                 title: title,
                 url: url,
-                displayName: NewTicketSessionNaming.displayName(forJiraKey: key)
+                displayName: NewTicketSessionNaming.displayName(forJiraKey: key),
+                agent: agent
             )
         }
         model.refreshJiraHandler = { [sources] in

@@ -32,9 +32,10 @@ struct SessionHistoryRecord: Identifiable, Equatable {
 /// Console associations and ticket-style custom titles classify as tickets —
 /// a ticket mentioned incidentally in a conversation never colors a card.
 nonisolated enum SessionTicketClassification {
-    /// Console names new-ticket sessions `S-1234`.
+    /// Console names new-ticket sessions with the story key (`NMA-1234`);
+    /// legacy `S-1234` names are still recognized.
     static func consoleStoryName(_ title: String) -> Bool {
-        title.firstMatch(of: /^S-\d+$/) != nil
+        title.firstMatch(of: /^(?i)(S|NMA)-\d+$/) != nil
     }
 
     /// `SCRUM-9`, `NMA-1234`-style keys appearing in a custom title.
@@ -44,7 +45,7 @@ nonisolated enum SessionTicketClassification {
     }
 
     /// Saved associations win; otherwise only a ticket-style custom title
-    /// counts — Console's `S-1234` naming or `SCRUM-9`-style keys.
+    /// counts — Console's `NMA-1234` naming or `SCRUM-9`-style keys.
     /// Summaries and first user messages are deliberately ignored so
     /// incidental mentions never classify a session.
     static func ticketKey(

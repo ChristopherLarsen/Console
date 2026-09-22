@@ -11,6 +11,7 @@ struct SessionListRow: View {
     let onTerminate: () -> Void
     let onRemove: () -> Void
     let onRename: () -> Void
+    let onAttachGitLab: () -> Void
 
     var body: some View {
         HStack(spacing: 6) {
@@ -85,6 +86,14 @@ struct SessionListRow: View {
                         .lineLimit(1)
                 }
 
+                if let mergeRequestLabel {
+                    Text(mergeRequestLabel)
+                        .font(.caption2.monospaced())
+                        .lineLimit(1)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("SessionRow.MergeRequest.\(session.id.uuidString)")
+                }
+
                 Text(session.workingDirectory.lastPathComponent)
                     .font(.caption2)
                     .lineLimit(1)
@@ -115,11 +124,28 @@ struct SessionListRow: View {
             } else {
                 Button("Remove", action: onRemove)
             }
+            Button("Attach GitLab", action: onAttachGitLab)
+                .accessibilityIdentifier("Sessions.AttachGitLab")
         }
     }
 
+    /// The session's associated merge request as `MR !<iid>`, from the URL when
+    /// it parses, otherwise from the artifact label. Nil when none is attached.
+    private var mergeRequestLabel: String? {
+        guard let artifact = session.artifacts.last(where: { $0.kind == .gitlabMergeRequest }) else {
+            return nil
+        }
+        if let url = artifact.url, let info = GitLabSourceContext.parseMergeRequest(fromURL: url) {
+            return "MR !\(info.iid)"
+        }
+        if let match = artifact.label.firstMatch(of: /(\d+)/) {
+            return "MR !\(match.1)"
+        }
+        return artifact.label.isEmpty ? nil : artifact.label
+    }
+
     private var accessibilityRowLabel: String {
-        "\(purposePrefix)\(session.name), \(session.workingDirectory.lastPathComponent), \(displayedState.label)\(showsAttentionBadge ? ", needs attention" : "")"
+        "\(purposePrefix)\(session.name)\(mergeRequestLabel.map { ", \($0)" } ?? ""), \(session.workingDirectory.lastPathComponent), \(displayedState.label)\(showsAttentionBadge ? ", needs attention" : "")"
     }
 
     private var purposePrefix: String {

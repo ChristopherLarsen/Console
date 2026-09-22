@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The single attention channel every Home card renders as its 6pt dot and
 /// its tinted state text. One meaning per colour across all four panels
-/// (Design/HomeCards/DESIGN_PROMPT.md §3): red means "needs you", orange "in
+/// (Design/HomeCards/DESIGN_PROMPT.md §3): red means "needs you", navy "in
 /// flight", blue "active", dark green "testing", green "clear", grey "parked".
 ///
 /// This file is the only place a card decides a state colour. The session
@@ -17,6 +17,9 @@ enum AttentionChannel: Sendable, Equatable {
     case clear
     case parked
 
+    /// Navy (#003366) for the in-flight channel.
+    static let inFlightColor = Color(red: 0, green: 51.0 / 255.0, blue: 102.0 / 255.0)
+
     /// Dark green (#006400) for the testing channel; the clear channel uses
     /// the app-wide `consoleGreen` (#007F00); the rest use system palette
     /// colours.
@@ -25,7 +28,7 @@ enum AttentionChannel: Sendable, Equatable {
     var color: Color {
         switch self {
         case .needsYou: return .red
-        case .inFlight: return .orange
+        case .inFlight: return Self.inFlightColor
         case .testing: return Self.testingColor
         case .active: return .blue
         case .clear: return .consoleGreen

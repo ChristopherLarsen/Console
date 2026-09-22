@@ -318,6 +318,10 @@ final class SessionHistoryTests: XCTestCase {
             SessionTicketClassification.ticketKey(savedAssociation: nil, title: "S-1234", isCustomTitle: true),
             "S-1234"
         )
+        XCTAssertEqual(
+            SessionTicketClassification.ticketKey(savedAssociation: nil, title: "NMA-1234", isCustomTitle: true),
+            "NMA-1234"
+        )
         // A ticket mentioned in a summary or first message never classifies.
         XCTAssertNil(
             SessionTicketClassification.ticketKey(
@@ -332,6 +336,7 @@ final class SessionHistoryTests: XCTestCase {
             SessionTicketClassification.ticketKey(savedAssociation: nil, title: "fix scrum-9 now", isCustomTitle: true)
         )
         XCTAssertTrue(SessionTicketClassification.consoleStoryName("S-1234"))
+        XCTAssertTrue(SessionTicketClassification.consoleStoryName("NMA-1234"))
         XCTAssertFalse(SessionTicketClassification.consoleStoryName("S-12x4"))
     }
 

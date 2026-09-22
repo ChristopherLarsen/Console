@@ -9,7 +9,8 @@ final class JiraListExtractorTests: XCTestCase {
         priority: String?,
         updated: String?,
         url: String? = nil,
-        type: String? = nil
+        type: String? = nil,
+        fixVersion: String? = nil
     ) -> JiraListExtractor.ExtractedRow {
         JiraListExtractor.ExtractedRow(
             key: key,
@@ -18,14 +19,15 @@ final class JiraListExtractorTests: XCTestCase {
             priority: priority,
             updated: updated,
             url: url ?? "https://jira.example.com/browse/\(key ?? "UNKNOWN")",
-            type: type
+            type: type,
+            fixVersion: fixVersion
         )
     }
 
     func testTicketsDecodeWithAllFieldsPreserved() throws {
         let data = Data("""
         {"kind":"tickets","rows":[
-          {"key":"DEMO-101","summary":"Fix background refresh after sign-in","status":"In Progress","priority":"High","updated":"Updated 2h","type":"Bug","url":"https://jira.example.com/browse/DEMO-101"}
+          {"key":"DEMO-101","summary":"Fix background refresh after sign-in","status":"In Progress","priority":"High","updated":"Updated 2h","type":"Bug","fixVersion":"V17.1","url":"https://jira.example.com/browse/DEMO-101"}
         ]}
         """.utf8)
 
@@ -41,6 +43,7 @@ final class JiraListExtractorTests: XCTestCase {
         XCTAssertEqual(tickets[0].priority, "High")
         XCTAssertEqual(tickets[0].updatedText, "Updated 2h")
         XCTAssertEqual(tickets[0].issueType, "Bug")
+        XCTAssertEqual(tickets[0].fixVersion, "V17.1")
         XCTAssertEqual(tickets[0].issueURL.absoluteString, "https://jira.example.com/browse/DEMO-101")
         XCTAssertEqual(tickets[0].sourceOrder, 0)
     }
@@ -94,7 +97,8 @@ final class JiraListExtractorTests: XCTestCase {
             priority: "none",
             updated: "",
             url: "https://jira.example.com/browse/DEMO-7",
-            type: " Bug "
+            type: " Bug ",
+            fixVersion: "  V17.1 "
         )
 
         let tickets = JiraListExtractor.summaries(from: [messy])
@@ -105,6 +109,15 @@ final class JiraListExtractorTests: XCTestCase {
         XCTAssertNil(tickets[0].priority)
         XCTAssertNil(tickets[0].updatedText)
         XCTAssertEqual(tickets[0].issueType, "Bug")
+        XCTAssertEqual(tickets[0].fixVersion, "V17.1")
+    }
+
+    func testMissingFixVersionDecodesAsNil() {
+        let data = Data(#"{"kind":"tickets","rows":[{"key":"DEMO-1","summary":"no version","url":"https://jira.example.com/browse/DEMO-1"}]}"#.utf8)
+        guard case let .tickets(tickets) = JiraListExtractor.decode(payloadData: data) else {
+            return XCTFail("expected tickets")
+        }
+        XCTAssertNil(tickets[0].fixVersion)
     }
 
     func testTicketsPayloadWithAllRowsDroppedIsFailureNeverFalseEmpty() {

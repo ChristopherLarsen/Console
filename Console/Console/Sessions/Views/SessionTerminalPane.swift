@@ -41,17 +41,20 @@ struct SessionTerminalPane: View {
     }
 
     private var showsInfoStrip: Bool {
-        session.summary != nil || !infoStripArtifacts.isEmpty
+        session.summary != nil
     }
 
     /// The session's most recent merge-request artifact, rendered as the
-    /// tappable header badge. The info strip deliberately excludes it.
+    /// tappable header badge.
     private var mergeRequestArtifact: SessionArtifact? {
         session.artifacts.last { $0.kind == .gitlabMergeRequest }
     }
 
-    private var infoStripArtifacts: [SessionArtifact] {
-        session.artifacts.filter { $0.kind != .gitlabMergeRequest }
+    /// Solid fill for the state badge: each state's own channel colour, with
+    /// the neutral parked channel (Idle, Starting, Exited, Unknown) falling
+    /// back to black. Paired with white text so the label always reads.
+    private var stateBadgeColor: SwiftUI.Color {
+        displayedState.attentionChannel == .parked ? .black : displayedState.tint
     }
 
     private var header: some View {
@@ -66,8 +69,8 @@ struct SessionTerminalPane: View {
                     .font(.caption)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Capsule().fill(displayedState.tint.opacity(0.15)))
-                    .foregroundStyle(displayedState.tint)
+                    .background(Capsule().fill(stateBadgeColor))
+                    .foregroundStyle(.white)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Session \(session.name), \(displayedState.label)")
@@ -81,12 +84,13 @@ struct SessionTerminalPane: View {
             if let url = HomeStorySessionMatcher.jiraURL(
                 for: session, configuredURL: webViewJiraURL, reviewItems: MRReviewScanController.shared.items
             ) {
-                ServiceCapsuleButton(.jira) {
+                let storyKey = JiraSourceContext.parseIssueKey(fromURL: url)
+                ServiceCapsuleButton(.jira, title: storyKey) {
                     JiraDeepLink.shared.set(url: url)
                     ConsoleNavigation.show(.jira)
                 }
-                .help("Open this session's ticket in Jira")
-                .accessibilityLabel("Open in Jira")
+                .help(storyKey.map { "Open \($0) in Jira" } ?? "Open this session's ticket in Jira")
+                .accessibilityLabel(storyKey.map { "Open \($0) in Jira" } ?? "Open in Jira")
                 .accessibilityIdentifier("Sessions.OpenInJira")
             }
 
@@ -114,17 +118,28 @@ struct SessionTerminalPane: View {
     @ViewBuilder
     private var mergeRequestBadge: some View {
         if let artifact = mergeRequestArtifact {
+            let label = mergeRequestLabel(for: artifact)
             ServiceCapsuleButton(
                 .mergeRequest,
-                title: artifact.label,
+                title: label,
                 isDisabled: artifact.url == nil
             ) {
                 openMergeRequest(artifact)
             }
             .help("Review this merge request in GitLab")
-            .accessibilityLabel("Review \(artifact.label) in GitLab")
+            .accessibilityLabel("Review \(label) in GitLab")
             .accessibilityIdentifier("Sessions.MergeRequestBadge")
         }
+    }
+
+    /// Always the "MR !<iid>" form, derived from the merge-request URL so a
+    /// bridge-supplied label can never surface a generic title; falls back to
+    /// the artifact's own label when no parsable MR URL is present.
+    private func mergeRequestLabel(for artifact: SessionArtifact) -> String {
+        if let url = artifact.url, let info = GitLabSourceContext.parseMergeRequest(fromURL: url) {
+            return "MR !\(info.iid)"
+        }
+        return artifact.label
     }
 
     /// Queues the MR URL as a new-tab handoff and switches to the GitLab
@@ -281,14 +296,9 @@ private struct SessionInstrumentationWarning: View {
     }
 }
 
-/// Compact strip showing the latest summary/attention message and up to two
-/// artifact chips plus an overflow count. Chips are informational only.
-/// Merge-request artifacts are excluded: they render as the tappable header
-/// badge in `SessionTerminalPane` instead.
+/// Compact strip showing the session's latest summary/attention message.
 struct SessionInfoStrip: View {
     let session: ConsoleSession
-
-    private static let maxVisibleChips = 2
 
     var body: some View {
         HStack(spacing: 6) {
@@ -305,29 +315,6 @@ struct SessionInfoStrip: View {
             }
 
             Spacer(minLength: 8)
-
-            ForEach(chips) { artifact in
-                HStack(spacing: 3) {
-                    Image(systemName: icon(for: artifact.kind))
-                        .font(.caption2)
-                    Text(artifact.label)
-                        .font(.caption)
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    Capsule().fill(Color(nsColor: .controlBackgroundColor))
-                )
-                .overlay(Capsule().stroke(Color(nsColor: .separatorColor), lineWidth: 0.5))
-                .help("Artifact (informational): \(artifact.label)")
-            }
-
-            if overflowCount > 0 {
-                Text("+\(overflowCount)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
@@ -335,25 +322,6 @@ struct SessionInfoStrip: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("Sessions.InfoStrip")
-    }
-
-    private var stripArtifacts: [SessionArtifact] {
-        session.artifacts.filter { $0.kind != .gitlabMergeRequest }
-    }
-
-    private var chips: [SessionArtifact] {
-        Array(stripArtifacts.suffix(Self.maxVisibleChips))
-    }
-
-    private var overflowCount: Int {
-        max(0, stripArtifacts.count - Self.maxVisibleChips)
-    }
-
-    private func icon(for kind: SessionArtifactKind) -> String {
-        switch kind {
-        case .jiraIssue: return "ticket"
-        case .gitlabMergeRequest: return "arrow.triangle.merge"
-        }
     }
 }
 

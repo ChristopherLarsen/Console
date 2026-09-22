@@ -13,6 +13,10 @@ struct SessionsView: View {
     @State private var pendingStopConfirmationID: UUID?
     @State private var pendingRenameID: UUID?
     @State private var renameText = ""
+    @State private var connectingGitLabID: UUID?
+    @State private var gitLabURLText = ""
+    @State private var gitLabConnectError: String?
+    @State private var gitLabMergeRequests: [AttachableMergeRequest] = []
     @State private var listResizeStartWidth: CGFloat = SessionWorkspaceLayout.listIdealWidth
     @State private var isResizingList = false
 
@@ -115,6 +119,19 @@ struct SessionsView: View {
             Button("Cancel", role: .cancel) {
                 pendingRenameID = nil
             }
+        }
+        .sheet(isPresented: Binding(
+            get: { connectingGitLabID != nil },
+            set: { if !$0 { connectingGitLabID = nil; gitLabConnectError = nil; gitLabMergeRequests = [] } }
+        )) {
+            ConnectMergeRequestSheet(
+                urlText: $gitLabURLText,
+                errorText: gitLabConnectError,
+                mergeRequests: gitLabMergeRequests,
+                onPick: attachMergeRequest,
+                onConnect: attachTypedMergeRequest,
+                onCancel: { connectingGitLabID = nil; gitLabConnectError = nil }
+            )
         }
         .onChange(of: store.selectedSessionID) { _, newID in
             if let newID {
@@ -314,7 +331,8 @@ struct SessionsView: View {
                         onRename: {
                             renameText = session.name
                             pendingRenameID = session.id
-                        }
+                        },
+                        onAttachGitLab: { attachGitLab(session) }
                     )
                 }
             }
@@ -361,6 +379,79 @@ struct SessionsView: View {
     }
 
     // MARK: - Terminate flow
+
+    // MARK: - Attach GitLab
+
+    /// Opens the attach sheet for the session. A single known candidate is
+    /// pre-filled as a convenience; the user can replace it with any merge
+    /// request URL or number, which is resolved and attached on confirm.
+    private func attachGitLab(_ session: ConsoleSession) {
+        let candidates = mergeRequestCandidates(for: session)
+        gitLabURLText = candidates.count == 1 ? (candidates.first?.absoluteString ?? "") : ""
+        gitLabConnectError = nil
+        gitLabMergeRequests = attachableMergeRequests()
+        connectingGitLabID = session.id
+    }
+
+    private func mergeRequestCandidates(for session: ConsoleSession) -> [URL] {
+        MergeRequestConnector.candidates(
+            for: session,
+            associations: store.associations,
+            reviewItems: MRReviewScanController.shared.items,
+            authoredItems: MRReviewScanController.shared.authoredItems
+        )
+    }
+
+    /// Every currently open merge request the user could attach: the shared
+    /// scan's review queue (most urgent first), then the authored list,
+    /// de-duplicated by URL.
+    private func attachableMergeRequests() -> [AttachableMergeRequest] {
+        let review = HomeBoardBuilder.reviewQueue(in: MRReviewScanController.shared.items).compactMap { item -> AttachableMergeRequest? in
+            guard let iid = item.iidText else { return nil }
+            return AttachableMergeRequest(
+                iid: iid,
+                jiraKey: ReviewLaunchResolver.jiraIssueKey(for: item),
+                title: item.title,
+                url: item.mergeRequestURL
+            )
+        }
+        let authored = MRReviewScanController.shared.authoredItems.map { item in
+            AttachableMergeRequest(
+                iid: String(item.iid),
+                jiraKey: item.jiraIssueKey,
+                title: item.title,
+                url: item.url
+            )
+        }
+        var seen = Set<URL>()
+        return (review + authored).filter { seen.insert($0.url).inserted }
+    }
+
+    /// One-click attach from the open-merge-request list: fills the field and
+    /// runs the same resolution/attach path as manual entry.
+    private func attachMergeRequest(_ item: AttachableMergeRequest) {
+        gitLabURLText = item.url.absoluteString
+        attachTypedMergeRequest()
+    }
+
+    private func attachTypedMergeRequest() {
+        guard let id = connectingGitLabID,
+              let session = store.session(withID: id) else { return }
+        guard let url = MergeRequestConnector.resolveMergeRequestURL(
+            from: gitLabURLText,
+            candidates: mergeRequestCandidates(for: session)
+        ) else {
+            gitLabConnectError = MergeRequestConnector.ConnectionError.invalidURL.errorDescription
+            return
+        }
+        do {
+            try store.connectMergeRequest(sessionID: id, url: url)
+            connectingGitLabID = nil
+            gitLabConnectError = nil
+        } catch {
+            gitLabConnectError = error.localizedDescription
+        }
+    }
 
     private func requestTerminate(_ session: ConsoleSession) {
         let state = displayedSessionState(activity: session.activity, attention: session.attention)

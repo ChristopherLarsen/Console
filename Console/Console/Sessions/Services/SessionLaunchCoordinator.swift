@@ -7,6 +7,8 @@ struct SessionDraft: Equatable {
     let purpose: SessionPurpose
     let source: SessionLaunchSource?
     var name: String
+    /// Claude Code agent this launch runs under; nil keeps the purpose default.
+    var agent: String? = nil
 }
 
 /// Actionable failure from a contextual launch. Views present `message` and,
@@ -124,12 +126,13 @@ final class SessionLaunchCoordinator {
     // MARK: - Typed entry points for browser toolbars / future cards
 
     /// `displayName` overrides the automatic key-based session name. Home's
-    /// new-ticket card passes the new-ticket rule (`NMA-1234` → `S-1234`);
+    /// new-ticket card passes the new-ticket rule (`NMA-1234` → `NMA-1234`);
     /// Jira-panel launches keep the automatic key name.
-    func beginJiraTicketLaunch(key: String, title: String?, url: URL?, displayName: String? = nil) async {
+    func beginJiraTicketLaunch(key: String, title: String?, url: URL?, displayName: String? = nil, agent: String? = nil) async {
         let source = SessionLaunchSource.jira(key: key, title: title, url: url)
         var prepared = draft(purpose: .existingTicket, source: source)
         if let displayName { prepared.name = displayName }
+        prepared.agent = agent
         await startContextualLaunch(prepared)
     }
 
@@ -158,6 +161,36 @@ final class SessionLaunchCoordinator {
         let sessionID = await startContextualLaunch(prepared)
         guard let displayName, let sessionID,
               let session = store.session(withID: sessionID) else { return }
+        store.queueSlashCommand("/rename \(session.name)", for: sessionID)
+        store.queueSlashCommand("/color purple", for: sessionID)
+    }
+
+    /// Self Review: a fresh review session for one of the user's own open
+    /// merge requests. Always runs under the review agent and always creates a
+    /// new session, queuing `/rename MR-<iid> Self Review` plus `/color
+    /// purple` so the running Claude Code session matches the local name.
+    func beginSelfReview(iid: String, title: String?, url: URL) async {
+        lastFailure = nil
+        let source = SessionLaunchSource.mergeRequest(iid: iid, title: title, url: url)
+        var prepared = draft(purpose: .review, source: source)
+        prepared.name = "MR-\(iid) Self Review"
+        prepared.agent = SessionStore.reviewAgentName
+        let sessionID = await startContextualLaunch(prepared)
+        guard let sessionID, let session = store.session(withID: sessionID) else { return }
+        store.queueSlashCommand("/rename \(session.name)", for: sessionID)
+        store.queueSlashCommand("/color purple", for: sessionID)
+    }
+
+    /// Agent Review: a fresh review session with no merge request attached.
+    /// Runs under the review agent, names itself `agent-review`, and queues
+    /// `/rename agent-review` plus `/color purple`.
+    func beginAgentReview() async {
+        lastFailure = nil
+        var prepared = draft(purpose: .review, source: nil)
+        prepared.name = SessionStore.reviewAgentName
+        prepared.agent = SessionStore.reviewAgentName
+        let sessionID = await startContextualLaunch(prepared)
+        guard let sessionID, let session = store.session(withID: sessionID) else { return }
         store.queueSlashCommand("/rename \(session.name)", for: sessionID)
         store.queueSlashCommand("/color purple", for: sessionID)
     }
@@ -296,7 +329,8 @@ final class SessionLaunchCoordinator {
                 purpose: draft.purpose,
                 name: draft.name,
                 workingDirectory: folder.directoryURL,
-                source: draft.source
+                source: draft.source,
+                agent: draft.agent
             ))
         )
     }

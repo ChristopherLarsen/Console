@@ -11,6 +11,9 @@ nonisolated struct JiraTicketSummary: Identifiable, Equatable, Sendable {
     /// Host-rendered issue type ("Bug", "Feature", "Story", …); nil when the
     /// board does not expose a type column or icon.
     let issueType: String?
+    /// Host-rendered fix version ("V17.1", "24.10"); nil when the board does
+    /// not expose a fix-version column.
+    let fixVersion: String?
 
     var id: String { key }
 
@@ -22,7 +25,8 @@ nonisolated struct JiraTicketSummary: Identifiable, Equatable, Sendable {
         updatedText: String?,
         issueURL: URL,
         sourceOrder: Int,
-        issueType: String? = nil
+        issueType: String? = nil,
+        fixVersion: String? = nil
     ) {
         self.key = key
         self.summary = summary
@@ -32,5 +36,6 @@ nonisolated struct JiraTicketSummary: Identifiable, Equatable, Sendable {
         self.issueURL = issueURL
         self.sourceOrder = sourceOrder
         self.issueType = issueType
+        self.fixVersion = fixVersion
     }
 }

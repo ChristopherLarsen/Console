@@ -166,6 +166,41 @@ final class SessionsPackagingTests: XCTestCase {
         XCTAssertFalse(args.contains("--agent"))
     }
 
+    @MainActor
+    func testNewStoryRequestSelectsTheNewStoryAgentArguments() {
+        let request = SessionCreationRequest(
+            purpose: .existingTicket,
+            name: "NMA-1234",
+            workingDirectory: URL(fileURLWithPath: "/tmp"),
+            agent: SessionStore.newStoryAgentName
+        )
+        let args = SessionStore.launchArguments(
+            claudeSessionID: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
+            pluginDirectory: nil,
+            agent: SessionStore.agent(for: request)
+        )
+
+        let agentIndex = args.firstIndex(of: "--agent")
+        XCTAssertEqual(agentIndex.map { args[$0 + 1] }, "agent-nhl")
+    }
+
+    @MainActor
+    func testReviewPurposeStillDefaultsToTheReviewAgent() {
+        let request = SessionCreationRequest(
+            purpose: .review,
+            name: "NMA-1234 Review",
+            workingDirectory: URL(fileURLWithPath: "/tmp")
+        )
+        XCTAssertEqual(SessionStore.agent(for: request), SessionStore.reviewAgentName)
+
+        let plain = SessionCreationRequest(
+            purpose: .general,
+            name: "General",
+            workingDirectory: URL(fileURLWithPath: "/tmp")
+        )
+        XCTAssertNil(SessionStore.agent(for: plain))
+    }
+
     func testAssemblerSeamThrowsWithoutWritingAPlugin() throws {
         struct FailingAssembler: ConsoleClaudePluginAssembling {
             func materialize(in baseDirectory: URL) throws -> URL {

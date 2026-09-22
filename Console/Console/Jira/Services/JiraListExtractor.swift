@@ -18,6 +18,7 @@ struct JiraListExtractor {
         let updated: String?
         let url: String?
         let type: String?
+        let fixVersion: String?
     }
 
     struct Payload: Decodable {
@@ -71,7 +72,8 @@ struct JiraListExtractor {
                     updatedText: normalized(row.updated),
                     issueURL: url,
                     sourceOrder: result.count,
-                    issueType: normalized(row.type)
+                    issueType: normalized(row.type),
+                    fixVersion: normalized(row.fixVersion)
                 )
             )
         }
@@ -180,6 +182,7 @@ extension JiraListExtractor {
       if (t.indexOf('priority') >= 0) { return 'priority'; }
       if (t.indexOf('status') >= 0) { return 'status'; }
       if (t.indexOf('updated') >= 0) { return 'updated'; }
+      if (t.indexOf('fix') >= 0) { return 'fixVersion'; }
       if (t.indexOf('type') >= 0) { return 'type'; }
       return null;
     }
@@ -229,6 +232,7 @@ extension JiraListExtractor {
       let priority = null;
       let updated = null;
       let type = null;
+      let fixVersion = null;
       if (tr.cells) {
         for (let i = 0; i < tr.cells.length; i++) {
           const semantic = columnByIndex[i];
@@ -239,6 +243,7 @@ extension JiraListExtractor {
           else if (semantic === 'priority' && priority === null) { priority = value; }
           else if (semantic === 'updated' && updated === null) { updated = value; }
           else if (semantic === 'type' && type === null) { type = value; }
+          else if (semantic === 'fixVersion' && fixVersion === null) { fixVersion = value; }
         }
       }
       if (!type) {
@@ -257,6 +262,7 @@ extension JiraListExtractor {
         priority: priority,
         updated: updated,
         type: type,
+        fixVersion: fixVersion,
         url: href
       });
     });

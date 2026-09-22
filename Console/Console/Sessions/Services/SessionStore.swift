@@ -364,7 +364,7 @@ final class SessionStore {
                 claudeSessionID: claudeID,
                 pluginDirectory: pluginRoot.path,
                 resume: record != nil,
-                agent: request.purpose == .review ? Self.reviewAgentName : nil
+                agent: Self.agent(for: request)
             )
             environment = childEnvironment(
                 bridgeEnvironment: [
@@ -383,7 +383,7 @@ final class SessionStore {
                 claudeSessionID: claudeID,
                 pluginDirectory: nil,
                 resume: record != nil,
-                agent: request.purpose == .review ? Self.reviewAgentName : nil
+                agent: Self.agent(for: request)
             )
             environment = childEnvironment(bridgeEnvironment: [:])
             bridgeStatus = .unavailable
@@ -530,6 +530,16 @@ final class SessionStore {
     /// Claude Code agent every review session runs under. The agent is
     /// expected to exist in the user's Claude configuration.
     static let reviewAgentName = "agent-review"
+
+    /// Claude Code agent Home's Next-up "Start story" launches run under. The
+    /// agent is expected to exist in the user's Claude configuration.
+    static let newStoryAgentName = "agent-nhl"
+
+    /// The agent a launch runs under: an explicit request agent wins, otherwise
+    /// the purpose's default (review sessions use the review agent).
+    static func agent(for request: SessionCreationRequest) -> String? {
+        request.agent ?? (request.purpose == .review ? reviewAgentName : nil)
+    }
 
     /// Exact launch arguments: Claude session identity with bypassed
     /// permission prompts, an optional named agent, and when a plugin
@@ -1273,6 +1283,32 @@ final class SessionStore {
         try associations.remember(record: .init(claudeSessionID: session.claudeSessionID,
             name: session.name, workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general),
             artifacts: artifacts, authoredMR: item.url)
+        refreshWorkArtifactProjections()
+    }
+
+    /// Attaches an existing GitLab merge request to a session so its header
+    /// badge and the review hand-off point at it. The URL is validated as a
+    /// merge request; a merge request already attached is left untouched.
+    func connectMergeRequest(sessionID: UUID, url: URL) throws {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
+            throw MergeRequestConnector.ConnectionError.sessionMissing
+        }
+        guard let identity = MergeRequestConnector.mergeRequestIdentity(url),
+              let info = GitLabSourceContext.parseMergeRequest(fromURL: url) else {
+            throw MergeRequestConnector.ConnectionError.invalidURL
+        }
+        let alreadyConnected = sessions[index].artifacts.contains { artifact in
+            guard artifact.kind == .gitlabMergeRequest, let url = artifact.url else { return false }
+            return MergeRequestConnector.mergeRequestIdentity(url) == identity
+        }
+        guard !alreadyConnected else { return }
+
+        var artifacts = sessions[index].artifacts
+        artifacts.append(.init(kind: .gitlabMergeRequest, label: "MR !\(info.iid)", url: url))
+        let session = sessions[index]
+        try associations.remember(record: .init(claudeSessionID: session.claudeSessionID,
+            name: session.name, workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general),
+            artifacts: artifacts)
         refreshWorkArtifactProjections()
     }
 

@@ -50,7 +50,7 @@ final class HomeBoardModelTests: XCTestCase {
         )
         model.snapshotHandler = { snapshot }
         model.actionExecutor = { [weak self] action in self?.actions.append(action) }
-        model.startSessionHandler = { [weak self] key, _, _ in
+        model.startSessionHandler = { [weak self] key, _, _, _ in
             self?.launchedKeys.append(key)
         }
         model.refreshJiraHandler = { [weak self] in self?.refreshCount += 1 }
@@ -156,6 +156,20 @@ final class HomeBoardModelTests: XCTestCase {
         XCTAssertTrue(actions.isEmpty)
     }
 
+    func testContinueTicketForwardsTheRequestedAgent() async {
+        let ticket = makeTicket(key: "PROJ-9")
+        let model = makeModel(snapshot: HomeBoardSnapshot(
+            jiraTickets: [ticket],
+            jiraStatus: .current
+        ))
+        var capturedAgent: String?
+        model.startSessionHandler = { _, _, _, agent in capturedAgent = agent }
+
+        await model.continueTicket(ticket, sessions: [], agent: SessionStore.newStoryAgentName)
+
+        XCTAssertEqual(capturedAgent, SessionStore.newStoryAgentName)
+    }
+
     func testContinueTicketOnStaleDataRequestsRefreshInsteadOfLaunching() async {
         let ticket = makeTicket(key: "PROJ-9")
         let model = makeModel(snapshot: HomeBoardSnapshot(
@@ -208,7 +222,7 @@ final class HomeBoardModelTests: XCTestCase {
             HomeBoardSnapshot(jiraTickets: [ticket], jiraStatus: .current)
         }
         var launchCompletions = 0
-        model.startSessionHandler = { _, _, _ in
+        model.startSessionHandler = { _, _, _, _ in
             // While the first launch is awaiting, a duplicate call must be
             // dropped; then let the first finish.
             XCTAssertEqual(model.launchingTicketKeys, ["PROJ-9"])
