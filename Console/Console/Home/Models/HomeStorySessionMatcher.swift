@@ -30,6 +30,80 @@ enum HomeStorySessionMatcher {
         return matches.first { $0.activity != .exited } ?? matches.first
     }
 
+    /// How a Review card can continue a previous review of one merge request.
+    enum ReviewResolution: Equatable {
+        /// No prior review session: the card starts a new one.
+        case none
+        /// A live review session is already open.
+        case live(UUID)
+        /// A saved reviewer conversation (or an exited session) to resume.
+        case resumable(SessionRestorationRecord)
+
+        var hasPreviousSession: Bool {
+            if case .none = self { return false }
+            return true
+        }
+    }
+
+    /// Resolves the session a Review card should continue: the live review
+    /// session when one is open, otherwise the newest saved reviewer
+    /// conversation, otherwise an exited session's own identity. Self Review
+    /// conversations are skipped — the initial review is a plain review.
+    static func reviewResolution(
+        for url: URL,
+        in sessions: [ConsoleSession],
+        associations: SessionAssociationStore? = nil
+    ) -> ReviewResolution {
+        let matches = reviewSessions(for: url, in: sessions, associations: associations)
+        if let live = matches.first(where: { $0.activity != .exited }) {
+            return .live(live.id)
+        }
+        if let associations,
+           let newest = associations.reviewConversations(for: url)
+               .first(where: { !isSelfReview($0.record.name) }) {
+            return .resumable(newest.record)
+        }
+        if let exited = matches.first {
+            return .resumable(SessionRestorationRecord(
+                claudeSessionID: exited.claudeSessionID,
+                name: exited.name,
+                workingDirectory: exited.workingDirectory,
+                purpose: exited.purpose ?? .review
+            ))
+        }
+        return .none
+    }
+
+    /// Every session in the list linked to this merge request, newest first —
+    /// through the catalog link and, as a fallback, through the session's own
+    /// MR chip.
+    private static func reviewSessions(
+        for url: URL,
+        in sessions: [ConsoleSession],
+        associations: SessionAssociationStore?
+    ) -> [ConsoleSession] {
+        var matches: [ConsoleSession] = []
+        if let associations {
+            let ids = associations.conversationIDs(for: url, kind: .gitlabMergeRequest, role: .reviewer)
+            matches += sessions.reversed().filter { ids.contains($0.claudeSessionID) }
+        }
+        if let target = GitLabSourceContext.parseMergeRequest(fromURL: url) {
+            matches += sessions.reversed().filter { session in
+                session.purpose == .review && session.artifacts.contains { artifact in
+                    guard artifact.kind == .gitlabMergeRequest, let artifactURL = artifact.url,
+                          let source = GitLabSourceContext.parseMergeRequest(fromURL: artifactURL) else { return false }
+                    return source.projectIdentity == target.projectIdentity && source.iid == target.iid
+                }
+            }
+        }
+        var seen = Set<UUID>()
+        return matches.filter { seen.insert($0.id).inserted }
+    }
+
+    private static func isSelfReview(_ name: String) -> Bool {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("Self Review")
+    }
+
     static func jiraURL(for session: ConsoleSession, configuredURL: String, reviewItems: [MergeRequestSummary] = []) -> URL? {
         if let artifact = session.artifacts.last(where: { $0.kind == .jiraIssue }) {
             if let url = artifact.url { return url }

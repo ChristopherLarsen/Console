@@ -356,7 +356,9 @@ struct HomeView: View {
                         HomeBoardReviewRequestCard(
                             item: item,
                             isLaunching: launchingReviews.contains(item.id),
-                            hasReviewSession: reviewSession(for: item) != nil,
+                            sessionAvailability: launchCoordinator
+                                .reviewSessionResolution(for: item.mergeRequestURL)
+                                .hasPreviousSession ? .resume : .start,
                             canOpenJira: jiraURL(for: item) != nil,
                             open: { model.openReview(item) },
                             openJira: {
@@ -426,8 +428,11 @@ struct HomeView: View {
     }
 
     private func startReview(_ item: MergeRequestSummary) {
-        if let session = reviewSession(for: item) {
-            model.selectSession(session.id)
+        // A live review session opens in place; a saved/exited one is resumed
+        // by the launch journey, which starts fresh only when nothing prior
+        // exists.
+        if case let .live(id) = launchCoordinator.reviewSessionResolution(for: item.mergeRequestURL) {
+            model.selectSession(id)
             return
         }
         guard let iid = item.iidText, !launchingReviews.contains(item.id) else { return }

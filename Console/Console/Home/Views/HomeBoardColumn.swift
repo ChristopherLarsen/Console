@@ -304,11 +304,17 @@ struct HomeBoardTicketCard: View {
     }
 }
 
+/// Whether a Review card can continue a previous session or must start one.
+enum HomeReviewSessionAvailability {
+    case start
+    case resume
+}
+
 /// AI triage card with separate browser and review-session actions.
 struct HomeBoardReviewRequestCard: View {
     let item: MergeRequestSummary
     let isLaunching: Bool
-    let hasReviewSession: Bool
+    let sessionAvailability: HomeReviewSessionAvailability
     let canOpenJira: Bool
     let open: () -> Void
     let openJira: () -> Void
@@ -361,7 +367,7 @@ struct HomeBoardReviewRequestCard: View {
                     .help(canOpenJira ? "Open the associated story in a new JIRA tab" : "No associated JIRA story is available")
                 Spacer(minLength: 8)
                 CapsuleActionButton(
-                    isLaunching ? "Starting…" : (hasReviewSession ? "Open Review Session" : "Start Review"),
+                    isLaunching ? "Starting…" : (sessionAvailability == .resume ? "Resume review" : "Start Review"),
                     isDisabled: isLaunching,
                     action: startReview
                 )

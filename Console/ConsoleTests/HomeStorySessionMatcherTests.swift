@@ -168,4 +168,86 @@ final class HomeStorySessionMatcherTests: XCTestCase {
             exited.id
         )
     }
+
+    // MARK: - Review continuation resolution
+
+    private let reviewURL = URL(string: "https://gitlab.example.test/team/app/-/merge_requests/42")!
+
+    private func reviewSession(activity: SessionActivity, name: String? = nil) -> ConsoleSession {
+        var session = makeSession(
+            activity: activity,
+            name: name,
+            artifacts: [.init(kind: .gitlabMergeRequest, label: "MR !42", url: reviewURL)]
+        )
+        session.purpose = .review
+        return session
+    }
+
+    func testReviewResolutionPrefersTheLiveSession() {
+        let live = reviewSession(activity: .working)
+        let exited = reviewSession(activity: .exited)
+        XCTAssertEqual(
+            HomeStorySessionMatcher.reviewResolution(for: reviewURL, in: [exited, live]),
+            .live(live.id)
+        )
+    }
+
+    func testReviewResolutionResumesAnExitedSessionWithoutACatalog() {
+        let exited = reviewSession(activity: .exited, name: "NMA-9 Review")
+        let resolution = HomeStorySessionMatcher.reviewResolution(for: reviewURL, in: [exited])
+        guard case let .resumable(record) = resolution else {
+            return XCTFail("expected resumable, got \(resolution)")
+        }
+        XCTAssertEqual(record.claudeSessionID, exited.claudeSessionID)
+        XCTAssertEqual(record.name, "NMA-9 Review")
+    }
+
+    func testReviewResolutionResumesACatalogConversationNotInTheList() throws {
+        let catalog = SessionAssociationStore(url: nil)
+        let id = UUID()
+        try catalog.remember(record: .init(claudeSessionID: id, name: "NMA-9 Review",
+            workingDirectory: URL(fileURLWithPath: "/tmp/review"), purpose: .review),
+            artifacts: [.init(kind: .gitlabMergeRequest, label: "MR !42", url: reviewURL)])
+
+        let resolution = HomeStorySessionMatcher.reviewResolution(for: reviewURL, in: [], associations: catalog)
+        guard case let .resumable(record) = resolution else {
+            return XCTFail("expected resumable, got \(resolution)")
+        }
+        XCTAssertEqual(record.claudeSessionID, id)
+    }
+
+    func testReviewResolutionSkipsSelfReviewConversations() throws {
+        let catalog = SessionAssociationStore(url: nil)
+        try catalog.remember(record: .init(claudeSessionID: UUID(), name: "MR-42 Self Review",
+            workingDirectory: URL(fileURLWithPath: "/tmp/self"), purpose: .review),
+            artifacts: [.init(kind: .gitlabMergeRequest, label: "MR !42", url: reviewURL)])
+
+        XCTAssertEqual(
+            HomeStorySessionMatcher.reviewResolution(for: reviewURL, in: [], associations: catalog),
+            .none
+        )
+    }
+
+    func testReviewResolutionChoosesTheNewestWhenAmbiguous() throws {
+        let catalog = SessionAssociationStore(url: nil)
+        let older = UUID()
+        let newer = UUID()
+        try catalog.remember(record: .init(claudeSessionID: older, name: "Older Review",
+            workingDirectory: URL(fileURLWithPath: "/tmp/older"), purpose: .review),
+            artifacts: [.init(kind: .gitlabMergeRequest, label: "MR !42", url: reviewURL)])
+        Thread.sleep(forTimeInterval: 0.02)
+        try catalog.remember(record: .init(claudeSessionID: newer, name: "Newer Review",
+            workingDirectory: URL(fileURLWithPath: "/tmp/newer"), purpose: .review),
+            artifacts: [.init(kind: .gitlabMergeRequest, label: "MR !42", url: reviewURL)])
+
+        let resolution = HomeStorySessionMatcher.reviewResolution(for: reviewURL, in: [], associations: catalog)
+        guard case let .resumable(record) = resolution else {
+            return XCTFail("expected resumable, got \(resolution)")
+        }
+        XCTAssertEqual(record.claudeSessionID, newer)
+    }
+
+    func testReviewResolutionNoneWithoutAnyPriorSession() {
+        XCTAssertEqual(HomeStorySessionMatcher.reviewResolution(for: reviewURL, in: []), .none)
+    }
 }

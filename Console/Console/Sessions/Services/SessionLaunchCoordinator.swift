@@ -143,17 +143,20 @@ final class SessionLaunchCoordinator {
     /// session matches once its bridge reports it live.
     func beginMergeRequestReview(iid: String, title: String?, url: URL, displayName: String? = nil) async {
         lastFailure = nil
-        if let existing = HomeStorySessionMatcher.reviewSession(for: url, in: store.sessions, associations: store.associations),
-           existing.activity != .exited {
-            store.select(sessionID: existing.id)
+        switch HomeStorySessionMatcher.reviewResolution(
+            for: url, in: store.sessions, associations: store.associations
+        ) {
+        case .live(let id):
+            store.select(sessionID: id)
             ConsoleNavigation.showSessions()
             store.focusSelectedTerminal()
             return
-        }
-        if let previous = store.associations.review(for: url) {
-            do { _ = try await launchResume(record: previous.record) }
+        case .resumable(let record):
+            do { _ = try await launchResume(record: record) }
             catch { lastFailure = SessionLaunchFailure(error: error) }
             return
+        case .none:
+            break
         }
         let source = SessionLaunchSource.mergeRequest(iid: iid, title: title, url: url)
         var prepared = draft(purpose: .review, source: source)
@@ -163,6 +166,14 @@ final class SessionLaunchCoordinator {
               let session = store.session(withID: sessionID) else { return }
         store.queueSlashCommand("/rename \(session.name)", for: sessionID)
         store.queueSlashCommand("/color purple", for: sessionID)
+    }
+
+    /// The previous review session a Review card can continue, for its button
+    /// label and action.
+    func reviewSessionResolution(for url: URL) -> HomeStorySessionMatcher.ReviewResolution {
+        HomeStorySessionMatcher.reviewResolution(
+            for: url, in: store.sessions, associations: store.associations
+        )
     }
 
     /// Self Review: a fresh review session for one of the user's own open

@@ -153,8 +153,17 @@ final class SessionAssociationStore {
     }
 
     func review(for url: URL) -> Conversation? {
-        let candidates = conversationIDs(for: url, kind: .gitlabMergeRequest, role: .reviewer).compactMap { conversation($0) }
+        let candidates = reviewConversations(for: url)
         return candidates.count == 1 ? candidates.first : nil
+    }
+
+    /// Every durable reviewer conversation linked to a merge request, newest
+    /// first. Unlike `review(for:)` this never collapses an ambiguous set, so a
+    /// card can still offer the most recently used session.
+    func reviewConversations(for url: URL) -> [Conversation] {
+        conversationIDs(for: url, kind: .gitlabMergeRequest, role: .reviewer)
+            .compactMap { conversation($0) }
+            .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     /// Shared live-session selection policy: prefer a running conversation,
