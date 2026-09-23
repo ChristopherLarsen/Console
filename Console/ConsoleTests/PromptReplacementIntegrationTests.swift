@@ -172,13 +172,16 @@ final class PromptReplacementIntegrationTests: XCTestCase {
     func testSendSlashCommandEmitsOrderedBytesToLiveShell() async throws {
         let (store, sessionID, terminal, root) = try makeStoreWithLiveShell()
         defer { terminal.terminate() }
+        store.queuedCommandSpacing = 0
 
         _ = await waitForScreen(terminal, toContain: "$ ")
         XCTAssertEqual(store.sendSlashCommand("printf 'ORDER_OK\\n' > result", to: sessionID), .submitted)
 
-        let send = try XCTUnwrap(store.debugTerminalSendBytes.first)
-        XCTAssertEqual(send.sessionID, sessionID)
-        XCTAssertEqual(send.utf8, "\u{15}\u{0B}printf 'ORDER_OK\\n' > result\r")
+        let sent = store.debugTerminalSendBytes
+        XCTAssertEqual(sent.count, 2)
+        XCTAssertEqual(sent.first?.sessionID, sessionID)
+        XCTAssertEqual(sent.first?.utf8, "\u{15}\u{0B}printf 'ORDER_OK\\n' > result")
+        XCTAssertEqual(sent.last?.utf8, "\r", "the Return is written separately so it submits")
 
         let output = try await waitForOutput(root)
         XCTAssertEqual(output, "ORDER_OK\n")

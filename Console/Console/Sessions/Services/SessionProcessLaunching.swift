@@ -164,8 +164,65 @@ final class ConsoleTerminalView: LocalProcessTerminalView {
     // SwiftTerm's processDelegate is weak. Keep the per-session coordinator
     // alive for exactly as long as this terminal; its store reference is weak.
     var retainedSessionCoordinator: SessionTerminalCoordinator?
+    /// Set only for a freshly created session: the terminal claims keyboard
+    /// focus the moment it enters a window, then clears the flag. Switching to
+    /// an existing session never sets it, so tab changes keep the responder.
+    var claimsFocusOnWindowAttach = false
+    /// Window we are awaiting a key transition from, so the observer is
+    /// registered once and torn down cleanly.
+    private weak var pendingKeyWindow: NSWindow?
+
     init() {
         super.init(frame: .zero)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard claimsFocusOnWindowAttach, let window else {
+            removeKeyObserver()
+            return
+        }
+        if window.isKeyWindow {
+            removeKeyObserver()
+            claimFocus(in: window)
+        } else if pendingKeyWindow !== window {
+            // A launcher popover (or another window) can hold key while the new
+            // pane mounts. Claim focus once this window becomes key again.
+            removeKeyObserver()
+            pendingKeyWindow = window
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(windowDidBecomeKey(_:)),
+                name: NSWindow.didBecomeKeyNotification,
+                object: window
+            )
+        }
+    }
+
+    @objc private func windowDidBecomeKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        removeKeyObserver()
+        claimFocus(in: window)
+    }
+
+    private func removeKeyObserver() {
+        if let pendingKeyWindow {
+            NotificationCenter.default.removeObserver(
+                self, name: NSWindow.didBecomeKeyNotification, object: pendingKeyWindow
+            )
+        }
+        pendingKeyWindow = nil
+    }
+
+    private func claimFocus(in window: NSWindow) {
+        guard claimsFocusOnWindowAttach else { return }
+        claimsFocusOnWindowAttach = false
+        // Defer past the mount layout pass so AppKit's own responder setup for
+        // the incoming pane finishes before focus lands.
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window, self.window === window else { return }
+            window.makeFirstResponder(self)
+        }
     }
 
     @available(*, unavailable)

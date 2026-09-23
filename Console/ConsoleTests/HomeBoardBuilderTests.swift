@@ -12,7 +12,8 @@ final class HomeBoardBuilderTests: XCTestCase {
         key: String = "PROJ-1",
         status: String?,
         order: Int,
-        type: String? = nil
+        type: String? = nil,
+        fixVersion: String? = nil
     ) -> JiraTicketSummary {
         JiraTicketSummary(
             key: key,
@@ -22,7 +23,8 @@ final class HomeBoardBuilderTests: XCTestCase {
             updatedText: nil,
             issueURL: URL(string: "https://jira.example.test/browse/\(key)")!,
             sourceOrder: order,
-            issueType: type
+            issueType: type,
+            fixVersion: fixVersion
         )
     }
 
@@ -118,6 +120,48 @@ final class HomeBoardBuilderTests: XCTestCase {
             ticket(key: "D", status: "Next Up", order: 3),
         ]
         XCTAssertEqual(HomeBoardBuilder.nextStories(in: tickets).map(\.key), ["B", "D", "A"])
+    }
+
+    func testNextStoryPrefersLowerFixVersionWithinSameStatus() {
+        let tickets = [
+            ticket(key: "A", status: "To Do", order: 0, fixVersion: "17.2"),
+            ticket(key: "B", status: "To Do", order: 1, fixVersion: "17.1"),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.nextStories(in: tickets).map(\.key), ["B", "A"])
+    }
+
+    func testNextStoryComparesFixVersionsNumerically() {
+        let tickets = [
+            ticket(key: "A", status: "To Do", order: 0, fixVersion: "17.10"),
+            ticket(key: "B", status: "To Do", order: 1, fixVersion: "17.9"),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.nextStories(in: tickets).map(\.key), ["B", "A"])
+    }
+
+    func testNextUpOutranksLowerFixVersionInBacklog() {
+        // Status tier first: a Next Up story beats a lower-versioned Backlog story.
+        let tickets = [
+            ticket(key: "A", status: "Backlog", order: 0, fixVersion: "17.1"),
+            ticket(key: "B", status: "Next Up", order: 1, fixVersion: "17.2"),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.nextStories(in: tickets).map(\.key), ["B", "A"])
+    }
+
+    func testLowerFixVersionOutranksTypeWithinSameStatus() {
+        // Fix version ranks above issue type: a 17.1 Feature beats a 17.2 Bug.
+        let tickets = [
+            ticket(key: "A", status: "To Do", order: 0, type: "Bug", fixVersion: "17.2"),
+            ticket(key: "B", status: "To Do", order: 1, type: "Feature", fixVersion: "17.1"),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.nextStories(in: tickets).map(\.key), ["B", "A"])
+    }
+
+    func testMissingFixVersionSortsLastWithinTier() {
+        let tickets = [
+            ticket(key: "A", status: "To Do", order: 0),
+            ticket(key: "B", status: "To Do", order: 1, fixVersion: "17.1"),
+        ]
+        XCTAssertEqual(HomeBoardBuilder.nextStories(in: tickets).map(\.key), ["B", "A"])
     }
 
     func testNextUpCountCountsOnlyExactNextUpStatus() {

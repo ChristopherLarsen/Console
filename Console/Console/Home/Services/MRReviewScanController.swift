@@ -48,6 +48,13 @@ final class MRReviewScanController {
         return approvedItems.removeFirst()
     }
 
+    /// Consumes the first unresolved-discussions notification until the next
+    /// successful authored scan repopulates it.
+    func dequeueDiscussionNotification() -> AuthoredMRAttention? {
+        guard let index = authoredItems.firstIndex(where: \.hasDiscussions) else { return nil }
+        return authoredItems.remove(at: index)
+    }
+
     @discardableResult
     func checkGLabAvailability(manual: Bool) -> Bool {
         guard executableProvider() != nil else {

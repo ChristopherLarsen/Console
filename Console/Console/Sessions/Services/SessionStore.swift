@@ -274,6 +274,14 @@ final class SessionStore {
         }
     }
 
+    /// A freshly created session's terminal claims keyboard focus as soon as it
+    /// mounts, so the user can type into the new session without clicking.
+    /// Only creation arms this; selecting an existing session must not steal
+    /// focus from whatever the user is doing.
+    private func armTerminalFocus(_ terminalView: LocalProcessTerminalView) {
+        (terminalView as? ConsoleTerminalView)?.claimsFocusOnWindowAttach = true
+    }
+
     func displayedState(for sessionID: UUID) -> DisplayedSessionState {
         guard let session = session(withID: sessionID) else { return .unknown }
         return displayedSessionState(activity: session.activity, attention: session.attention)
@@ -346,6 +354,7 @@ final class SessionStore {
         let coordinator = SessionTerminalCoordinator(sessionID: consoleID, store: self)
         terminalView.processDelegate = coordinator
         (terminalView as? ConsoleTerminalView)?.retainedSessionCoordinator = coordinator
+        armTerminalFocus(terminalView)
 
         // Plugin/bridge preparation is optional. A failure of either the
         // plugin assembly or the socket/server still launches the resolved
@@ -453,6 +462,7 @@ final class SessionStore {
         let coordinator = SessionTerminalCoordinator(sessionID: consoleID, store: self)
         terminalView.processDelegate = coordinator
         (terminalView as? ConsoleTerminalView)?.retainedSessionCoordinator = coordinator
+        armTerminalFocus(terminalView)
 
         let session = ConsoleSession(
             id: consoleID,
@@ -986,6 +996,12 @@ final class SessionStore {
     /// deliberately untouched; the bridge reports what the session does with
     /// the command. Rejected once the session has exited, including while it
     /// sits at its fallback login shell.
+    ///
+    /// The command text and its Return are written as two separate, spaced
+    /// writes. Claude Code reads a single burst containing the text and the
+    /// carriage return as one paste, so the embedded Return is inserted into
+    /// the input line instead of submitting it. The queued-command path uses
+    /// the same split.
     @discardableResult
     func sendSlashCommand(_ command: String, to sessionID: UUID) -> SubmissionResult {
         guard let session = session(withID: sessionID) else {
@@ -994,8 +1010,21 @@ final class SessionStore {
         guard session.activity != .exited else {
             return .rejected(.sessionNotAcceptingInput)
         }
-        let bytes = PromptSubmissionEngine.replacementCommandBytes(command)
-        sendToTerminal(bytes, sessionID: sessionID, terminalView: session.terminalView)
+        sendToTerminal(
+            PromptSubmissionEngine.replacementCommandText(command),
+            sessionID: sessionID,
+            terminalView: session.terminalView
+        )
+        afterQueuedCommandSpacing { [weak self] in
+            guard let self,
+                  let session = self.session(withID: sessionID),
+                  session.activity != .exited else { return }
+            self.sendToTerminal(
+                PromptSubmissionEngine.returnBytes,
+                sessionID: sessionID,
+                terminalView: session.terminalView
+            )
+        }
         return .submitted
     }
 
@@ -1095,9 +1124,9 @@ final class SessionStore {
     /// login shell. Keyed by session, flushed in queue order.
     private var pendingSlashCommands: [UUID: [String]] = [:]
 
-    /// Spacing between a queued command's text, its Return, and the next
-    /// queued command. Two slash commands written in immediate succession are
-    /// read by Claude Code as one pasted burst, so the embedded carriage
+    /// Spacing between a header-menu command's text and its Return, and between
+    /// consecutive queued commands. Claude Code reads a burst containing the
+    /// text and one or more carriage returns as a single paste, so the embedded
     /// returns never submit. Tests shorten this to zero and take the
     /// synchronous path.
     var queuedCommandSpacing: TimeInterval = 0.2

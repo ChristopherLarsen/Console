@@ -117,6 +117,38 @@ final class AuthoredMRAttentionTests: XCTestCase {
         XCTAssertTrue(source.approvedItems.isEmpty)
     }
 
+    func testDiscussionQueueConsumesInOrderAndRepopulatesOnlyWithCompleteAuthoredScan() async throws {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let fixture = ScanFixture()
+        fixture.authored = [item(iid: 2), item(), item(discussions: 0, iid: 3)]
+        let source = MRReviewScanController(defaults: defaults, urlProvider: { self.scope.absoluteString },
+            executableProvider: { "/bin/glab" })
+        source.configure { invocation in
+            let result = MRReviewTriageResult(complete: fixture.reviewsComplete, failure: nil,
+                currentUsername: fixture.username, items: [], authoredComplete: fixture.complete,
+                authoredItems: fixture.authored)
+            return ClaudeOperationOutput(correlationID: invocation.correlationID,
+                resultText: String(decoding: try JSONEncoder().encode(result), as: UTF8.self), sessionID: nil)
+        }
+
+        XCTAssertNil(source.dequeueDiscussionNotification())
+        _ = await source.scan(trigger: .manual)
+        XCTAssertEqual(source.discussionItems.map(\.iid), [1, 2])
+        XCTAssertEqual(source.dequeueDiscussionNotification()?.iid, 1)
+        XCTAssertEqual(source.discussionItems.map(\.iid), [2])
+        XCTAssertEqual(source.dequeueDiscussionNotification()?.iid, 2)
+        XCTAssertTrue(source.discussionItems.isEmpty)
+        XCTAssertNil(source.dequeueDiscussionNotification())
+
+        fixture.complete = false
+        _ = await source.scan(trigger: .background)
+        XCTAssertTrue(source.discussionItems.isEmpty, "An incomplete scan must not repopulate consumed notifications")
+
+        fixture.complete = true
+        _ = await source.scan(trigger: .manual)
+        XCTAssertEqual(source.discussionItems.map(\.iid), [1, 2], "A complete scan repopulates the queue")
+    }
+
     func testCatalogPersistsScopeRoleAndExplicitPreference() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

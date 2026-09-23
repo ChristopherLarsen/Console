@@ -138,9 +138,11 @@ enum HomeBoardBuilder {
     /// Preference cascade, in order:
     ///   1. Status tier — "Next Up" outranks every other parked status
     ///      ("Backlog", "To Do", unrecognized).
-    ///   2. Type tier within one status — Bug issues outrank everything
+    ///   2. Fix version — lower versions first, numerically aware; a story
+    ///      with no fix version sorts last within its tier.
+    ///   3. Type tier within one status — Bug issues outrank everything
     ///      else; Features rank last; an unknown type sits in between.
-    ///   3. Host order breaks remaining ties.
+    ///   4. Host order breaks remaining ties.
     static func nextStories(in tickets: [JiraTicketSummary]) -> [JiraTicketSummary] {
         tickets
             .filter { AttentionChannel.forTicketStatus($0.status) == .parked }
@@ -148,6 +150,11 @@ enum HomeBoardBuilder {
                 let left = nextStoryPreference(lhs)
                 let right = nextStoryPreference(rhs)
                 if left.statusTier != right.statusTier { return left.statusTier < right.statusTier }
+                switch compareTargetVersions(lhs.fixVersion, rhs.fixVersion) {
+                case .orderedAscending: return true
+                case .orderedDescending: return false
+                case .orderedSame: break
+                }
                 if left.typeTier != right.typeTier { return left.typeTier < right.typeTier }
                 return lhs.sourceOrder < rhs.sourceOrder
             }
@@ -185,7 +192,8 @@ enum HomeBoardBuilder {
     /// Preference rank for one parked ticket: lower wins. Status "Next Up"
     /// is tier 0, everything else tier 1. Within a tier, Bug issues are
     /// preferred (0), Features are deprioritized last (2), and any other or
-    /// unknown type keeps host order in between (1).
+    /// unknown type keeps host order in between (1). Fix version is compared
+    /// separately, between the status and type tiers.
     private static func nextStoryPreference(_ ticket: JiraTicketSummary) -> (statusTier: Int, typeTier: Int) {
         let statusTier = isNextUp(ticket) ? 0 : 1
         let typeTier: Int

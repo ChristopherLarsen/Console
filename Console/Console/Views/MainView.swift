@@ -39,10 +39,11 @@ struct MainView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 6) {
-                    if let first = mrScan.discussionItems.first {
+                    if !mrScan.discussionItems.isEmpty {
                         mrAttentionButton(count: mrScan.discussionItems.count,
                             label: "MRs with unresolved discussions", color: Color(red: 0.05, green: 0.19, blue: 0.42),
                             identifier: "MergeRequests.DiscussionAttentionButton") {
+                            guard let first = mrScan.dequeueDiscussionNotification() else { return }
                             Task { await launchCoordinator.openAuthoredMR(first) }
                         }.disabled(launchCoordinator.isOpeningAuthoredMR)
                     }

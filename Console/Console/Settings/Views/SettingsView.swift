@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import SwiftData
 
@@ -224,14 +225,13 @@ struct SettingsView: View {
             }
 
             HStack(spacing: 12) {
-                TextField(
-                    "",
+                SingleLineTextField(
                     text: $newQuickCommand,
-                    prompt: Text(AppSettings.quickCommandsPlaceholder)
-                        .foregroundStyle(Color(nsColor: .placeholderTextColor))
+                    placeholder: AppSettings.quickCommandsPlaceholder,
+                    isEnabled: quickCommands.count < AppSettings.quickCommandsLimit,
+                    onSubmit: addQuickCommand,
+                    accessibilityIdentifier: "Settings.QuickCommands.Field"
                 )
-                    .textFieldStyle(.plain)
-                    .lineLimit(1)
                     .padding(6)
                     .background(
                         RoundedRectangle(cornerRadius: 5)
@@ -241,9 +241,6 @@ struct SettingsView: View {
                         RoundedRectangle(cornerRadius: 5)
                             .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
                     )
-                    .onSubmit(addQuickCommand)
-                    .disabled(quickCommands.count >= AppSettings.quickCommandsLimit)
-                    .accessibilityIdentifier("Settings.QuickCommands.Field")
 
                 Button("Add") { addQuickCommand() }
                     .buttonStyle(.plain)
@@ -268,12 +265,10 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 16)
 
-            TextField(
-                "",
-                text: quickCommandBinding(index)
+            SingleLineTextField(
+                text: quickCommandBinding(index),
+                accessibilityIdentifier: "Settings.QuickCommands.Row.\(index)"
             )
-                .textFieldStyle(.plain)
-                .lineLimit(1)
                 .padding(6)
                 .background(
                     RoundedRectangle(cornerRadius: 5)
@@ -283,7 +278,6 @@ struct SettingsView: View {
                     RoundedRectangle(cornerRadius: 5)
                         .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
                 )
-                .accessibilityIdentifier("Settings.QuickCommands.Row.\(index)")
 
             Button {
                 removeQuickCommand(at: index)
@@ -643,4 +637,72 @@ struct SettingsView: View {
 
     private var appVersion: String? { BuildConfiguration.versionDisplay }
 
+}
+
+/// A single-line, horizontally scrolling text field.
+///
+/// SwiftUI's `TextField` measures a wrapping height for long strings inside a
+/// `Form`, so a long Quick Command renders its row double-height. AppKit's
+/// `NSTextField` in single-line mode keeps one line and scrolls instead, so
+/// every row stays the same height regardless of the command length.
+private struct SingleLineTextField: NSViewRepresentable {
+    @Binding var text: String
+    var placeholder: String?
+    var isEnabled: Bool = true
+    var onSubmit: (() -> Void)?
+    var accessibilityIdentifier: String?
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(string: text)
+        field.isBordered = false
+        field.drawsBackground = false
+        field.isEditable = true
+        field.isSelectable = true
+        field.usesSingleLineMode = true
+        field.maximumNumberOfLines = 1
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.lineBreakMode = .byTruncatingTail
+        field.alignment = .right
+        field.font = .systemFont(ofSize: NSFont.systemFontSize)
+        field.focusRingType = .none
+        field.placeholderString = placeholder
+        field.isEnabled = isEnabled
+        field.delegate = context.coordinator
+        if let accessibilityIdentifier {
+            field.setAccessibilityIdentifier(accessibilityIdentifier)
+        }
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        if field.stringValue != text {
+            field.stringValue = text
+        }
+        if field.isEnabled != isEnabled {
+            field.isEnabled = isEnabled
+        }
+        field.placeholderString = placeholder
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        private let parent: SingleLineTextField
+
+        init(_ parent: SingleLineTextField) {
+            self.parent = parent
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            parent.text = field.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            guard commandSelector == #selector(NSResponder.insertNewline(_:)) else { return false }
+            parent.onSubmit?()
+            return true
+        }
+    }
 }
