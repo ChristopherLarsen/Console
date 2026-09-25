@@ -112,20 +112,41 @@ struct SessionCreationRequest: Equatable {
     let source: SessionLaunchSource?
     /// Explicit Claude Code agent; nil falls back to the purpose's default.
     let agent: String?
+    /// Tool access the Claude process is launched with.
+    let toolProfile: SessionToolProfile
+    /// False for background launches: the new session is not selected, does
+    /// not claim keyboard focus, and does not retire the Restore Sessions offer.
+    let revealsSession: Bool
 
     init(
         purpose: SessionPurpose,
         name: String,
         workingDirectory: URL,
         source: SessionLaunchSource? = nil,
-        agent: String? = nil
+        agent: String? = nil,
+        toolProfile: SessionToolProfile = .standard,
+        revealsSession: Bool = true
     ) {
         self.purpose = purpose
         self.name = name
         self.workingDirectory = workingDirectory
         self.source = source
         self.agent = agent
+        self.toolProfile = toolProfile
+        self.revealsSession = revealsSession
     }
+}
+
+/// Tool access for one Claude launch. Applies to that process only; a later
+/// resume of the same conversation launches with `.standard`.
+enum SessionToolProfile: Equatable {
+    /// Bypassed permission prompts and every tool, as the user configured.
+    case standard
+    /// Unattended preparation that cannot change anything: only Read, Grep and
+    /// Glob exist (no Bash, edits, web or MCP tools), nothing bypasses
+    /// permissions, and anything that would prompt is denied. The
+    /// `contextDirectory` is readable through `--add-dir`.
+    case readOnlyPrep(contextDirectory: URL)
 }
 
 /// A user-configured local folder sessions can open in.

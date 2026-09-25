@@ -24,6 +24,9 @@ class AppSettings {
     static let mrScanModelDefault = "haiku"
     static let mrDispositionEnabledKey = "mrDispositionEnabled"
     static let mrDispositionPromptKey = "mrDispositionPrompt"
+    /// Prepare draft responses to unresolved comments on the user's own MRs
+    /// automatically after each scan. Defaults on; prep never changes anything.
+    static let mrResponsePrepEnabledKey = "mrResponsePrepEnabled"
     /// Interval choices surfaced in Settings; the stored value is always one
     /// of these so the scheduler never sees an arbitrary value.
     static let mrScanIntervalChoices = [5, 10, 15, 30, 60]

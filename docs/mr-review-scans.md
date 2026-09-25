@@ -38,3 +38,30 @@ The default prompt is `MRDispositionPrompt.defaultText`. The non-editable JSON
 contract is appended separately. Current dispositions are Review Required,
 Changes Requested, Approved, Draft, Merged, Closed and Unknown. These describe
 the supplied host evidence, not verified current-user review history.
+
+# MR response prep
+
+When an authored-MR scan reports unresolved discussions on one of the user's own
+merge requests, `MRResponsePrepController` prepares draft responses. Prep only:
+nothing is committed, pushed, posted, resolved, or changed in GitLab or JIRA.
+
+1. `MRResponsePrepFetcher` runs `glab api --method GET` for the MR metadata, its
+   discussions and its diffs, and writes them plus Console-authored
+   `INSTRUCTIONS.md` to `~/Library/Application Support/Console/MRResponsePrep/<mr>/`.
+   Only unresolved discussions (a resolvable, unresolved note) are kept.
+2. A background session (`MR-<iid> Response`) starts in the Session Folder with the
+   `readOnlyPrep` tool profile: `--permission-mode dontAsk`, `--tools Read Grep Glob`,
+   `--disallowedTools Bash Edit Write NotebookEdit WebFetch WebSearch Task mcp__*`,
+   `--strict-mcp-config`, and the evidence folder via `--add-dir`. No permission
+   bypass. It does not select, focus or navigate, and does not retire Restore Sessions.
+   The bridge plugin's hooks still report lifecycle; its MCP tools are denied.
+3. Once the bridge is live, Console types one prompt naming only the validated
+   project path, MR number and instructions path. GitLab text reaches Claude only
+   through the files, which the instructions mark as untrusted data.
+
+The Review column shows these MRs first: "Reviewing comments" until the prep turn
+completes, then "Response ready". "Review response" opens the live session or
+resumes its conversation (a resume uses the standard tool profile). An MR is
+prepared again only when its unresolved count rises above the last prepared count;
+at most two preps run at once. Settings → MR Review Scans can turn automatic prep
+off; the card then offers "Prepare response".

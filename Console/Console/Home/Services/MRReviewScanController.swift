@@ -19,6 +19,9 @@ final class MRReviewScanController {
     private(set) var lastSuccessfulUpdate: Date?
     private(set) var message: String?
     var manualError: String?
+    /// Receives every successful authored-MR result (an empty list when the
+    /// scan scope changes). The toolbar badge's queue is consumed separately.
+    @ObservationIgnored var authoredScanObserver: (@MainActor ([AuthoredMRAttention]) -> Void)?
     private var performer: Performer?
     private let defaults: UserDefaults
     private let urlProvider: @MainActor () -> String
@@ -89,6 +92,7 @@ final class MRReviewScanController {
             authoredLastSuccessfulUpdate = nil
             authoredMessage = nil
             lastSuccessfulUpdate = nil
+            authoredScanObserver?([])
             self.resultScope = nil
             resultUsername = nil
             message = nil
@@ -143,6 +147,7 @@ final class MRReviewScanController {
                 authoredMessage = nil
                 authoredUpdated = true
                 resultScope = urlProvider()
+                authoredScanObserver?(authoredItems)
             } catch {
                 authoredMessage = "Authored MR scan incomplete. Showing the last successful result."
             }

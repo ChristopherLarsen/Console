@@ -11,7 +11,16 @@ final class MenuBarViewModel {
 
     // MARK: - State
 
-    var listeningState: ListeningState = .off
+    var listeningState: ListeningState = .off {
+        didSet {
+            // Listening that push-to-talk turned on ends once its one command
+            // is done, so the hotkey never leaves the microphone open.
+            if pushToTalkOwnsListening, listeningState == .passive || listeningState == .off {
+                pushToTalkOwnsListening = false
+                if listeningState == .passive { stopListening() }
+            }
+        }
+    }
     var warningMessage: String?
     var lastDetectedTrigger: String = ""
     var modelContext: ModelContext?
@@ -33,6 +42,11 @@ final class MenuBarViewModel {
     @ObservationIgnored private var lastVolatileTextChange: Date = Date()
     /// Bumped on every start/stop so a late start task cannot resurrect a stopped session.
     @ObservationIgnored private var listeningGeneration = 0
+
+    /// True while a push-to-talk capture (voice-command hotkey) is in flight.
+    @ObservationIgnored private var isPushToTalkCapture = false
+    /// True when push-to-talk started listening, which must stop afterwards.
+    @ObservationIgnored private var pushToTalkOwnsListening = false
 
     // Transcript context captured across the voice pipeline
     private var lastRawTranscript: String?
@@ -155,7 +169,7 @@ final class MenuBarViewModel {
     /// Starts listening and waits until the audio mode is actually active, so
     /// callers (App Intents) can report truthful state.
     @discardableResult
-    func startListeningAwaited() async -> Bool {
+    func startListeningAwaited(requireWakeWords: Bool = true) async -> Bool {
         if NotePanelController.shared.isShowing && NotePanelController.shared.isDictationSuspended {
             await resumeWithNoteDictation()
             return listeningState != .off
@@ -171,7 +185,7 @@ final class MenuBarViewModel {
         }
 
         let enabled = wakeWordManager.enabledWords
-        if enabled.isEmpty {
+        if enabled.isEmpty, requireWakeWords {
             showWarning("No trigger words configured.")
             return false
         }
@@ -233,6 +247,48 @@ final class MenuBarViewModel {
         guard generation == listeningGeneration else { return }
         if listeningState != .off { listeningState = .passive }
         startSleepTimer()
+    }
+
+    // MARK: - Push-to-Talk
+
+    /// Voice-command hotkey: capture one command now, no wake word. Starts
+    /// listening for just this command when it is off. A sidebar name
+    /// ("JIRA", "GitLab", "Sessions", …) opens that destination; anything else
+    /// goes through the normal command pipeline.
+    func beginPushToTalk() async {
+        guard listeningState == .off || listeningState == .passive,
+              !AuthorizationManager.shared.isShowingDialog else { return }
+        var startedHere = false
+        if listeningState == .off {
+            guard await startListeningAwaited(requireWakeWords: false) else { return }
+            startedHere = true
+        }
+        guard listeningState == .passive, let commandMode, commandMode.beginPushToTalkCapture() else {
+            if startedHere { stopListening() }
+            return
+        }
+        isPushToTalkCapture = true
+        lastDetectedTrigger = VoiceCommandHotkey.current().label
+        lastStrippedTranscript = ""
+        lastMatchResult = ""
+        fuzzyMatchInputText = ""
+        listeningState = .commandListening
+        pushToTalkOwnsListening = startedHere
+    }
+
+    /// Opens the sidebar destination a push-to-talk utterance names.
+    private func handleSidebarNavigation(_ text: String) -> Bool {
+        let aiProviderEnabled = UserDefaults.standard.bool(forKey: AppSettings.aiProviderEnabledKey)
+        guard let destination = SidebarVoiceNavigation.destination(for: text, aiProviderEnabled: aiProviderEnabled) else {
+            return false
+        }
+        lastMatchResult = "Navigate: \(destination.label)"
+        SoundFeedbackService.shared.play(.commandIdentified)
+        VisualFeedbackService.shared.show(.commandRecognized(destination.label))
+        bringMainWindowToFront()
+        ConsoleNavigation.show(destination)
+        if listeningState != .off { listeningState = .passive }
+        return true
     }
 
     private func showWarning(_ message: String) {
@@ -461,6 +517,7 @@ final class MenuBarViewModel {
     /// released (e.g. fatal speech-recognition failure), listening is over;
     /// otherwise capture returns to passive.
     func handleCommandCancelled(from mode: (any ListeningMode)? = nil) {
+        isPushToTalkCapture = false
         guard listeningState != .off else { return }
         if let mode, AudioSessionController.shared.activeMode === mode {
             listeningState = .passive
@@ -561,6 +618,9 @@ final class MenuBarViewModel {
         guard listeningState != .off else { return }
 
         fuzzyMatchInputText = text
+        let fromPushToTalk = isPushToTalkCapture
+        isPushToTalkCapture = false
+        if fromPushToTalk, handleSidebarNavigation(text) { return }
         if handleBuiltInCommand(text) { return }
 
         let commands = fetchEnabledCommands()

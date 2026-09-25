@@ -13,6 +13,10 @@ struct HomeBoardColumn<Accessory: View, Content: View>: View {
     var recovery: HomeBoardRecovery?
     var onRecovery: (() -> Void)?
     var statusMessage: String? = nil
+    /// Cards from another source that render whatever this column's health
+    /// is, above the gated content (the Review column's own-MR prep cards
+    /// come from the authored scan, which succeeds independently).
+    var pinnedContent: AnyView? = nil
     /// What to render when `health.retainsContent`. Empty lists render their
     /// own placeholder cards.
     @ViewBuilder var content: () -> Content
@@ -45,6 +49,7 @@ struct HomeBoardColumn<Accessory: View, Content: View>: View {
 
             ScrollView {
                 LazyVStack(spacing: HomeCardMetrics.listGap) {
+                    pinnedContent
                     if health.retainsContent {
                         content()
                     } else {
@@ -387,6 +392,111 @@ struct HomeBoardReviewRequestCard: View {
         case .activeReview: return .orange
         case .needsReview: return AttentionChannel.needsYou.color
         case .alreadyReviewed, nil: return .secondary
+        }
+    }
+}
+
+/// Review column card for one of the user's own merge requests with
+/// unresolved comments. Console prepares draft responses in a background,
+/// read-only session; "Review response" opens that session. Nothing on this
+/// card commits, pushes or changes GitLab or JIRA.
+struct HomeBoardResponsePrepCard: View {
+    let item: AuthoredMRAttention
+    let state: MRResponsePrepController.CardState
+    let canReviewResponse: Bool
+    let open: () -> Void
+    let reviewResponse: () -> Void
+    let prepare: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: HomeCardMetrics.rowGap) {
+            HStack(spacing: 5) {
+                HomeCardGlyph(color: stateColor, needsYou: state == .ready)
+
+                Text("!\(item.iid)")
+                    .font(HomeCardMetrics.identityFont)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                Text(state.stateLine)
+                    .font(HomeCardMetrics.stateFont)
+                    .foregroundStyle(stateColor)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("HomeResponsePrepState")
+
+                if state == .preparing {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .accessibilityHidden(true)
+                }
+
+                Spacer(minLength: 4)
+            }
+
+            Text(item.title)
+                .font(HomeCardMetrics.titleFont)
+                .foregroundStyle(.primary)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("\(item.project) · \(commentsText)")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+
+            if case .failed(let message) = state {
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .help(message)
+            }
+
+            HStack(spacing: 6) {
+                ServiceCapsuleButton(.gitlab, action: open)
+                Spacer(minLength: 8)
+                primaryButton
+            }
+            .padding(.top, 8)
+        }
+        .padding(HomeCardMetrics.padding)
+        .frame(maxWidth: .infinity, minHeight: HomeCardMetrics.minHeight, alignment: .leading)
+        .onHover { hovering = $0 }
+        .homeCardSurface(hovering: hovering)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("HomeBoardResponsePrepCard")
+    }
+
+    @ViewBuilder
+    private var primaryButton: some View {
+        switch state {
+        case .preparing, .ready, .interrupted:
+            CapsuleActionButton("Review response", isDisabled: !canReviewResponse, action: reviewResponse)
+                .help(state == .preparing
+                      ? "Watch Claude draft the responses. Nothing is posted or committed."
+                      : "Open the session with the drafted responses")
+                .accessibilityIdentifier("HomeResponsePrepReviewButton")
+        case .notPrepared:
+            CapsuleActionButton("Prepare response", action: prepare)
+                .help("Draft responses to the unresolved comments without changing anything")
+                .accessibilityIdentifier("HomeResponsePrepPrepareButton")
+        case .failed:
+            CapsuleActionButton("Retry", action: prepare)
+                .accessibilityIdentifier("HomeResponsePrepRetryButton")
+        }
+    }
+
+    private var commentsText: String {
+        item.unresolvedDiscussionCount == 1 ? "1 unresolved comment" : "\(item.unresolvedDiscussionCount) unresolved comments"
+    }
+
+    private var stateColor: Color {
+        switch state {
+        case .preparing: return .orange
+        case .ready: return AttentionChannel.needsYou.color
+        case .notPrepared, .interrupted, .failed: return .secondary
         }
     }
 }

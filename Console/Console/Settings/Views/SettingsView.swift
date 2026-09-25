@@ -12,6 +12,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.mrScanEnabledKey) private var mrScanEnabled: Bool = false
     @AppStorage(AppSettings.mrScanIntervalMinutesKey) private var mrScanIntervalMinutes: Int = AppSettings.mrScanIntervalMinutesDefault
     @AppStorage(AppSettings.mrScanModelKey) private var mrScanModel: String = AppSettings.mrScanModelDefault
+    @AppStorage(AppSettings.mrResponsePrepEnabledKey) private var mrResponsePrepEnabled: Bool = true
     @AppStorage(MRReviewTriagePrompt.settingsKey) private var mrDispositionPrompt: String = MRReviewTriagePrompt.defaultText
     @State private var dispositionPromptDraft = ""
 
@@ -39,6 +40,7 @@ struct SettingsView: View {
             ManagedClaudeAccessSection()
             terminalSection
             quickCommandsSection
+            VoiceCommandHotkeySection()
             urlsSection
             mrReviewScansSection
             appearanceSection
@@ -405,6 +407,14 @@ struct SettingsView: View {
             }
 
             Text("Claude uses glab to discover and triage MRs within your GitLab reviews URL scope. Reads metadata, approvals, discussions and commit history, never diffs. Home checks stale results on entry; manual refresh works even when periodic scanning is off. Requires glab installed and authenticated for your GitLab host.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Toggle("Prepare responses to comments on my MR's", isOn: $mrResponsePrepEnabled)
+                .themedToggleStyle()
+                .accessibilityIdentifier("MRResponsePrepEnabledToggle")
+
+            Text("When a scan finds unresolved comments on your own MR's, Console reads them and the MR's diffs with read-only glab calls and opens a background Claude session that drafts a reply and proposed change per thread. The session can only read files: nothing is committed, pushed, posted to GitLab or changed in JIRA. Review the drafts from the card's Review response button.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 

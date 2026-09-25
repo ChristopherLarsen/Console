@@ -1523,3 +1523,83 @@ final class SessionStoreTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Background read-only prep launches
+
+extension SessionStoreTests {
+    private func prepRequest(_ directory: URL, context: URL) -> SessionCreationRequest {
+        SessionCreationRequest(purpose: .general, name: "MR-7 Response", workingDirectory: directory,
+                               toolProfile: .readOnlyPrep(contextDirectory: context), revealsSession: false)
+    }
+
+    func testReadOnlyPrepLaunchDropsBypassAndLimitsToolsToReading() throws {
+        let (store, launcher) = makeStore()
+        let context = tmpDirectory("prep-context")
+        _ = try store.createSession(request: prepRequest(tmpDirectory("prep"), context: context))
+        let args = try XCTUnwrap(launcher.lastArguments)
+
+        XCTAssertFalse(args.contains("--dangerously-skip-permissions"))
+        XCTAssertFalse(args.contains("--allowedTools"), "a prep session preapproves nothing")
+        XCTAssertFalse(args.contains("--agent"))
+        let mode = try XCTUnwrap(args.firstIndex(of: "--permission-mode"))
+        XCTAssertEqual(args[mode + 1], "dontAsk")
+        let tools = try XCTUnwrap(args.firstIndex(of: "--tools"))
+        XCTAssertEqual(Array(args[(tools + 1)...].prefix { !$0.hasPrefix("--") }), ["Read", "Grep", "Glob"])
+        let denied = try XCTUnwrap(args.firstIndex(of: "--disallowedTools"))
+        let deniedTools = Set(args[(denied + 1)...].prefix { !$0.hasPrefix("--") })
+        XCTAssertTrue(deniedTools.isSuperset(of: ["Bash", "Edit", "Write", "NotebookEdit", "mcp__*"]))
+        XCTAssertTrue(args.contains("--strict-mcp-config"))
+        let addDir = try XCTUnwrap(args.firstIndex(of: "--add-dir"))
+        XCTAssertEqual(args[addDir + 1], context.path)
+        store.terminateAll()
+    }
+
+    func testResumingAPrepConversationUsesTheStandardProfile() {
+        let args = SessionStore.launchArguments(claudeSessionID: UUID(), pluginDirectory: nil, resume: true)
+        XCTAssertTrue(args.contains("--dangerously-skip-permissions"))
+        XCTAssertFalse(args.contains("--tools"))
+    }
+
+    func testBackgroundLaunchKeepsSelectionFocusAndRestoreOffer() async throws {
+        let directory = tmpDirectory("background")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Saved", workingDirectory: directory, purpose: .general)
+        try disk.save(.init(sessions: [record]))
+        let (store, _) = makeStore(restorationStore: disk)
+        XCTAssertTrue(store.canRestoreSessions)
+
+        let id = try store.createSession(request: prepRequest(directory, context: tmpDirectory("ctx")))
+
+        XCTAssertNil(store.selectedSessionID, "a background prep must not take the selection")
+        XCTAssertNotEqual(store.selectedSession?.id, id)
+        XCTAssertTrue(store.canRestoreSessions, "a background prep must not retire the restore offer")
+        let terminal = try XCTUnwrap(store.session(withID: id)?.terminalView as? ConsoleTerminalView)
+        XCTAssertFalse(terminal.claimsFocusOnWindowAttach)
+        store.terminateAll()
+    }
+
+    func testQueuedPromptFollowsQueuedCommandsOnceLiveAndMarksWorking() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(request: prepRequest(tmpDirectory("queued"), context: tmpDirectory("ctx")))
+        store.queuedCommandSpacing = 0
+        var submitted = false
+        store.queueSlashCommand("/rename MR-7 Response", for: id)
+        store.queuePrompt("Prepare drafts.\nRead the file.", for: id) { submitted = true }
+        XCTAssertTrue(store.debugTerminalSendBytes.isEmpty, "nothing is typed before Claude is live")
+
+        guard let token = store.debugSessionToken(id) else {
+            throw XCTSkip("bridge not instrumented in this host")
+        }
+        store.debugReceiveEnvelope(BridgeEnvelope(sessionID: id.uuidString, token: token,
+            eventID: UUID().uuidString, kind: .lifecycle, lifecycleEvent: .sessionStarted))
+
+        XCTAssertEqual(store.debugTerminalSendBytes.map(\.utf8), [
+            "\u{15}\u{0B}/rename MR-7 Response", "\r",
+            "\u{15}\u{0B}Prepare drafts. Read the file.", "\r",
+        ])
+        XCTAssertTrue(submitted)
+        XCTAssertEqual(store.session(withID: id)?.activity, .working)
+        store.terminateAll()
+    }
+}

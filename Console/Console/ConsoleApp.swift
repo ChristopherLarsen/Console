@@ -88,6 +88,8 @@ struct ConsoleApp: App {
     @State private var launchCoordinator: SessionLaunchCoordinator
     @State private var managedClaudeService = ManagedClaudeService()
     @State private var mrReviewScanScheduler = MRReviewScanScheduler()
+    @State private var mrResponsePrep: MRResponsePrepController
+    @State private var storySynopses = StorySynopsisController()
     @State private var sessionWorkspaceLayout = SessionWorkspaceLayoutController()
     @State private var developerActions: DeveloperActionRunner
     @State private var sessionNewRequest = SessionNewRequestController()
@@ -256,6 +258,31 @@ struct ConsoleApp: App {
         }
         #endif
         _launchCoordinator = State(initialValue: coordinator)
+        let responsePrep = MRResponsePrepController(
+            fetcher: { item, directory in try await MRResponsePrepFetcher().fetch(item, into: directory) },
+            launcher: { [coordinator] item, directory, prompt, onSubmitted in
+                try await coordinator.launchResponsePrep(iid: item.iid, url: item.url, contextDirectory: directory,
+                                                         prompt: prompt, onSubmitted: onSubmitted)
+            },
+            submitter: { [sessionStore] id, prompt in
+                sessionStore.queuePrompt(prompt, for: id)
+            }
+        )
+        responsePrep.sessionsProvider = { [weak sessionStore] in
+            sessionStore?.sessions.map {
+                .init(id: $0.id, claudeSessionID: $0.claudeSessionID, activity: $0.activity,
+                      isSelected: $0.id == sessionStore?.selectedSessionID)
+            } ?? []
+        }
+        _ = sessionStore.addLifecycleSubscriber { [weak responsePrep] id, event in
+            responsePrep?.handleLifecycle(sessionID: id, event: event)
+        }
+        if !Self.isRunningUnitTests {
+            MRReviewScanController.shared.authoredScanObserver = { [weak responsePrep] items in
+                responsePrep?.handleAuthoredScan(items)
+            }
+        }
+        _mrResponsePrep = State(initialValue: responsePrep)
         _developerActions = State(initialValue: DeveloperActionRunner())
 
         // Quit confirmation: any live (non-exited) session blocks a silent
@@ -443,6 +470,8 @@ struct ConsoleApp: App {
             .environment(launchCoordinator)
             .environment(managedClaudeService)
             .environment(mrReviewScanScheduler)
+            .environment(mrResponsePrep)
+            .environment(storySynopses)
             .environment(sessionWorkspaceLayout)
             .environment(sessionNewRequest)
             .environment(developerActions)
@@ -675,6 +704,12 @@ struct ConsoleApp: App {
         didRunAppBootstrap = true
 
         GlobalHotkeyManager.shared.install()
+        // Voice-command hotkey (~ or fn; Settings → Voice Command Key). Local to
+        // Console; ~ is ignored while typing in a text field, terminal or page.
+        VoiceCommandHotkeyMonitor.shared.onTrigger = {
+            Task { await MenuBarViewModel.shared?.beginPushToTalk() }
+        }
+        VoiceCommandHotkeyMonitor.shared.install()
         #if DEBUG
         if developerModeManager.isDeveloperModeEnabled {
             applyAlwaysOnTop(alwaysOnTop)
@@ -702,6 +737,9 @@ struct ConsoleApp: App {
             try await service.perform(invocation)
         }
         mrReviewScanScheduler.start()
+        storySynopses.configure { invocation in
+            try await service.perform(invocation)
+        }
     }
 
     /// Prepares today's Morning Brief at launch so the report is ready

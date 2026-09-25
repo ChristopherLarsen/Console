@@ -13,7 +13,9 @@ enum JiraDataBoundary: String, Codable, Equatable, Sendable, CaseIterable {
     /// Personal site / synthetic fixtures. LLM transport permitted.
     case personalInstance
     /// Company instance rendered in Console's WebView. DOM-only; LLM
-    /// transport is refused by policy, never by configuration.
+    /// transport is refused by policy, never by configuration. Sole
+    /// exception: Review Synopsis (authorized 2026-09-24,
+    /// docs/story-synopsis.md) sends DOM-read story text to Claude.
     case companyInstance
 }
 

@@ -6,6 +6,9 @@ struct HomeView: View {
     @Environment(SessionStore.self) private var sessionStore: SessionStore?
     @Environment(SessionLaunchCoordinator.self) private var launchCoordinator
     @Environment(MRReviewScanScheduler.self) private var reviewScanScheduler: MRReviewScanScheduler?
+    @Environment(MRResponsePrepController.self) private var responsePrep: MRResponsePrepController?
+    @Environment(StorySynopsisController.self) private var synopses: StorySynopsisController?
+    @State private var synopsisTicket: JiraTicketSummary?
 
     @State private var sources: HomeSourcesCoordinator
     @State private var model: HomeBoardModel
@@ -34,6 +37,16 @@ struct HomeView: View {
             }
             .onChange(of: webViewJiraURL) {
                 sources.jiraURLChanged()
+            }
+            // Synopses leave the cache once their story is In Progress (or off
+            // the list), whenever a JIRA extraction lands.
+            .onChange(of: model.snapshot().jiraStatus.lastSuccessfulExtraction, initial: true) {
+                pruneSynopses()
+            }
+            .sheet(item: $synopsisTicket) { ticket in
+                if let synopses {
+                    StorySynopsisSheet(ticket: ticket, controller: synopses) { model.openStory(ticket) }
+                }
             }
             .accessibilityIdentifier("HomeDashboard")
             .alert("Review scan unavailable", isPresented: Binding(
@@ -173,6 +186,7 @@ struct HomeView: View {
             stateLine: story.status,
             bottomActions: [
                 HomeCardAction(label: "Open in JIRA", kind: .jira) { model.openStory(story) },
+                HomeCardAction(label: "Review Synopsis") { showSynopsis(story) },
                 HomeCardAction(label: isLaunching ? "Starting…" : "Start story") {
                     guard !isLaunching else { return }
                     Task {
@@ -189,6 +203,20 @@ struct HomeView: View {
             isLaunching: isLaunching
         )
         .accessibilityIdentifier("HomeNextStoryCard.\(index)")
+    }
+
+    private func showSynopsis(_ story: JiraTicketSummary) {
+        guard let synopses else { return }
+        synopses.request(story)
+        synopsisTicket = story
+    }
+
+    private func pruneSynopses() {
+        guard let synopses else { return }
+        let snapshot = model.snapshot()
+        let board = HomeBoardBuilder.build(snapshot)
+        synopses.prune(inProgress: board.inProgressTickets,
+                       currentTickets: snapshot.jiraStatus.check == .current ? snapshot.jiraTickets : nil)
     }
 
     // MARK: In Progress
@@ -340,9 +368,10 @@ struct HomeView: View {
             recovery: board.reviewHealth == .unconfigured ? .setUpGitLab : nil,
             onRecovery: { model.openSettings() },
             statusMessage: reviewScanStatus,
+            pinnedContent: AnyView(responsePrepCards),
             content: {
                 if board.reviewQueue.isEmpty {
-                    if board.reviewHealth == .ready {
+                    if board.reviewHealth == .ready, responsePrep?.items.isEmpty ?? true {
                         HomeBoardPlaceholderCard(
                             title: "No merge requests to review",
                             accessibilityIdentifier: "HomeReviewEmptyPlaceholder"
@@ -409,6 +438,39 @@ struct HomeView: View {
             }
         )
         .accessibilityIdentifier("HomeReviewColumn")
+    }
+
+    /// The user's own merge requests with unresolved comments lead the Review
+    /// column: Console drafts responses for them in a read-only session.
+    @ViewBuilder
+    private var responsePrepCards: some View {
+        if let responsePrep {
+            ForEach(Array(responsePrep.items.enumerated()), id: \.element.id) { index, item in
+                HomeBoardResponsePrepCard(
+                    item: item,
+                    state: responsePrep.state(for: item),
+                    canReviewResponse: responsePrep.liveSessionID(for: item) != nil
+                        || responsePrep.resumableRecord(for: item) != nil,
+                    open: { HomeBoardModel.executeNavigation(.openMergeRequest(url: item.url)) },
+                    reviewResponse: { reviewResponse(item) },
+                    prepare: { responsePrep.prepare(item) }
+                )
+                .accessibilityIdentifier("HomeResponsePrepCard.\(index)")
+            }
+        }
+    }
+
+    /// Opens the prep session: the live one in place, otherwise its saved
+    /// conversation is resumed.
+    private func reviewResponse(_ item: AuthoredMRAttention) {
+        guard let responsePrep else { return }
+        if let id = responsePrep.liveSessionID(for: item) {
+            model.selectSession(id)
+            sessionStore?.acknowledgeCompletion(sessionID: id)
+            sessionStore?.focusSelectedTerminal()
+        } else if let record = responsePrep.resumableRecord(for: item) {
+            Task { await launchCoordinator.resumeFromCard(record: record) }
+        }
     }
 
     private var isReviewRefreshing: Bool {

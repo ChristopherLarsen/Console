@@ -30,7 +30,9 @@ struct SessionLaunchFailure: Equatable {
 /// WebView-derived ticket/MR fields are local routing and display data.
 /// Contextual launches open an idle session in the configured folder; they
 /// never generate or send a source-derived prompt. The developer types work
-/// context into Claude explicitly.
+/// context into Claude explicitly. The one exception is MR response prep
+/// (`launchResponsePrep`): a background, read-only session that receives a
+/// Console-authored prompt naming only the validated project and MR number.
 @MainActor
 @Observable
 final class SessionLaunchCoordinator {
@@ -265,6 +267,17 @@ final class SessionLaunchCoordinator {
         )
     }
 
+    /// Resumes a saved conversation from a Home card, reporting failure on
+    /// the shared launch banner, and focuses it.
+    func resumeFromCard(record: SessionRestorationRecord) async {
+        do {
+            _ = try await launchResume(record: record)
+            store.focusSelectedTerminal()
+        } catch {
+            lastFailure = SessionLaunchFailure(error: error)
+        }
+    }
+
     func openAuthoredMR(_ item: AuthoredMRAttention) async {
         guard !isOpeningAuthoredMR else { return }
         isOpeningAuthoredMR = true
@@ -299,6 +312,51 @@ final class SessionLaunchCoordinator {
         try store.linkAuthoredMR(item, sessionID: id)
         pendingAuthoredMR = nil
         store.focusSelectedTerminal()
+    }
+
+    /// A launched background session: Console's runtime ID plus the durable
+    /// Claude conversation identity used to find or resume it later.
+    struct BackgroundLaunch: Equatable {
+        let sessionID: UUID
+        let claudeSessionID: UUID
+        let name: String
+        let workingDirectory: URL
+    }
+
+    /// MR response prep: a background, read-only session in the Session Folder
+    /// that answers `prompt` once Claude is live. It never selects, focuses or
+    /// navigates, never retires the Restore Sessions offer, and is not linked
+    /// as the MR's authoring conversation (its MR chip stays a related link).
+    /// `onSubmitted` runs when the prompt has been typed. Throws the launch
+    /// error without recording `lastFailure`; the caller shows it on its card.
+    func launchResponsePrep(
+        iid: Int,
+        url: URL,
+        contextDirectory: URL,
+        prompt: String,
+        onSubmitted: @escaping @MainActor () -> Void
+    ) async throws -> BackgroundLaunch {
+        let folder = try validatedSessionFolder(purpose: .general)
+        let request = SessionCreationRequest(
+            purpose: .general,
+            name: "MR-\(iid) Response",
+            workingDirectory: folder.directoryURL,
+            source: .mergeRequest(iid: String(iid), title: nil, url: url),
+            toolProfile: .readOnlyPrep(contextDirectory: contextDirectory),
+            revealsSession: false
+        )
+        let sessionID = try store.createSession(request: request)
+        guard let session = store.session(withID: sessionID) else { throw SessionCreationError.sessionLaunchFailed }
+        // Without the bridge the prompt would never be sent and the card could
+        // never learn the prep finished.
+        guard session.bridgeStatus != .unavailable else {
+            store.stopSession(id: sessionID)
+            throw SessionCreationError.pluginAssemblyFailed
+        }
+        store.queueSlashCommand("/rename \(session.name)", for: sessionID)
+        store.queuePrompt(prompt, for: sessionID, onSubmitted: onSubmitted)
+        return BackgroundLaunch(sessionID: sessionID, claudeSessionID: session.claudeSessionID,
+                                name: session.name, workingDirectory: session.workingDirectory)
     }
 
     /// The single Session Folder, validated for this purpose. Refuses —

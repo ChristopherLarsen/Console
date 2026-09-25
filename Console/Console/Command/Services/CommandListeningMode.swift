@@ -264,6 +264,33 @@ final class CommandListeningMode: ListeningMode {
         }
     }
 
+    // MARK: - Push-to-Talk
+
+    /// Starts capturing a command immediately, without a wake word, from a
+    /// fresh transcript: the voice-command hotkey's entry point. The captured
+    /// text is delivered through `onCommandTranscribed` like any command.
+    /// Returns false when the mode is inactive or already capturing.
+    @discardableResult
+    func beginPushToTalkCapture() -> Bool {
+        guard isActive, phase == .idle else { return false }
+        restartTranscriptSession()
+        hasDetectedInCurrentSession = true
+        detectedWord = nil
+        currentWakeWord = nil
+        wakeWordTranscriptPrefix = ""
+        suppressWakeWordCue = false
+        SoundFeedbackService.shared.play(.wakeWordDetected)
+        phase = .capturingCommand
+        commandCaptureStartTime = Date()
+        hasReceivedPostWakeWordSpeech = false
+        lastSpeechTime = Date()
+        lastAudioLevel = 0.0
+        isCurrentlySilent = false
+        lastTranscriptSnapshot = ""
+        startMaxDurationTimer()
+        return true
+    }
+
     private func wakeWordParts(_ wakeWord: String) -> [String] {
         wakeWord.lowercased()
             .split(separator: " ")
@@ -367,7 +394,9 @@ final class CommandListeningMode: ListeningMode {
     /// Extracts the command portion from the current transcript by stripping the wake word.
     private func extractCommandText(from transcript: String) -> String {
         let rawText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !rawText.isEmpty, let wakeWord = currentWakeWord else { return "" }
+        guard !rawText.isEmpty else { return "" }
+        // Push-to-talk captures have no wake word: the whole transcript is the command.
+        guard let wakeWord = currentWakeWord else { return rawText }
 
         let stripped = WakeWordStripper.stripWakeWord(
             from: rawText,

@@ -42,6 +42,19 @@ struct ConnectedBuddyView: View {
     }
 
     var body: some View {
+        Button {
+            Task { await MenuBarViewModel.shared?.beginPushToTalk() }
+        } label: {
+            panel
+        }
+        .buttonStyle(.plain)
+        .help("Click to speak a voice command")
+        .accessibilityLabel(accessibilityStatus)
+        .accessibilityHint("Starts listening for a voice command")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var panel: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 12)
                 .fill(LinearGradient(
@@ -87,7 +100,6 @@ struct ConnectedBuddyView: View {
             }
         }
         .aspectRatio(1, contentMode: .fit)
-        .accessibilityLabel(accessibilityStatus)
     }
 }
 

@@ -322,7 +322,8 @@ final class SessionStore {
         // A brand-new session supersedes whatever was saved from a previous
         // launch: retire the restore offer so the sidebar row disappears and
         // the saved snapshot holds only the work the user has actually started.
-        invalidateSavedRestorations()
+        // Background launches are Console's work, not the user's, so they keep it.
+        if request.revealsSession { invalidateSavedRestorations() }
         return sessionID
     }
 
@@ -354,7 +355,7 @@ final class SessionStore {
         let coordinator = SessionTerminalCoordinator(sessionID: consoleID, store: self)
         terminalView.processDelegate = coordinator
         (terminalView as? ConsoleTerminalView)?.retainedSessionCoordinator = coordinator
-        armTerminalFocus(terminalView)
+        if request.revealsSession { armTerminalFocus(terminalView) }
 
         // Plugin/bridge preparation is optional. A failure of either the
         // plugin assembly or the socket/server still launches the resolved
@@ -373,7 +374,8 @@ final class SessionStore {
                 claudeSessionID: claudeID,
                 pluginDirectory: pluginRoot.path,
                 resume: record != nil,
-                agent: Self.agent(for: request)
+                agent: Self.agent(for: request),
+                toolProfile: record == nil ? request.toolProfile : .standard
             )
             environment = childEnvironment(
                 bridgeEnvironment: [
@@ -392,7 +394,8 @@ final class SessionStore {
                 claudeSessionID: claudeID,
                 pluginDirectory: nil,
                 resume: record != nil,
-                agent: Self.agent(for: request)
+                agent: Self.agent(for: request),
+                toolProfile: record == nil ? request.toolProfile : .standard
             )
             environment = childEnvironment(bridgeEnvironment: [:])
             bridgeStatus = .unavailable
@@ -425,7 +428,7 @@ final class SessionStore {
         if let token {
             sessionTokens[consoleID] = token
         }
-        selectedSessionID = consoleID
+        if request.revealsSession { selectedSessionID = consoleID }
         if let record { startingRestorations[consoleID] = record }
 
         do {
@@ -462,7 +465,7 @@ final class SessionStore {
         let coordinator = SessionTerminalCoordinator(sessionID: consoleID, store: self)
         terminalView.processDelegate = coordinator
         (terminalView as? ConsoleTerminalView)?.retainedSessionCoordinator = coordinator
-        armTerminalFocus(terminalView)
+        if request.revealsSession { armTerminalFocus(terminalView) }
 
         let session = ConsoleSession(
             id: consoleID,
@@ -481,7 +484,7 @@ final class SessionStore {
 
         let previousSelection = selectedSessionID
         sessions.append(session)
-        selectedSessionID = consoleID
+        if request.revealsSession { selectedSessionID = consoleID }
         if let record { startingRestorations[consoleID] = record }
 
         do {
@@ -557,25 +560,51 @@ final class SessionStore {
     /// three Console MCP tool names. The local Console display name is omitted
     /// — it must not reach the child CLI. Uninstrumented launches pass identity
     /// only so a missing plugin cannot block Claude.
+    ///
+    /// A `.readOnlyPrep` profile replaces the bypass with `dontAsk`, limits the
+    /// built-in tools to Read/Grep/Glob, denies every MCP tool (plugin servers
+    /// load even under `--strict-mcp-config`), and preapproves nothing. The
+    /// bridge plugin still loads: its hooks report lifecycle, only its MCP
+    /// tools are denied.
     static func launchArguments(
         claudeSessionID: UUID,
         pluginDirectory: String?,
         resume: Bool = false,
-        agent: String? = nil
+        agent: String? = nil,
+        toolProfile: SessionToolProfile = .standard
     ) -> [String] {
-        var arguments = [
-            resume ? "--resume" : "--session-id", claudeSessionID.uuidString,
-            "--dangerously-skip-permissions",
-        ]
-        if let agent {
-            arguments += ["--agent", agent]
-        }
-        if let pluginDirectory {
-            arguments += ["--plugin-dir", pluginDirectory]
-            arguments += ["--allowedTools"] + ConsoleClaudePluginAssembler.allowedToolNames
+        var arguments = [resume ? "--resume" : "--session-id", claudeSessionID.uuidString]
+        switch toolProfile {
+        case .standard:
+            arguments.append("--dangerously-skip-permissions")
+            if let agent {
+                arguments += ["--agent", agent]
+            }
+            if let pluginDirectory {
+                arguments += ["--plugin-dir", pluginDirectory]
+                arguments += ["--allowedTools"] + ConsoleClaudePluginAssembler.allowedToolNames
+            }
+        case .readOnlyPrep(let contextDirectory):
+            arguments += ["--permission-mode", "dontAsk"]
+            arguments += ["--tools"] + readOnlyPrepTools
+            arguments += ["--disallowedTools"] + readOnlyPrepDeniedTools
+            arguments += ["--strict-mcp-config"]
+            arguments += ["--add-dir", contextDirectory.path]
+            if let pluginDirectory {
+                arguments += ["--plugin-dir", pluginDirectory]
+            }
         }
         return arguments
     }
+
+    /// The only built-in tools a read-only prep session has.
+    static let readOnlyPrepTools = ["Read", "Grep", "Glob"]
+
+    /// Denied even if the user's own settings allow them. `--tools` already
+    /// removes the built-ins; the deny list is the backstop.
+    static let readOnlyPrepDeniedTools = [
+        "Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Agent", "Task", "mcp__*",
+    ]
 
     /// Environment for a session launch: Console's environment layered with
     /// terminal defaults and the cached login-shell snapshot (matching the
@@ -1077,7 +1106,10 @@ final class SessionStore {
     }
 
     fileprivate func handleValidatedEnvelope(sessionID: UUID, envelope: BridgeEnvelope) {
-        markActive(sessionID: sessionID)
+        let becameActive = markActive(sessionID: sessionID)
+        // Queued input goes out after this envelope's event is applied, so a
+        // queued prompt's Working state is not overwritten by SessionStart.
+        defer { if becameActive { flushPendingSlashCommands(sessionID: sessionID) } }
 
         let event: SessionLifecycleEvent
         switch envelope.kind {
@@ -1108,12 +1140,12 @@ final class SessionStore {
         applyEvent(event, to: sessionID)
     }
 
-    private func markActive(sessionID: UUID) {
-        if let index = sessions.firstIndex(where: { $0.id == sessionID }),
-           sessions[index].bridgeStatus != .active {
-            sessions[index].bridgeStatus = .active
-            flushPendingSlashCommands(sessionID: sessionID)
-        }
+    /// Returns true when this envelope is the session's first validated one.
+    private func markActive(sessionID: UUID) -> Bool {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }),
+              sessions[index].bridgeStatus != .active else { return false }
+        sessions[index].bridgeStatus = .active
+        return true
     }
 
     // MARK: - Queued slash commands
@@ -1122,7 +1154,22 @@ final class SessionStore {
     /// input. Contextual launches (review rename + default color) enqueue
     /// right after creation; sending earlier would type into the pre-Claude
     /// login shell. Keyed by session, flushed in queue order.
-    private var pendingSlashCommands: [UUID: [String]] = [:]
+    private var pendingSlashCommands: [UUID: [QueuedInput]] = [:]
+
+    /// One queued terminal submission. A prompt is Console-authored text sent
+    /// after any queued slash commands; `onSubmitted` runs once its Return is
+    /// written.
+    private enum QueuedInput {
+        case command(String)
+        case prompt(String, onSubmitted: (@MainActor () -> Void)?)
+
+        var text: String {
+            switch self {
+            case .command(let command): return command
+            case .prompt(let prompt, _): return prompt
+            }
+        }
+    }
 
     /// Spacing between a header-menu command's text and its Return, and between
     /// consecutive queued commands. Claude Code reads a burst containing the
@@ -1140,7 +1187,22 @@ final class SessionStore {
             sendSlashCommand(command, to: sessionID)
             return
         }
-        pendingSlashCommands[sessionID, default: []].append(command)
+        pendingSlashCommands[sessionID, default: []].append(.command(command))
+    }
+
+    /// Queues a single-line, Console-authored prompt behind any queued slash
+    /// commands and submits it once the bridge reports the session live. It is
+    /// typed like a queued command (text, then a separately written Return)
+    /// and marks the session Working. Exited sessions drop it.
+    func queuePrompt(_ prompt: String, for sessionID: UUID, onSubmitted: (@MainActor () -> Void)? = nil) {
+        let line = prompt.components(separatedBy: .newlines).joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+        guard !line.isEmpty, let session = session(withID: sessionID), session.activity != .exited else { return }
+        if session.bridgeStatus == .active {
+            submitQueuedCommands([.prompt(line, onSubmitted: onSubmitted)], index: 0, sessionID: sessionID)
+            return
+        }
+        pendingSlashCommands[sessionID, default: []].append(.prompt(line, onSubmitted: onSubmitted))
     }
 
     private func flushPendingSlashCommands(sessionID: UUID) {
@@ -1152,12 +1214,12 @@ final class SessionStore {
     /// bytes and its own carriage return are separate writes, spaced apart,
     /// so Claude Code submits each command individually instead of reading
     /// them as one pasted line.
-    private func submitQueuedCommands(_ commands: [String], index: Int, sessionID: UUID) {
+    private func submitQueuedCommands(_ commands: [QueuedInput], index: Int, sessionID: UUID) {
         guard index < commands.count,
               let session = session(withID: sessionID),
               session.activity != .exited else { return }
         sendToTerminal(
-            PromptSubmissionEngine.replacementCommandText(commands[index]),
+            PromptSubmissionEngine.replacementCommandText(commands[index].text),
             sessionID: sessionID,
             terminalView: session.terminalView
         )
@@ -1170,6 +1232,10 @@ final class SessionStore {
                 sessionID: sessionID,
                 terminalView: session.terminalView
             )
+            if case .prompt(_, let onSubmitted) = commands[index] {
+                self.applyEvent(.promptSubmitted, to: sessionID)
+                onSubmitted?()
+            }
             self.afterQueuedCommandSpacing { [weak self] in
                 self?.submitQueuedCommands(commands, index: index + 1, sessionID: sessionID)
             }
