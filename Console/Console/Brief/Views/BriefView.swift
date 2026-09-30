@@ -5,6 +5,8 @@ import SwiftUI
 /// aloud at the morning meeting.
 struct BriefView: View {
     @State private var viewModel: BriefViewModel
+    @State private var showingWorkdayPicker = false
+    @State private var calendarSize: CGSize = .zero
 
     init(workspacePathsProvider: @escaping () -> [String] = { [] },
          workspacesProvider: (() -> [BriefWorkspaceSnapshot])? = nil,
@@ -88,24 +90,37 @@ struct BriefView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 14) {
-                section(title: "PREVIOUS WORK DAY") {
-                    DatePicker(
-                        selection: workdayBinding,
-                        displayedComponents: .date
-                    ) { EmptyView() }
-                    .accessibilityIdentifier("BriefWorkdayPicker")
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("PREVIOUS WORK DAY")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        workdaySelector
+                    }
 
                     Divider()
                         .padding(.horizontal, -12)
 
-                    if let lines = viewModel.brief?.yesterdayLines, !lines.isEmpty {
-                        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                            reportRow(text: line)
+                    HStack(alignment: .top, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if let lines = viewModel.brief?.yesterdayLines, !lines.isEmpty {
+                                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                                    reportRow(text: line)
+                                }
+                            } else if !viewModel.isLoading {
+                                reportRow(text: "Nothing recorded yet.")
+                            }
                         }
-                    } else if !viewModel.isLoading {
-                        reportRow(text: "Nothing recorded yet.")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if showingWorkdayPicker {
+                            workdayCalendar
+                        }
                     }
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Previous work day")
             }
             .padding(12)
         }
@@ -117,21 +132,6 @@ struct BriefView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("MorningBriefCard")
-    }
-
-    private func section<Content: View>(
-        title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
-            content()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(title)
     }
 
     private func reportRow(text: String) -> some View {
@@ -147,6 +147,63 @@ struct BriefView: View {
     }
 
     // MARK: - Workday picker
+
+    private var workdaySelector: some View {
+        HStack(spacing: 6) {
+            Button {
+                moveWorkday(by: -1)
+            } label: {
+                Image(systemName: "arrow.left")
+            }
+            .help("Previous day")
+            .accessibilityLabel("Previous day")
+            .accessibilityIdentifier("BriefPreviousDay")
+
+            Button {
+                showingWorkdayPicker.toggle()
+            } label: {
+                Text(workdayBinding.wrappedValue.formatted(date: .abbreviated, time: .omitted))
+            }
+            .help("Choose a date")
+            .accessibilityLabel("Choose work day")
+            .accessibilityValue(workdayBinding.wrappedValue.formatted(date: .complete, time: .omitted))
+            .accessibilityIdentifier("BriefWorkdayPicker")
+
+            Button {
+                moveWorkday(by: 1)
+            } label: {
+                Image(systemName: "arrow.right")
+            }
+            .help("Next day")
+            .accessibilityLabel("Next day")
+            .accessibilityIdentifier("BriefNextDay")
+        }
+        .disabled(viewModel.brief == nil)
+    }
+
+    private var workdayCalendar: some View {
+        DatePicker("Work day", selection: workdayBinding, displayedComponents: .date)
+            .datePickerStyle(.graphical)
+            .labelsHidden()
+            .fixedSize()
+            .onGeometryChange(for: CGSize.self) { geometry in
+                geometry.size
+            } action: { size in
+                calendarSize = size
+            }
+            .scaleEffect(1.5)
+            // Scaling alone leaves the original layout footprint. Reserve the
+            // enlarged size too, so the calendar cannot overlap the report.
+            .frame(width: calendarSize == .zero ? nil : calendarSize.width * 1.5,
+                   height: calendarSize == .zero ? nil : calendarSize.height * 1.5)
+            .accessibilityIdentifier("BriefWorkdayCalendar")
+    }
+
+    private func moveWorkday(by days: Int) {
+        guard let date = Calendar.current.date(byAdding: .day, value: days,
+                                               to: workdayBinding.wrappedValue) else { return }
+        workdayBinding.wrappedValue = date
+    }
 
     /// The displayed workday: the explicit pick when set, otherwise the
     /// day the brief actually reported. Picking a date regenerates the
