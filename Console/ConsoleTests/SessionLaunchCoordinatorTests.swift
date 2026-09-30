@@ -984,6 +984,34 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         XCTAssertTrue(stack.store.debugTerminalSendBytes.isEmpty, "resuming must not restart the review")
     }
 
+    func testAuthoredMRResponseOpensSavedAuthorInsteadOfPrepAndReusesLiveSession() async throws {
+        let stack = makeStack()
+        let folder = try addWorkspace(stack, named: "ResponseAuthor")
+        let authorID = UUID()
+        try writeHistoryTranscript(authorID)
+        let author = SessionRestorationRecord(claudeSessionID: authorID, name: "ENG-42",
+            workingDirectory: folder.directoryURL, purpose: .existingTicket)
+        try stack.store.associations.remember(record: author, artifacts: [
+            .init(kind: .gitlabMergeRequest, label: "!7", url: authoredMR.url)
+        ], authoredMR: authoredMR.url)
+        let prepID = UUID()
+        try writeHistoryTranscript(prepID)
+        let prep = SessionRestorationRecord(claudeSessionID: prepID, name: "MR-7 Response",
+            workingDirectory: folder.directoryURL, purpose: .general)
+        let prepSessionID = try await stack.coordinator.launchResume(record: prep)
+
+        await stack.coordinator.openAuthoredMR(authoredMR)
+        XCTAssertEqual(stack.store.selectedSession?.claudeSessionID, authorID)
+        XCTAssertEqual(stack.store.selectedSession?.name, "ENG-42")
+        XCTAssertEqual(stack.launcher.lastArguments?.prefix(2), ["--resume", authorID.uuidString])
+        XCTAssertNil(stack.coordinator.pendingAuthoredMR)
+        let authorSessionID = stack.store.selectedSessionID
+        stack.store.select(sessionID: prepSessionID)
+        await stack.coordinator.openAuthoredMR(authoredMR)
+        XCTAssertEqual(stack.store.selectedSessionID, authorSessionID)
+        XCTAssertEqual(stack.launcher.launchCount, 2, "Reopening the author must only switch terminals")
+    }
+
     func testAuthoredMRMissingTranscriptOffersFallbackWithoutLosingLink() async throws {
         let stack = makeStack()
         let folder = try addWorkspace(stack, named: "MissingHistory")

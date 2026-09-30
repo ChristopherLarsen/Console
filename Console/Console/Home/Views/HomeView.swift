@@ -449,8 +449,7 @@ struct HomeView: View {
                 HomeBoardResponsePrepCard(
                     item: item,
                     state: responsePrep.state(for: item),
-                    canReviewResponse: responsePrep.liveSessionID(for: item) != nil
-                        || responsePrep.resumableRecord(for: item) != nil,
+                    canReviewResponse: !launchCoordinator.isOpeningAuthoredMR,
                     open: { HomeBoardModel.executeNavigation(.openMergeRequest(url: item.url)) },
                     reviewResponse: { reviewResponse(item) },
                     prepare: { responsePrep.prepare(item) }
@@ -460,17 +459,10 @@ struct HomeView: View {
         }
     }
 
-    /// Opens the prep session: the live one in place, otherwise its saved
-    /// conversation is resumed.
+    /// Continue the MR's original development conversation, reusing its live
+    /// terminal or resuming the saved conversation through the shared resolver.
     private func reviewResponse(_ item: AuthoredMRAttention) {
-        guard let responsePrep else { return }
-        if let id = responsePrep.liveSessionID(for: item) {
-            model.selectSession(id)
-            sessionStore?.acknowledgeCompletion(sessionID: id)
-            sessionStore?.focusSelectedTerminal()
-        } else if let record = responsePrep.resumableRecord(for: item) {
-            Task { await launchCoordinator.resumeFromCard(record: record) }
-        }
+        Task { await launchCoordinator.openAuthoredMR(item) }
     }
 
     private var isReviewRefreshing: Bool {

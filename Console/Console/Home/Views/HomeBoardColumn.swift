@@ -398,7 +398,7 @@ struct HomeBoardReviewRequestCard: View {
 
 /// Review column card for one of the user's own merge requests with
 /// unresolved comments. Console prepares draft responses in a background,
-/// read-only session; "Review response" opens that session. Nothing on this
+/// read-only session; "Review response" opens the development session. Nothing on this
 /// card commits, pushes or changes GitLab or JIRA.
 struct HomeBoardResponsePrepCard: View {
     let item: AuthoredMRAttention
@@ -474,9 +474,7 @@ struct HomeBoardResponsePrepCard: View {
         switch state {
         case .preparing, .ready, .interrupted:
             CapsuleActionButton("Review response", isDisabled: !canReviewResponse, action: reviewResponse)
-                .help(state == .preparing
-                      ? "Watch Claude draft the responses. Nothing is posted or committed."
-                      : "Open the session with the drafted responses")
+                .help("Open or resume the session used to develop this merge request")
                 .accessibilityIdentifier("HomeResponsePrepReviewButton")
         case .notPrepared:
             CapsuleActionButton("Prepare response", action: prepare)

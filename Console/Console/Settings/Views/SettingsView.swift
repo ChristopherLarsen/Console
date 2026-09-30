@@ -414,7 +414,7 @@ struct SettingsView: View {
                 .themedToggleStyle()
                 .accessibilityIdentifier("MRResponsePrepEnabledToggle")
 
-            Text("When a scan finds unresolved comments on your own MR's, Console reads them and the MR's diffs with read-only glab calls and opens a background Claude session that drafts a reply and proposed change per thread. The session can only read files: nothing is committed, pushed, posted to GitLab or changed in JIRA. Review the drafts from the card's Review response button.")
+            Text("When a scan finds unresolved comments on your own MR's, Console reads them and the MR's diffs with read-only glab calls and opens a background Claude session that drafts a reply and proposed change per thread. The session can only read files: nothing is committed, pushed, posted to GitLab or changed in JIRA. The card's Review response button opens the session used to develop the MR.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
