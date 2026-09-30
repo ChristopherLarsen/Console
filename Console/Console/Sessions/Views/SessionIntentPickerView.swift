@@ -380,7 +380,7 @@ struct SessionIntentPickerView: View {
 
             HStack {
                 Spacer()
-                Button("Agent Review") {
+                Button("Launch agent-review") {
                     launchAgentReview()
                 }
                 .accessibilityIdentifier("\(reviewStepIdentifier).AgentReviewButton")
