@@ -472,7 +472,7 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         assertSourceMetadataAbsent(from: stack)
     }
 
-    func testHomeReviewLaunchRenamesClaudeSessionAndSetsDefaultColor() async throws {
+    func testHomeReviewLaunchSubmitsRenameColorAndReviewSeparately() async throws {
         let stack = makeStack()
         try addWorkspace(
             stack,
@@ -484,14 +484,15 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             iid: Sentinel.mrIID,
             title: "NMA-1234: fix the login redirect",
             url: Sentinel.mrURL,
-            displayName: "NMA-1234 Review"
+            displayName: "NMA-1234 Review",
+            submitReviewPrompt: true
         )
 
         let session = try XCTUnwrap(stack.store.selectedSession)
         XCTAssertEqual(session.name, "NMA-1234 Review")
         XCTAssertTrue(
             stack.store.debugTerminalSendBytes.isEmpty,
-            "the rename and color commands wait for the bridge, never the pre-Claude shell"
+            "all three submissions wait for the bridge, never the pre-Claude shell"
         )
 
         stack.store.queuedCommandSpacing = 0
@@ -504,7 +505,30 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             "\r",
             "\u{15}\u{0B}/color purple",
             "\r",
+            "\u{15}\u{0B}Review !\(Sentinel.mrIID)",
+            "\r",
         ], "each command is submitted by its own carriage return")
+        XCTAssertEqual(stack.store.session(withID: session.id)?.activity, .working)
+    }
+
+    func testHomeReviewWithoutJiraKeySubmitsReviewForValidatedURLNumber() async throws {
+        let stack = makeStack()
+        try addWorkspace(stack, named: "ReviewWithoutJira", gitRemote: "https://gitlab.com/grp/proj.git")
+        await stack.coordinator.beginMergeRequestReview(
+            iid: "42", title: "Fix redirect", url: URL(string: "https://gitlab.com/grp/proj/-/merge_requests/42")!,
+            submitReviewPrompt: true
+        )
+        let session = try XCTUnwrap(stack.store.selectedSession)
+        XCTAssertEqual(session.name, "Review !42")
+        XCTAssertTrue(stack.store.debugTerminalSendBytes.isEmpty)
+        stack.store.queuedCommandSpacing = 0
+        receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-mr-only-review")
+        XCTAssertEqual(stack.store.debugTerminalSendBytes.filter { $0.sessionID == session.id }.map(\.utf8), [
+            "\u{15}\u{0B}/rename Review !42", "\r",
+            "\u{15}\u{0B}/color purple", "\r",
+            "\u{15}\u{0B}Review !42", "\r",
+        ])
+        XCTAssertEqual(stack.store.session(withID: session.id)?.activity, .working)
     }
 
     func testSelfReviewLaunchUsesReviewAgentAndQueuesRenameAndColor() async throws {
@@ -912,7 +936,8 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             iid: Sentinel.mrIID,
             title: "NMA-1234: fix the login redirect",
             url: Sentinel.mrURL,
-            displayName: "NMA-1234 Review"
+            displayName: "NMA-1234 Review",
+            submitReviewPrompt: true
         )
         XCTAssertEqual(stack.launcher.launchCount, 1)
         XCTAssertNotNil(
@@ -928,9 +953,16 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             iid: Sentinel.mrIID,
             title: "NMA-1234: fix the login redirect",
             url: Sentinel.mrURL,
-            displayName: "NMA-1234 Review"
+            displayName: "NMA-1234 Review",
+            submitReviewPrompt: true
         )
         XCTAssertEqual(stack.launcher.launchCount, 1, "a second Start Review opens the existing session")
+        let session = try XCTUnwrap(stack.store.selectedSession)
+        stack.store.queuedCommandSpacing = 0
+        receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-repeated-review")
+        XCTAssertEqual(stack.store.debugTerminalSendBytes.filter {
+            $0.sessionID == session.id && $0.utf8 == "\u{15}\u{0B}Review !\(Sentinel.mrIID)"
+        }.count, 1, "reopening a review must not queue another prompt")
     }
 
     func testReviewActionResumesKnownConversationThenReusesItsLiveSession() async throws {
@@ -941,11 +973,15 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         let record = SessionRestorationRecord(claudeSessionID: id, name: "Review", workingDirectory: folder.directoryURL, purpose: .review)
         try stack.store.associations.remember(record: record,
             artifacts: [.init(kind: .gitlabMergeRequest, label: "!7", url: authoredMR.url)])
-        await stack.coordinator.beginMergeRequestReview(iid: "7", title: nil, url: authoredMR.url)
+        await stack.coordinator.beginMergeRequestReview(iid: "7", title: nil, url: authoredMR.url, submitReviewPrompt: true)
         XCTAssertEqual(stack.store.selectedSession?.claudeSessionID, id)
         XCTAssertEqual(stack.launcher.lastArguments?.prefix(2), ["--resume", id.uuidString])
-        await stack.coordinator.beginMergeRequestReview(iid: "7", title: nil, url: authoredMR.url)
+        await stack.coordinator.beginMergeRequestReview(iid: "7", title: nil, url: authoredMR.url, submitReviewPrompt: true)
         XCTAssertEqual(stack.launcher.launchCount, 1)
+        let session = try XCTUnwrap(stack.store.selectedSession)
+        stack.store.queuedCommandSpacing = 0
+        receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-resumed-review")
+        XCTAssertTrue(stack.store.debugTerminalSendBytes.isEmpty, "resuming must not restart the review")
     }
 
     func testAuthoredMRMissingTranscriptOffersFallbackWithoutLosingLink() async throws {

@@ -501,7 +501,7 @@ struct HomeView: View {
         launchingReviews.insert(item.id)
         // Review sessions carry the story's key ("NMA-1234 Review"); MR-only
         // items keep the automatic "Review !<iid>" name. The launch queues
-        // /rename + /color purple so the Claude session matches once live.
+        // /rename, /color purple, then Review !<iid>, each submitted separately.
         let jiraKey = item.jiraIssueKey ?? JiraSourceContext.issueKey(in: item.title)
         Task {
             defer { launchingReviews.remove(item.id) }
@@ -509,7 +509,8 @@ struct HomeView: View {
                 iid: iid,
                 title: item.title,
                 url: item.mergeRequestURL,
-                displayName: jiraKey.map { "\($0) Review" }
+                displayName: jiraKey.map { "\($0) Review" },
+                submitReviewPrompt: true
             )
         }
     }

@@ -28,9 +28,9 @@ struct SessionLaunchFailure: Equatable {
 /// (Settings → Claude), creates sessions in it, and navigates to Sessions.
 ///
 /// WebView-derived ticket/MR fields are local routing and display data.
-/// Contextual launches open an idle session in the configured folder; they
-/// never generate or send a source-derived prompt. The developer types work
-/// context into Claude explicitly. The one exception is MR response prep
+/// Contextual launches open an idle session in the configured folder unless
+/// Home explicitly requests `Review !<iid>` using the validated MR URL number.
+/// Other work context is typed into Claude explicitly. MR response prep
 /// (`launchResponsePrep`): a background, read-only session that receives a
 /// Console-authored prompt naming only the validated project and MR number.
 @MainActor
@@ -142,8 +142,9 @@ final class SessionLaunchCoordinator {
     /// review card passes the Jira-keyed review name ("NMA-1234 Review");
     /// the MR page keeps the automatic name. A display name also queues
     /// `/rename <name>` and `/color purple` so the running Claude Code
-    /// session matches once its bridge reports it live.
-    func beginMergeRequestReview(iid: String, title: String?, url: URL, displayName: String? = nil) async {
+    /// session matches once its bridge reports it live. Home also requests a
+    /// review prompt, submitted separately after those commands on a fresh launch.
+    func beginMergeRequestReview(iid: String, title: String?, url: URL, displayName: String? = nil, submitReviewPrompt: Bool = false) async {
         lastFailure = nil
         switch HomeStorySessionMatcher.reviewResolution(
             for: url, in: store.sessions, associations: store.associations
@@ -164,10 +165,13 @@ final class SessionLaunchCoordinator {
         var prepared = draft(purpose: .review, source: source)
         if let displayName { prepared.name = displayName }
         let sessionID = await startContextualLaunch(prepared)
-        guard let displayName, let sessionID,
+        guard displayName != nil || submitReviewPrompt, let sessionID,
               let session = store.session(withID: sessionID) else { return }
         store.queueSlashCommand("/rename \(session.name)", for: sessionID)
         store.queueSlashCommand("/color purple", for: sessionID)
+        if submitReviewPrompt, let parsed = MergeRequestSourceContext.parse(fromURL: url) {
+            store.queuePrompt("Review !\(parsed.iid)", for: sessionID)
+        }
     }
 
     /// The previous review session a Review card can continue, for its button
