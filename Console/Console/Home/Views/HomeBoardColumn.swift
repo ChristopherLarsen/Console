@@ -413,7 +413,15 @@ struct HomeBoardResponsePrepCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: HomeCardMetrics.rowGap) {
             HStack(spacing: 5) {
-                HomeCardGlyph(color: stateColor, needsYou: state == .ready)
+                if state == .ready {
+                    Image(systemName: "eyes")
+                        .font(.system(size: 12))
+                        .foregroundStyle(stateColor)
+                        .frame(width: HomeCardMetrics.glyphSlotWidth, alignment: .leading)
+                        .accessibilityHidden(true)
+                } else {
+                    HomeCardGlyph(color: stateColor, needsYou: false)
+                }
 
                 Text("!\(item.iid)")
                     .font(HomeCardMetrics.identityFont)
@@ -493,7 +501,7 @@ struct HomeBoardResponsePrepCard: View {
     private var stateColor: Color {
         switch state {
         case .preparing: return .orange
-        case .ready: return AttentionChannel.needsYou.color
+        case .ready: return AttentionChannel.reviewResponseColor
         case .notPrepared, .interrupted, .failed: return .secondary
         }
     }

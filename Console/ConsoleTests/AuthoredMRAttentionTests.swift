@@ -13,16 +13,20 @@ final class AuthoredMRAttentionTests: XCTestCase {
     }
 
     private func item(discussions: Int = 1, approvals: Int = 1, satisfied: Bool = true,
-                      author: String = "me", host: String = "gitlab.example.test", iid: Int = 1) -> AuthoredMRAttention {
+                      responses: Int? = nil, author: String = "me", host: String = "gitlab.example.test", iid: Int = 1) -> AuthoredMRAttention {
         .init(project: "team/project", iid: iid,
               url: URL(string: "https://\(host)/team/project/-/merge_requests/\(iid)")!,
               title: "ENG-42 Work", authorUsername: author, state: "opened",
               unresolvedDiscussionCount: discussions, externalApprovalCount: approvals,
-              approvalRulesSatisfied: satisfied, jiraIssueKey: "ENG-42")
+              approvalRulesSatisfied: satisfied, jiraIssueKey: "ENG-42",
+              responseRequiredDiscussionCount: responses ?? discussions)
     }
 
     func testBothConditionsAndApprovalRequirements() {
         XCTAssertTrue(item().hasDiscussions)
+        XCTAssertTrue(item().needsResponse)
+        XCTAssertFalse(item(responses: 0).needsResponse)
+        XCTAssertTrue(item(discussions: 3, responses: 1).needsResponse)
         XCTAssertTrue(item().isApproved)
         XCTAssertFalse(item(approvals: 0).isApproved, "Zero required approvals alone is not approval")
         XCTAssertFalse(item(satisfied: false).isApproved)
@@ -45,6 +49,11 @@ final class AuthoredMRAttentionTests: XCTestCase {
         XCTAssertThrowsError(try decode([item(), item()]))
         XCTAssertThrowsError(try decode([item()], complete: false))
         XCTAssertThrowsError(try decode([item(discussions: -1)]))
+        XCTAssertThrowsError(try decode([item(responses: -1)]))
+        XCTAssertThrowsError(try decode([item(responses: 2)]))
+        var missingResponseEvidence = item()
+        missingResponseEvidence.responseRequiredDiscussionCount = nil
+        XCTAssertThrowsError(try decode([missingResponseEvidence]))
     }
 
     func testSharedScanPublishesOverlapRetainsOnFailureAndClearsOnSuccess() async throws {
@@ -147,6 +156,35 @@ final class AuthoredMRAttentionTests: XCTestCase {
         fixture.complete = true
         _ = await source.scan(trigger: .manual)
         XCTAssertEqual(source.discussionItems.map(\.iid), [1, 2], "A complete scan repopulates the queue")
+    }
+
+    func testResponseNotificationsClearAfterAnswerAndReturnForNewRequest() async throws {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let fixture = ScanFixture()
+        // All have unresolved threads; only the mixed MR still needs a reply.
+        fixture.authored = [item(discussions: 2, responses: 0, iid: 1),
+                            item(responses: 0, iid: 2),
+                            item(discussions: 3, responses: 1, iid: 3)]
+        let source = MRReviewScanController(defaults: defaults, urlProvider: { self.scope.absoluteString },
+            executableProvider: { "/bin/glab" })
+        source.configure { invocation in
+            let result = MRReviewTriageResult(complete: true, failure: nil, currentUsername: "me", items: [],
+                authoredComplete: true, authoredItems: fixture.authored)
+            return ClaudeOperationOutput(correlationID: invocation.correlationID,
+                resultText: String(decoding: try JSONEncoder().encode(result), as: UTF8.self), sessionID: nil)
+        }
+        _ = await source.scan(trigger: .manual)
+        XCTAssertEqual(source.discussionItems.map(\.iid), [3])
+        XCTAssertEqual(source.approvedItems.map(\.iid), [1, 2, 3], "Reply filtering must not hide approvals")
+        XCTAssertEqual(source.dequeueDiscussionNotification()?.iid, 3)
+        XCTAssertNil(source.dequeueDiscussionNotification(), "Answered and FYI-only threads must not dequeue")
+
+        fixture.authored[2].responseRequiredDiscussionCount = 0
+        _ = await source.scan(trigger: .manual)
+        XCTAssertTrue(source.discussionItems.isEmpty, "An answer clears attention even while the thread is unresolved")
+        fixture.authored[0].responseRequiredDiscussionCount = 1
+        _ = await source.scan(trigger: .manual)
+        XCTAssertEqual(source.discussionItems.map(\.iid), [1], "A new reviewer request restores attention")
     }
 
     func testCatalogPersistsScopeRoleAndExplicitPreference() throws {

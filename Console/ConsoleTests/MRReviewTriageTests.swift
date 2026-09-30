@@ -102,6 +102,23 @@ final class MRReviewTriageTests: XCTestCase {
         XCTAssertEqual(MRReviewTriagePrompt.configuredText(defaults), "Custom policy")
     }
 
+    func testAuthorResponseClassificationIsRequiredEvenWithCustomPrompt() throws {
+        defaults.set("Custom policy", forKey: MRReviewTriagePrompt.settingsKey)
+        let invocation = try MRReviewTriagePrompt.invocation(url: scope, executable: "/bin/glab", defaults: defaults)
+        let schemaData = try XCTUnwrap(invocation.expectedSchemaJSON?.data(using: .utf8))
+        let schema = try XCTUnwrap(JSONSerialization.jsonObject(with: schemaData) as? [String: Any])
+        let properties = try XCTUnwrap(schema["properties"] as? [String: Any])
+        let authored = try XCTUnwrap(properties["authoredItems"] as? [String: Any])
+        let item = try XCTUnwrap(authored["items"] as? [String: Any])
+        let required = try XCTUnwrap(item["required"] as? [String])
+        XCTAssertTrue(required.contains("responseRequiredDiscussionCount"))
+        XCTAssertTrue(invocation.prompt.contains("threads the author has already"))
+        XCTAssertTrue(invocation.prompt.contains("A reply in one thread does not answer"))
+        XCTAssertTrue(invocation.prompt.contains("later thanks or acknowledgements do not"))
+        XCTAssertTrue(invocation.prompt.contains("comments that do not require a response"))
+        XCTAssertTrue(invocation.prompt.contains("not a guessed count"))
+    }
+
     func testPermissionRulesAreSeparateFromAvailableTools() {
         let built = HeadlessInvocationBuilder.arguments(options: .init(model: "haiku", maxTurns: 100,
             allowedTools: ["Bash"], sessionID: UUID(), resume: false, ephemeral: true,

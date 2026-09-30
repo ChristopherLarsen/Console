@@ -17,6 +17,9 @@ enum AttentionChannel: Sendable, Equatable {
     case clear
     case parked
 
+    /// Shared navy for authored-MR response notifications and ready response cards.
+    static let reviewResponseColor = Color(red: 0.05, green: 0.19, blue: 0.42)
+
     /// Navy (#003366) for the in-flight channel.
     static let inFlightColor = Color(red: 0, green: 51.0 / 255.0, blue: 102.0 / 255.0)
 

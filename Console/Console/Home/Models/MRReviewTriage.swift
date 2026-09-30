@@ -137,6 +137,7 @@ enum MRReviewTriagePrompt {
             "project": string, "iid": ["type": "integer", "minimum": 1], "url": string,
             "title": string, "authorUsername": string, "state": string,
             "unresolvedDiscussionCount": ["type": "integer", "minimum": 0],
+            "responseRequiredDiscussionCount": ["type": "integer", "minimum": 0],
             "externalApprovalCount": ["type": "integer", "minimum": 0],
             "approvalRulesSatisfied": ["type": "boolean"], "jiraIssueKey": nullableString
         ]
@@ -171,6 +172,24 @@ enum MRReviewTriagePrompt {
             unresolvedDiscussionCount counts distinct discussions containing at least one note
             with resolvable=true and resolved=false, including author-created discussions.
             Ordinary non-resolvable comments and resolved threads do not count.
+            responseRequiredDiscussionCount is the SUBSET of those unresolved discussions that
+            still require a response from the MR author. Read the entire thread in chronological
+            order using note timestamps and author identity, not merely the unresolved flag.
+            Exclude system and bot notes, author-only threads, and threads the author has already
+            answered after the latest reviewer request. A reply in one thread does not answer
+            another thread. A later reviewer question or change request makes that thread need
+            a response again; later thanks or acknowledgements do not.
+            Also exclude comments that do not require a response: praise, approvals, thanks,
+            acknowledgements, FYI-only observations, explicitly optional suggestions with no
+            requested action, and explicit "no response needed" comments. A question or requested
+            change still needs a response when unanswered. Do not suppress a request just because
+            it is politely worded, or treat a commit push alone as a reply.
+            Count each qualifying discussion once, even if it contains multiple requests. For
+            example: reviewer request then author answer = 0; request then author answer then a
+            new reviewer question = 1; unanswered request in a different thread = 1; praise only
+            = 0. Never copy unresolvedDiscussionCount into this field without checking replies
+            and whether a response is required. Missing note identity, chronology, or truncated
+            discussion evidence makes authoredComplete=false, not a guessed count.
             externalApprovalCount counts distinct CURRENT approved_by users other than the author;
             historical or reset approvals never count. approvalRulesSatisfied is true ONLY when
             GitLab confirms every applicable required approval rule is satisfied. A zero-required

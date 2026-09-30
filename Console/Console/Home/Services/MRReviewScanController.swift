@@ -16,7 +16,7 @@ final class MRReviewScanController {
     private(set) var authoredItems: [AuthoredMRAttention] = []
     private(set) var authoredLastSuccessfulUpdate: Date?
     private(set) var authoredMessage: String?
-    var discussionItems: [AuthoredMRAttention] { authoredItems.filter(\.hasDiscussions) }
+    var discussionItems: [AuthoredMRAttention] { authoredItems.filter(\.needsResponse) }
     /// Pending notifications, rebuilt by each successful authored-MR scan.
     private(set) var approvedItems: [AuthoredMRAttention] = []
     private(set) var isScanning = false
@@ -55,10 +55,10 @@ final class MRReviewScanController {
         return approvedItems.removeFirst()
     }
 
-    /// Consumes the first unresolved-discussions notification until the next
+    /// Consumes the first notification requiring an author response until the next
     /// successful authored scan repopulates it.
     func dequeueDiscussionNotification() -> AuthoredMRAttention? {
-        guard let index = authoredItems.firstIndex(where: \.hasDiscussions) else { return nil }
+        guard let index = authoredItems.firstIndex(where: \.needsResponse) else { return nil }
         return authoredItems.remove(at: index)
     }
 

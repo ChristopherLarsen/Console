@@ -49,7 +49,7 @@ struct MainView: View {
                     }
                     if !mrScan.discussionItems.isEmpty {
                         mrAttentionButton(count: mrScan.discussionItems.count,
-                            label: "MRs with unresolved discussions", color: Color(red: 0.05, green: 0.19, blue: 0.42),
+                            label: "MRs needing your response", color: AttentionChannel.reviewResponseColor,
                             identifier: "MergeRequests.DiscussionAttentionButton", statusMessage: mrScan.authoredMessage) {
                             guard let first = mrScan.dequeueDiscussionNotification() else { return }
                             Task { await launchCoordinator.openAuthoredMR(first) }
