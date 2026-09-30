@@ -39,10 +39,17 @@ struct MainView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 6) {
+                    if !mrScan.reviewAttentionItems.isEmpty {
+                        mrAttentionButton(count: mrScan.reviewAttentionItems.count,
+                            label: "MRs needing your review", color: Color(red: 0.50, green: 0.08, blue: 0.10),
+                            identifier: "MergeRequests.ReviewAttentionButton", statusMessage: mrScan.message) {
+                            sidebarSelection = .home
+                        }
+                    }
                     if !mrScan.discussionItems.isEmpty {
                         mrAttentionButton(count: mrScan.discussionItems.count,
                             label: "MRs with unresolved discussions", color: Color(red: 0.05, green: 0.19, blue: 0.42),
-                            identifier: "MergeRequests.DiscussionAttentionButton") {
+                            identifier: "MergeRequests.DiscussionAttentionButton", statusMessage: mrScan.authoredMessage) {
                             guard let first = mrScan.dequeueDiscussionNotification() else { return }
                             Task { await launchCoordinator.openAuthoredMR(first) }
                         }.disabled(launchCoordinator.isOpeningAuthoredMR)
@@ -50,7 +57,7 @@ struct MainView: View {
                     if !mrScan.approvedItems.isEmpty {
                         mrAttentionButton(count: mrScan.approvedItems.count,
                             label: "MRs with all required approvals", color: Color(red: 0.04, green: 0.30, blue: 0.14),
-                            identifier: "MergeRequests.ApprovedAttentionButton") {
+                            identifier: "MergeRequests.ApprovedAttentionButton", statusMessage: mrScan.authoredMessage) {
                             guard let first = mrScan.dequeueApprovedNotification() else { return }
                             CodeHostWebSessionStore.shared.tabStore.openNotificationTab(url: first.url)
                             sidebarSelection = .mergeRequests
@@ -171,6 +178,7 @@ struct MainView: View {
     }
 
     private func mrAttentionButton(count: Int, label: String, color: Color, identifier: String,
+                                   statusMessage: String?,
                                    action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(count.formatted())
@@ -182,9 +190,9 @@ struct MainView: View {
                 .contentShape(RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
-        .help(label + (mrScan.authoredMessage.map { " — \($0)" } ?? ""))
+        .help(label + (statusMessage.map { " — \($0)" } ?? ""))
         .accessibilityLabel(label)
-        .accessibilityValue("\(count)" + (mrScan.authoredMessage == nil ? "" : ", out of date"))
+        .accessibilityValue("\(count)" + (statusMessage == nil ? "" : ", out of date"))
         .accessibilityIdentifier(identifier)
     }
 

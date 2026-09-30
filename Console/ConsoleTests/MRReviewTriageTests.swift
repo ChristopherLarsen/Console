@@ -139,6 +139,30 @@ final class MRReviewTriageTests: XCTestCase {
         XCTAssertEqual(source.status.check, .current)
     }
 
+    func testReviewAttentionCountsFirstAndFollowUpReviewsUntilFreshEvidenceClearsThem() async throws {
+        let source = MRReviewScanController(defaults: defaults, urlProvider: { self.scope.absoluteString },
+            executableProvider: { "/opt/homebrew/bin/glab" })
+        XCTAssertTrue(source.reviewAttentionItems.isEmpty)
+        source.configure { invocation in
+            try self.output(invocation, items: [
+                self.item(1),
+                self.item(2, category: .activeReview, myComment: "2026-09-09T12:00:00Z", activity: "2026-09-10T12:00:00Z"),
+                self.item(3, category: .alreadyReviewed),
+                self.item(4, author: "me"), self.item(5, draft: true),
+                self.item(6, approved: true), self.item(7, state: "closed")
+            ])
+        }
+        _ = await source.scan(trigger: .manual)
+        XCTAssertEqual(source.reviewAttentionItems.map(\.iidText), ["2", "1"])
+        source.configure { try self.output($0, items: [], complete: false) }
+        _ = await source.scan(trigger: .background)
+        XCTAssertEqual(source.reviewAttentionItems.count, 2, "Failed scans retain the last known attention count")
+        source.configure { try self.output($0, items: [self.item(1, category: .alreadyReviewed)]) }
+        _ = await source.scan(trigger: .manual)
+        XCTAssertTrue(source.reviewAttentionItems.isEmpty, "Waiting on the author does not need attention")
+        XCTAssertEqual(source.items.count, 1, "Filtering attention does not remove Home cards")
+    }
+
     func testMissingGLabManualPopupButBackgroundOnlyStatus() async {
         let source = MRReviewScanController(defaults: defaults, urlProvider: { "" }, executableProvider: { nil })
         _ = await source.scan(trigger: .background)

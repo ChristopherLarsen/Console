@@ -9,6 +9,10 @@ final class MRReviewScanController {
     typealias Performer = @MainActor (ClaudeOperationInvocation) async throws -> ClaudeOperationOutput
 
     private(set) var items: [MergeRequestSummary] = []
+    /// Validated external MRs needing a first review or a follow-up after author activity.
+    var reviewAttentionItems: [MergeRequestSummary] {
+        items.filter { $0.triageCategory == .needsReview || $0.triageCategory == .activeReview }
+    }
     private(set) var authoredItems: [AuthoredMRAttention] = []
     private(set) var authoredLastSuccessfulUpdate: Date?
     private(set) var authoredMessage: String?
