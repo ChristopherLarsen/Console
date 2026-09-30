@@ -37,7 +37,7 @@ enum ConsoleNavigation {
             UserDefaults.standard.set(TabSelection.myCommands.rawValue, forKey: tabKey)
         case .settings:
             UserDefaults.standard.set(TabSelection.settings.rawValue, forKey: tabKey)
-        case .sessions, .home, .brief, .aiProvider, .jira, .mergeRequests:
+        case .sessions, .home, .brief, .toDo, .aiProvider, .jira, .mergeRequests:
             break
         }
         UserDefaults.standard.synchronize()
@@ -101,7 +101,7 @@ enum ConsoleNavigation {
     /// in visible sidebar order. Settings deliberately has no number.
     static let sidebarHotkeyDestinations: [SidebarSelection] = [
         .home, .jira, .mergeRequests,
-        .sessions, .commands, .brief,
+        .sessions, .commands, .brief, .toDo,
         .aiProvider
     ]
 

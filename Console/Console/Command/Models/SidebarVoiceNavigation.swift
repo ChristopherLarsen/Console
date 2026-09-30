@@ -8,6 +8,7 @@ enum SidebarVoiceNavigation {
     /// spellings of "JIRA" and "GitLab".
     static let phrases: [SidebarSelection: [String]] = [
         .home: ["home", "dashboard"],
+        .toDo: ["to do", "todo", "to do list", "todo list"],
         .brief: ["brief", "morning brief", "the brief"],
         .jira: ["jira", "gira", "jeera", "jira board"],
         .mergeRequests: ["gitlab", "git lab", "get lab", "merge requests", "merge request", "mrs"],

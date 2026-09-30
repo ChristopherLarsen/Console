@@ -4,6 +4,7 @@ import SwiftUI
 enum SidebarSelection: String, CaseIterable, Identifiable {
     case home
     case brief
+    case toDo
     case jira
     case mergeRequests
     case commands
@@ -17,6 +18,7 @@ enum SidebarSelection: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "Home"
         case .brief: return "Brief"
+        case .toDo: return "To Do"
         case .jira: return "JIRA"
         case .mergeRequests: return "GitLab"
         case .commands: return "Commands"
@@ -30,6 +32,7 @@ enum SidebarSelection: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "house"
         case .brief: return "sun.max"
+        case .toDo: return "checklist"
         case .jira: return "j.square"
         case .mergeRequests: return "arrow.triangle.merge"
         case .commands: return "list.bullet.rectangle"
