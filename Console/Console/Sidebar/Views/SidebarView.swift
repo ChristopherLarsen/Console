@@ -77,6 +77,14 @@ struct SidebarView: View {
                             selection = .brief
                         }
 
+                        SidebarRow(
+                            label: SidebarSelection.toDo.label,
+                            icon: SidebarSelection.toDo.icon,
+                            isSelected: selection == .toDo
+                        ) {
+                            selection = .toDo
+                        }
+
                         if isAIProviderEnabled {
                             SidebarRow(
                                 label: SidebarSelection.aiProvider.label,
@@ -184,7 +192,7 @@ struct SidebarView: View {
 
     private var navigableDestinations: [SidebarSelection] {
         var destinations: [SidebarSelection] = [
-            .home, .jira, .mergeRequests, .sessions, .commands, .brief,
+            .home, .jira, .mergeRequests, .sessions, .commands, .brief, .toDo,
         ]
         if isAIProviderEnabled {
             destinations.append(.aiProvider)

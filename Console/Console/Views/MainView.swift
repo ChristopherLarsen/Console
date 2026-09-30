@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 
 struct MainView: View {
+    @State private var toDoStore = ToDoStore()
     @State private var themeManager = ThemeManager()
     @AppStorage("sidebarSelection") private var sidebarSelection: SidebarSelection = .home
     @AppStorage("tabSelection") private var tabSelection: TabSelection = .triggers
@@ -336,6 +337,8 @@ struct MainView: View {
             BriefView(workspacesProvider: {
                 workspaceStore.availableWorkspaces.map(BriefWorkspaceSnapshot.init)
             })
+        case .toDo:
+            ToDoView(store: toDoStore)
         case .jira:
             JiraView()
         case .mergeRequests:
