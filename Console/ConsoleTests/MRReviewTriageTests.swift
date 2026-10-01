@@ -22,13 +22,13 @@ final class MRReviewTriageTests: XCTestCase {
     private func item(_ iid: Int = 1, category: MRReviewCategory = .needsReview,
                       author: String = "author", draft: Bool = false, approved: Bool = false,
                       state: String = "opened", myComment: String? = nil,
-                      activity: String? = nil, url: URL? = nil) -> MRReviewTriageItem {
+                      activity: String? = nil, actionableActivity: String? = nil, url: URL? = nil) -> MRReviewTriageItem {
         MRReviewTriageItem(project: "team/project", iid: iid,
             url: url ?? URL(string: "https://gitlab.example.test/team/project/-/merge_requests/\(iid)")!,
             title: "MR \(iid)", author: author, authorUsername: author, state: state,
             draft: draft, approved: approved, category: category, reason: "Evidence from GitLab",
             hasDeveloperComments: category != .needsReview, latestMyCommentAt: myComment,
-            latestAuthorActivityAt: activity)
+            latestAuthorActivityAt: activity, latestActionableAuthorActivityAt: actionableActivity)
     }
 
     private func output(_ invocation: ClaudeOperationInvocation, items: [MRReviewTriageItem], complete: Bool = true) throws -> ClaudeOperationOutput {
@@ -45,10 +45,10 @@ final class MRReviewTriageTests: XCTestCase {
     func testPriorityAndExclusionsBeforeNineCardLimit() throws {
         var items = (1...12).map { item($0) }
         items += [item(20, category: .alreadyReviewed),
-                  item(21, category: .activeReview, myComment: "2026-09-09T12:00:00Z", activity: "2026-09-10T12:00:00.000Z"),
+                  item(21, category: .activeReview, myComment: "2026-09-09T12:00:00Z", activity: "2026-09-10T12:00:00.000Z", actionableActivity: "2026-09-10T12:00:00.000Z"),
                   item(22, author: "ME"), item(23, draft: true), item(24, approved: true),
                   item(25, state: "merged"), item(26, state: "closed"),
-                  item(27, category: .activeReview, approved: true, myComment: "2026-09-09T12:00:00Z", activity: "2026-09-10T12:00:00Z")]
+                  item(27, category: .activeReview, approved: true, myComment: "2026-09-09T12:00:00Z", activity: "2026-09-10T12:00:00Z", actionableActivity: "2026-09-10T12:00:00Z")]
         let decoded = try decode(items.reversed())
         XCTAssertEqual(decoded.count, 14, "Discovery is not limited to visible cards")
         let queue = HomeBoardBuilder.reviewQueue(in: decoded)
@@ -62,8 +62,53 @@ final class MRReviewTriageTests: XCTestCase {
         let oldActivity = item(category: .alreadyReviewed, myComment: "2026-09-10T12:00:00Z", activity: "2026-09-09T12:00:00Z")
         XCTAssertEqual(try decode([oldActivity]).first?.triageCategory, .alreadyReviewed)
         XCTAssertThrowsError(try decode([item(category: .activeReview,
-            myComment: "2026-09-10T12:00:00Z", activity: "2026-09-10T12:00:00Z")]))
-        XCTAssertThrowsError(try decode([item(category: .activeReview, activity: "2026-09-10T12:00:00Z")]))
+            myComment: "2026-09-10T12:00:00Z", activity: "2026-09-10T12:00:00Z", actionableActivity: "2026-09-10T12:00:00Z")]))
+        XCTAssertThrowsError(try decode([item(category: .activeReview, activity: "2026-09-10T12:00:00Z", actionableActivity: "2026-09-10T12:00:00Z")]))
+    }
+
+    func testAcknowledgementAfterReviewStaysWaiting() throws {
+        var acknowledgement = item(category: .alreadyReviewed,
+            myComment: "2026-09-09T12:00:00Z", activity: "2026-09-10T12:00:00Z")
+        XCTAssertEqual(try decode([acknowledgement]).first?.triageCategory, .alreadyReviewed)
+        acknowledgement = item(category: .activeReview,
+            myComment: "2026-09-09T12:00:00Z", activity: "2026-09-10T12:00:00Z")
+        XCTAssertThrowsError(try decode([acknowledgement]), "A newer author reply alone is insufficient")
+    }
+
+    func testLaterAcknowledgementDoesNotReviveAnAnsweredAction() throws {
+        let answered = item(category: .alreadyReviewed,
+            myComment: "2026-09-11T12:00:00Z", activity: "2026-09-12T12:00:00Z",
+            actionableActivity: "2026-09-10T12:00:00Z")
+        XCTAssertEqual(try decode([answered]).first?.triageCategory, .alreadyReviewed)
+        let pending = item(category: .activeReview,
+            myComment: "2026-09-09T12:00:00Z", activity: "2026-09-12T12:00:00Z",
+            actionableActivity: "2026-09-10T12:00:00Z")
+        XCTAssertEqual(try decode([pending]).first?.triageCategory, .activeReview)
+    }
+
+    func testRejectsActionableTimestampWithoutConsistentAuthorEvidence() throws {
+        XCTAssertThrowsError(try decode([item(category: .activeReview,
+            myComment: "2026-09-09T12:00:00Z", actionableActivity: "2026-09-10T12:00:00Z")]))
+        XCTAssertThrowsError(try decode([item(category: .activeReview,
+            myComment: "2026-09-09T12:00:00Z", activity: "2026-09-10T12:00:00Z",
+            actionableActivity: "2026-09-11T12:00:00Z")]))
+        XCTAssertThrowsError(try decode([item(category: .alreadyReviewed,
+            myComment: "2026-09-09T12:00:00Z", activity: "2026-09-10T12:00:00Z",
+            actionableActivity: "yesterday")]))
+    }
+
+    func testActionableReviewPolicyCannotBeRemovedByCustomPrompt() throws {
+        defaults.set("Any author response means activeReview", forKey: MRReviewTriagePrompt.settingsKey)
+        let invocation = try MRReviewTriagePrompt.invocation(url: scope, executable: "/bin/glab", defaults: defaults)
+        XCTAssertTrue(invocation.prompt.contains("overrides any conflicting custom policy"))
+        XCTAssertTrue(invocation.prompt.contains("Nice catch!"))
+        XCTAssertTrue(invocation.prompt.contains("A push qualifies only"))
+        XCTAssertTrue(invocation.prompt.contains("later acknowledgement must not revive"))
+        let schema = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(invocation.expectedSchemaJSON).utf8)) as? [String: Any])
+        let properties = try XCTUnwrap(schema["properties"] as? [String: Any])
+        let items = try XCTUnwrap(properties["items"] as? [String: Any])
+        let itemSchema = try XCTUnwrap(items["items"] as? [String: Any])
+        XCTAssertTrue(try XCTUnwrap(itemSchema["required"] as? [String]).contains("latestActionableAuthorActivityAt"))
     }
 
     func testRejectsDuplicatesForeignURLsAndMalformedDatesWithoutTrapping() throws {
@@ -163,7 +208,7 @@ final class MRReviewTriageTests: XCTestCase {
         source.configure { invocation in
             try self.output(invocation, items: [
                 self.item(1),
-                self.item(2, category: .activeReview, myComment: "2026-09-09T12:00:00Z", activity: "2026-09-10T12:00:00Z"),
+                self.item(2, category: .activeReview, myComment: "2026-09-09T12:00:00Z", activity: "2026-09-10T12:00:00Z", actionableActivity: "2026-09-10T12:00:00Z"),
                 self.item(3, category: .alreadyReviewed),
                 self.item(4, author: "me"), self.item(5, draft: true),
                 self.item(6, approved: true), self.item(7, state: "closed")

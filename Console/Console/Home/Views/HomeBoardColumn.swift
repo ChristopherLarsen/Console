@@ -389,8 +389,7 @@ struct HomeBoardReviewRequestCard: View {
 
     private var categoryColor: Color {
         switch item.triageCategory {
-        case .activeReview: return .orange
-        case .needsReview: return AttentionChannel.needsYou.color
+        case .activeReview, .needsReview: return AttentionChannel.needsYou.color
         case .alreadyReviewed, nil: return .secondary
         }
     }

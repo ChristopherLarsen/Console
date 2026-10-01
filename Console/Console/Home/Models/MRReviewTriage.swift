@@ -30,6 +30,8 @@ struct MRReviewTriageItem: Codable, Equatable, Sendable {
     let latestMyCommentAt: String?
     let latestAuthorActivityAt: String?
     var jiraIssueKey: String? = nil
+    /// Latest author event that actually requires the current reviewer to act.
+    var latestActionableAuthorActivityAt: String? = nil
 
     func summary(order: Int) -> MergeRequestSummary {
         MergeRequestSummary(
@@ -87,13 +89,12 @@ enum MRReviewTriagePrompt {
     Exclude bots. Comments the authenticated user left ALWAYS count as developer comments, including
     inline review comments and comments on threads that were later resolved. Author-only discussion
     does not mean reviewed. Assign exactly one category in priority order:
-    1. activeReview: the authenticated user has commented AND the author replied anywhere or pushed
-       changes AFTER the user's latest comment, so the review is back with the user. Read actual
-       reply/push events; generic updated_at or commit authored_date is not proof of who pushed or
-       when. The user's latest comment resets this comparison.
-    2. alreadyReviewed: the authenticated user (or another non-author developer) has commented, and
-       the author has NOT replied or pushed since the user's latest comment. This is the "I reviewed,
-       waiting on the author" state.
+    1. activeReview: the authenticated user has commented AND a subsequent author event requires
+       action from that user under the mandatory actionable-review policy below. Merely replying
+       or pushing does not qualify. The user's latest comment resets this comparison.
+    2. alreadyReviewed: the authenticated user (or another non-author developer) has commented,
+       but there is no qualifying actionable author event after the user's latest comment.
+       This is the "I reviewed, waiting on the author" state, including acknowledgements.
     3. needsReview: the authenticated user has NOT commented and no developer other than the author
        has commented.
 
@@ -131,6 +132,7 @@ enum MRReviewTriagePrompt {
             "category": ["type": "string", "enum": MRReviewCategory.allCases.map(\.rawValue)],
             "reason": string, "hasDeveloperComments": ["type": "boolean"],
             "latestMyCommentAt": nullableString, "latestAuthorActivityAt": nullableString,
+            "latestActionableAuthorActivityAt": nullableString,
             "jiraIssueKey": nullableString
         ]
         let authoredProperties: [String: Any] = [
@@ -162,6 +164,39 @@ enum MRReviewTriagePrompt {
         return ClaudeOperationInvocation(
             prompt: """
             \(configuredText(defaults))
+
+            Mandatory actionable-review policy (overrides any conflicting custom policy above):
+            An author response is NOT automatically a request for another review. Read complete
+            discussions in chronological order, with note author identities and actual push events.
+            latestAuthorActivityAt records the latest author reply/push of any kind.
+            latestActionableAuthorActivityAt records only the latest author event that STILL needs
+            action from the authenticated reviewer; return null if there is none. Never copy the
+            general activity timestamp without assessing what the author actually said or changed.
+            Qualifying evidence after the user's latest comment is:
+            - An explicit request for this user to re-review or verify completed work.
+            - A concrete fix/completed change addressing this user's feedback, ready to verify.
+              A push qualifies only when discussion or commit metadata clearly ties the completed
+              change to that feedback. Do not fetch diffs or infer relevance from timing alone.
+            - An unanswered question, clarification request, or substantive disagreement directed
+              to this user or responding to their feedback that requires the user's decision/reply.
+            An unrelated author discussion with another reviewer does not require this user's action.
+            Exclude praise, thanks, acknowledgement-only replies ("Nice catch!", "Thanks!", "Agreed"),
+            promises ("I'll fix it"), work-in-progress updates, unrelated commits, and resolved or
+            withdrawn questions. A resolved thread alone does not prove a fix is ready for review.
+            Acknowledgements followed by actual completed fixes can qualify on the fix event, not
+            the acknowledgement. A reply can mix thanks and a real question: assess its full meaning,
+            never use a keyword blacklist. "Nice catch, fixed in abc123; please re-review" qualifies;
+            "Nice catch, I'll fix this tomorrow" does not. If the author later says the work is not
+            ready, do not surface an earlier readiness claim; retain only still-actionable requests.
+            activeReview requires latestMyCommentAt AND latestActionableAuthorActivityAt strictly
+            later than that comment. A later acknowledgement must not revive an older action that
+            the user already answered. alreadyReviewed permits newer NON-actionable author activity.
+            needsReview remains reserved for MRs with no non-author developer comments.
+            In reason, name the specific action the user needs to take and cite the relevant note,
+            discussion, or commit ID; for waiting MRs explain why the author activity needs no action.
+            All event timestamps are ISO-8601. Generic updated_at or commit authored_date is not
+            proof of when or by whom a change was pushed. Missing/truncated evidence, unknown actor
+            identity or chronology means complete=false with failure=evidence, not a guessed state.
 
             Additional mandatory output: authoredItems is a SEPARATE collection of ALL open MRs
             authored by the authenticated user within the supplied host/project/group scope and
@@ -248,7 +283,13 @@ enum MRReviewTriagePrompt {
             let myComment = try date(item.latestMyCommentAt)
             let authorActivity = try date(item.latestAuthorActivityAt)
             guard myComment == nil || item.hasDeveloperComments else { throw MRReviewTriageError.invalidResponse }
-            let active = myComment.map { comment in authorActivity.map { $0 > comment } ?? false } ?? false
+            let actionableActivity = try date(item.latestActionableAuthorActivityAt)
+            if let actionableActivity {
+                guard let authorActivity, actionableActivity <= authorActivity else {
+                    throw MRReviewTriageError.invalidResponse
+                }
+            }
+            let active = myComment.map { comment in actionableActivity.map { $0 > comment } ?? false } ?? false
             let expected: MRReviewCategory = active ? .activeReview : (item.hasDeveloperComments ? .alreadyReviewed : .needsReview)
             guard item.category == expected else { throw MRReviewTriageError.invalidResponse }
             accepted.append(item)
