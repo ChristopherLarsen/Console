@@ -501,11 +501,11 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             .filter { $0.sessionID == session.id }
             .map(\.utf8)
         XCTAssertEqual(sent, [
-            "\u{15}\u{0B}/rename NMA-1234 Review",
+            "\u{15}\u{0B}\u{1B}[200~/rename NMA-1234 Review\u{1B}[201~",
             "\r",
-            "\u{15}\u{0B}/color purple",
+            "\u{15}\u{0B}\u{1B}[200~/color purple\u{1B}[201~",
             "\r",
-            "\u{15}\u{0B}Review !\(Sentinel.mrIID)",
+            "\u{15}\u{0B}\u{1B}[200~Review !\(Sentinel.mrIID)\u{1B}[201~",
             "\r",
         ], "each command is submitted by its own carriage return")
         XCTAssertEqual(stack.store.session(withID: session.id)?.activity, .working)
@@ -524,9 +524,9 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         stack.store.queuedCommandSpacing = 0
         receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-mr-only-review")
         XCTAssertEqual(stack.store.debugTerminalSendBytes.filter { $0.sessionID == session.id }.map(\.utf8), [
-            "\u{15}\u{0B}/rename Review !42", "\r",
-            "\u{15}\u{0B}/color purple", "\r",
-            "\u{15}\u{0B}Review !42", "\r",
+            "\u{15}\u{0B}\u{1B}[200~/rename Review !42\u{1B}[201~", "\r",
+            "\u{15}\u{0B}\u{1B}[200~/color purple\u{1B}[201~", "\r",
+            "\u{15}\u{0B}\u{1B}[200~Review !42\u{1B}[201~", "\r",
         ])
         XCTAssertEqual(stack.store.session(withID: session.id)?.activity, .working)
     }
@@ -563,9 +563,9 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             .filter { $0.sessionID == session.id }
             .map(\.utf8)
         XCTAssertEqual(sent, [
-            "\u{15}\u{0B}/rename MR-\(Sentinel.mrIID) Self Review",
+            "\u{15}\u{0B}\u{1B}[200~/rename MR-\(Sentinel.mrIID) Self Review\u{1B}[201~",
             "\r",
-            "\u{15}\u{0B}/color purple",
+            "\u{15}\u{0B}\u{1B}[200~/color purple\u{1B}[201~",
             "\r",
         ], "each command is submitted by its own carriage return")
     }
@@ -598,9 +598,9 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             .filter { $0.sessionID == session.id }
             .map(\.utf8)
         XCTAssertEqual(sent, [
-            "\u{15}\u{0B}/rename agent-review",
+            "\u{15}\u{0B}\u{1B}[200~/rename agent-review\u{1B}[201~",
             "\r",
-            "\u{15}\u{0B}/color purple",
+            "\u{15}\u{0B}\u{1B}[200~/color purple\u{1B}[201~",
             "\r",
         ], "each command is submitted by its own carriage return")
     }
@@ -961,7 +961,7 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         stack.store.queuedCommandSpacing = 0
         receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-repeated-review")
         XCTAssertEqual(stack.store.debugTerminalSendBytes.filter {
-            $0.sessionID == session.id && $0.utf8 == "\u{15}\u{0B}Review !\(Sentinel.mrIID)"
+            $0.sessionID == session.id && $0.utf8 == "\u{15}\u{0B}\u{1B}[200~Review !\(Sentinel.mrIID)\u{1B}[201~"
         }.count, 1, "reopening a review must not queue another prompt")
     }
 

@@ -70,12 +70,16 @@ enum PromptSubmissionEngine {
         replacementCommandText(command) + returnBytes
     }
 
+    /// Explicit paste boundaries keep long commands out of the TUI's heuristic
+    /// paste buffer and keep the clear-line control keys out of pasted content.
+    /// The paste ends before the separately sent Return.
+    ///
     /// A header-menu command's clear-and-text bytes without the submit
     /// Return. Header-menu and queued slash commands send this and
     /// `returnBytes` as separate, spaced writes: text and its carriage return
     /// written back-to-back in one burst are read by Claude Code as a single
     /// paste, where the embedded carriage return does not submit.
     static func replacementCommandText(_ command: String) -> [UInt8] {
-        clearDraftBytes + Array(command.utf8)
+        clearDraftBytes + bracketedPasteStart + Array(command.utf8) + bracketedPasteEnd
     }
 }

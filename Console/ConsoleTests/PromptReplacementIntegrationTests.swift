@@ -180,7 +180,7 @@ final class PromptReplacementIntegrationTests: XCTestCase {
         let sent = store.debugTerminalSendBytes
         XCTAssertEqual(sent.count, 2)
         XCTAssertEqual(sent.first?.sessionID, sessionID)
-        XCTAssertEqual(sent.first?.utf8, "\u{15}\u{0B}printf 'ORDER_OK\\n' > result")
+        XCTAssertEqual(sent.first?.utf8, "\u{15}\u{0B}\u{1B}[200~printf 'ORDER_OK\\n' > result\u{1B}[201~")
         XCTAssertEqual(sent.last?.utf8, "\r", "the Return is written separately so it submits")
 
         let output = try await waitForOutput(root)

@@ -79,7 +79,9 @@ final class PromptSubmissionTests: XCTestCase {
         XCTAssertEqual(
             bytes,
             PromptSubmissionEngine.clearDraftBytes
+                + PromptSubmissionEngine.bracketedPasteStart
                 + Array("/review-mr".utf8)
+                + PromptSubmissionEngine.bracketedPasteEnd
                 + PromptSubmissionEngine.returnBytes
         )
         // The draft must be cleared before any command bytes are sent, and
@@ -92,7 +94,9 @@ final class PromptSubmissionTests: XCTestCase {
     func testReplacementCommandBytesForColorCommand() {
         XCTAssertEqual(
             PromptSubmissionEngine.replacementCommandBytes("/color purple"),
-            [0x15, 0x0B] + Array("/color purple".utf8) + [0x0D]
+            [0x15, 0x0B] + [0x1B, 0x5B, 0x32, 0x30, 0x30, 0x7E]
+                + Array("/color purple".utf8)
+                + [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E] + [0x0D]
         )
     }
 
