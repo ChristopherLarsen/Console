@@ -25,6 +25,12 @@ struct PreviousSessionsView: View {
             Divider()
             controls
             content
+            if showAllSessionsFooter && !noSessionFolder && model.loadErrorMessage == nil {
+                Divider()
+                allSessionsFooter
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -134,9 +140,6 @@ struct PreviousSessionsView: View {
                             }
                         }
 
-                        if showAllSessionsFooter {
-                            allSessionsFooter
-                        }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -192,7 +195,6 @@ struct PreviousSessionsView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.top, 4)
         .accessibilityIdentifier("PreviousSessions.AllSessionsButton")
     }
 
@@ -340,15 +342,7 @@ struct PreviousSessionCard: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    metaSeparator
-                    Label(
-                        SessionHistoryFormatting.transcriptSize(record.transcriptByteCount),
-                        systemImage: "doc.text"
-                    )
-                    .labelStyle(.titleAndIcon)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .help("Transcript size")
+
                 }
 
                 Text(record.workingDirectory.path)

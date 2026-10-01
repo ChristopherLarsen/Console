@@ -83,7 +83,7 @@ struct SessionIntentPickerView: View {
             PreviousSessionsView(onFinished: { dismiss() })
                 .frame(
                     minWidth: 560, idealWidth: 800, maxWidth: 940,
-                    minHeight: 420, idealHeight: 600, maxHeight: 860
+                    minHeight: 420, idealHeight: 900, maxHeight: 1290
                 )
         }
         // Contain rather than replace: without this the root identifier

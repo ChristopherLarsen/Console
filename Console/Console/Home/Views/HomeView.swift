@@ -117,6 +117,7 @@ struct HomeView: View {
                             .frame(minWidth: 28, minHeight: 28)
                             .contentShape(Rectangle())
                     }
+                    .focusEffectDisabled()
                     .help("Refresh Jira")
                     .accessibilityIdentifier("HomeNextRefreshButton")
                 }
@@ -285,6 +286,7 @@ struct HomeView: View {
                             .frame(minWidth: 28, minHeight: 28)
                             .contentShape(Rectangle())
                     }
+                    .focusEffectDisabled()
                     .help("Refresh Jira")
                     .accessibilityIdentifier("HomeInProgressRefreshButton")
                 }
@@ -431,6 +433,7 @@ struct HomeView: View {
                             .frame(minWidth: 28, minHeight: 28)
                             .contentShape(Rectangle())
                     }
+                    .focusEffectDisabled()
                     .help("Refresh reviews")
                     .disabled(isReviewRefreshing || reviewScanScheduler == nil)
                     .accessibilityIdentifier("HomeReviewRefreshButton")

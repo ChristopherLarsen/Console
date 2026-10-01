@@ -50,8 +50,6 @@ final class AudioSessionController {
 
         _ = audioEngine.inputNode
 
-        applyPreferredVoiceProcessing()
-
         audioEngine.prepare()
         do {
             try audioEngine.start()
@@ -62,21 +60,36 @@ final class AudioSessionController {
         }
     }
 
-    /// Voice Isolation-style capture as Console's default: Apple's voice DSP
-    /// (echo cancellation + noise suppression) on the input node. The system
-    /// microphone-mode picker (Standard / Voice Isolation) is read-only to
-    /// apps; this is the app-side equivalent and applies to every listening
-    /// session. May only be toggled while the engine is stopped, which
-    /// prewarmEngine() guarantees.
-    private func applyPreferredVoiceProcessing() {
-        let inputNode = audioEngine.inputNode
-        guard !inputNode.isVoiceProcessingEnabled else { return }
+    /// Only called with the engine stopped and no tap installed.
+    private func setListeningVoiceProcessing(_ enabled: Bool) {
+        #if DEBUG
+        if Self._unitTestMode { return }
+        #endif
+        let input = audioEngine.inputNode
+        guard input.isVoiceProcessingEnabled != enabled else { return }
         do {
-            try inputNode.setVoiceProcessingEnabled(true)
-            printDebug("[AudioSession] Voice processing enabled (Voice Isolation default)")
+            try input.setVoiceProcessingEnabled(enabled)
+            if enabled {
+                input.voiceProcessingOtherAudioDuckingConfiguration = .init(
+                    enableAdvancedDucking: false,
+                    duckingLevel: .min
+                )
+            }
+            printDebug("[AudioSession] Listening voice processing: \(enabled)")
         } catch {
-            printDebug("[AudioSession] Voice processing unavailable: \(error)")
+            printDebug("[AudioSession] Could not set voice processing to \(enabled): \(error)")
         }
+    }
+
+    private func stopEngine() {
+        #if DEBUG
+        if !Self._unitTestMode { audioEngine.stop() }
+        #else
+        audioEngine.stop()
+        #endif
+        removeMicTap()
+        isEngineRunning = false
+        setListeningVoiceProcessing(false)
     }
 
     /// Installs the mic input tap so audio buffers flow to the active mode.
@@ -176,13 +189,7 @@ final class AudioSessionController {
         audioContinuation?.finish()
         audioContinuation = nil
 
-        #if DEBUG
-        if !Self._unitTestMode { audioEngine.stop() }
-        #else
-        audioEngine.stop()
-        #endif
-        removeMicTap()
-        isEngineRunning = false
+        stopEngine()
         printDebug("[AudioSession] Shutdown complete")
     }
 
@@ -197,13 +204,7 @@ final class AudioSessionController {
         audioContinuation?.finish()
         audioContinuation = nil
 
-        #if DEBUG
-        if !Self._unitTestMode { audioEngine.stop() }
-        #else
-        audioEngine.stop()
-        #endif
-        removeMicTap()
-        isEngineRunning = false
+        stopEngine()
         printDebug("[AudioSession] All modes stopped")
     }
 
@@ -233,14 +234,23 @@ final class AudioSessionController {
             }
         }
 
-        if !isEngineRunning {
+        if !isMicTapInstalled {
+            // A prewarmed engine must stop before switching its I/O processing.
+            stopEngine()
+            setListeningVoiceProcessing(true)
             prewarmEngine()
-            guard isEngineRunning else { return false }
+            guard isEngineRunning else {
+                stopEngine()
+                return false
+            }
         }
 
         // Install the mic tap now — this is the first moment the microphone is needed.
         installMicTap()
-        guard isMicTapInstalled else { return false }
+        guard isMicTapInstalled else {
+            stopEngine()
+            return false
+        }
 
         let stream = createAudioStream()
         printDebug("[AudioSession] Activating mode: \(mode.modeIdentifier)")
@@ -263,13 +273,7 @@ final class AudioSessionController {
         } else {
             audioContinuation?.finish()
             audioContinuation = nil
-            #if DEBUG
-            if !Self._unitTestMode { audioEngine.stop() }
-            #else
-            audioEngine.stop()
-            #endif
-            removeMicTap()
-            isEngineRunning = false
+            stopEngine()
             printDebug("[AudioSession] No pending modes, engine stopped")
         }
     }
