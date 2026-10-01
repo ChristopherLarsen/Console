@@ -1151,11 +1151,11 @@ final class SessionStoreTests: XCTestCase {
 
         XCTAssertEqual(store.sendSlashCommand("/review-mr", to: first), .submitted)
 
-        XCTAssertEqual(store.debugTerminalSendBytes.count, 2)
-        let text = try XCTUnwrap(store.debugTerminalSendBytes.first)
+        XCTAssertEqual(store.debugTerminalSendBytes.count, 3)
+        let text = store.debugTerminalSendBytes[1]
         XCTAssertEqual(text.sessionID, first, "quick commands must target the requested session only")
         XCTAssertNotEqual(text.sessionID, second)
-        XCTAssertEqual(text.utf8, "\u{15}\u{0B}\u{1B}[200~/review-mr\u{1B}[201~")
+        XCTAssertEqual(text.utf8, "\u{1B}[200~/review-mr\u{1B}[201~")
         let submit = try XCTUnwrap(store.debugTerminalSendBytes.last)
         XCTAssertEqual(submit.sessionID, first)
         XCTAssertEqual(submit.utf8, "\r", "the Return must be its own write so it submits")
@@ -1168,13 +1168,12 @@ final class SessionStoreTests: XCTestCase {
         store.queuedCommandSpacing = 0.05
 
         XCTAssertEqual(store.sendSlashCommand(command, to: id), .submitted)
-        XCTAssertEqual(store.debugTerminalSendBytes.map(\.utf8), ["\u{15}\u{0B}\u{1B}[200~" + command + "\u{1B}[201~"])
+        XCTAssertEqual(store.debugTerminalSendBytes.map(\.utf8), ["\u{15}\u{0B}"])
         let deadline = Date().addingTimeInterval(2)
-        while store.debugTerminalSendBytes.count < 2 && Date() < deadline {
+        while store.debugTerminalSendBytes.count < 3 && Date() < deadline {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
-        XCTAssertEqual(store.debugTerminalSendBytes.count, 2)
-        XCTAssertEqual(store.debugTerminalSendBytes.last?.utf8, "\r")
+        XCTAssertEqual(store.debugTerminalSendBytes.map(\.utf8), ["\u{15}\u{0B}", "\u{1B}[200~" + command + "\u{1B}[201~", "\r"])
         XCTAssertTrue(store.debugTerminalSendBytes.allSatisfy { $0.sessionID == id })
     }
 
@@ -1227,7 +1226,8 @@ final class SessionStoreTests: XCTestCase {
         // The clear bytes must precede the command; the Return is a later write.
         let clearPrefix = String(decoding: PromptSubmissionEngine.clearDraftBytes, as: UTF8.self)
         XCTAssertTrue(utf8.hasPrefix(clearPrefix), "the draft must be cleared before inserting the command")
-        XCTAssertEqual(utf8.dropFirst(clearPrefix.count), "\u{1B}[200~/review-mr\u{1B}[201~")
+        XCTAssertEqual(utf8, clearPrefix)
+        XCTAssertEqual(store.debugTerminalSendBytes[1].utf8, "\u{1B}[200~/review-mr\u{1B}[201~")
         XCTAssertEqual(store.debugTerminalSendBytes.last?.utf8, "\r")
     }
 
@@ -1241,11 +1241,12 @@ final class SessionStoreTests: XCTestCase {
 
         XCTAssertEqual(store.sendColorCommand("purple", to: first), .submitted)
 
-        XCTAssertEqual(store.debugTerminalSendBytes.count, 2)
+        XCTAssertEqual(store.debugTerminalSendBytes.count, 3)
         let send = try XCTUnwrap(store.debugTerminalSendBytes.first)
         XCTAssertEqual(send.sessionID, first, "color command must target the requested session only")
         XCTAssertNotEqual(send.sessionID, second)
-        XCTAssertEqual(send.utf8, "\u{15}\u{0B}\u{1B}[200~/color purple\u{1B}[201~")
+        XCTAssertEqual(send.utf8, "\u{15}\u{0B}")
+        XCTAssertEqual(store.debugTerminalSendBytes[1].utf8, "\u{1B}[200~/color purple\u{1B}[201~")
         XCTAssertEqual(store.debugTerminalSendBytes.last?.utf8, "\r")
     }
 
@@ -1255,7 +1256,7 @@ final class SessionStoreTests: XCTestCase {
         store.queuedCommandSpacing = 0
 
         XCTAssertEqual(store.sendColorCommand("default", to: id), .submitted)
-        XCTAssertEqual(store.debugTerminalSendBytes.first?.utf8, "\u{15}\u{0B}\u{1B}[200~/color default\u{1B}[201~")
+        XCTAssertEqual(store.debugTerminalSendBytes[1].utf8, "\u{1B}[200~/color default\u{1B}[201~")
         XCTAssertEqual(store.debugTerminalSendBytes.last?.utf8, "\r")
     }
 
@@ -1324,9 +1325,9 @@ final class SessionStoreTests: XCTestCase {
             .filter { $0.sessionID == id }
             .map(\.utf8)
         XCTAssertEqual(sent, [
-            "\u{15}\u{0B}\u{1B}[200~/rename NMA-1234 Review\u{1B}[201~",
+            "\u{15}\u{0B}", "\u{1B}[200~/rename NMA-1234 Review\u{1B}[201~",
             "\r",
-            "\u{15}\u{0B}\u{1B}[200~/color purple\u{1B}[201~",
+            "\u{15}\u{0B}", "\u{1B}[200~/color purple\u{1B}[201~",
             "\r",
         ], "each queued command is submitted by its own carriage return")
     }
@@ -1343,6 +1344,7 @@ final class SessionStoreTests: XCTestCase {
             lifecycleEvent: .sessionStarted
         ))
 
+        store.queuedCommandSpacing = 0
         store.queueSlashCommand("/rename NMA-1234 Review", for: id)
 
         XCTAssertTrue(
@@ -1612,8 +1614,8 @@ extension SessionStoreTests {
             eventID: UUID().uuidString, kind: .lifecycle, lifecycleEvent: .sessionStarted))
 
         XCTAssertEqual(store.debugTerminalSendBytes.map(\.utf8), [
-            "\u{15}\u{0B}\u{1B}[200~/rename MR-7 Response\u{1B}[201~", "\r",
-            "\u{15}\u{0B}\u{1B}[200~Prepare drafts. Read the file.\u{1B}[201~", "\r",
+            "\u{15}\u{0B}", "\u{1B}[200~/rename MR-7 Response\u{1B}[201~", "\r",
+            "\u{15}\u{0B}", "\u{1B}[200~Prepare drafts. Read the file.\u{1B}[201~", "\r",
         ])
         XCTAssertTrue(submitted)
         XCTAssertEqual(store.session(withID: id)?.activity, .working)

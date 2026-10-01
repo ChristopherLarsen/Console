@@ -463,21 +463,21 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         XCTAssertTrue(stack.store.debugTerminalSendBytes.isEmpty)
         XCTAssertEqual(stack.store.queuedCommandSpacing, 0.2)
         receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-start-story")
-        XCTAssertEqual(stack.store.debugTerminalSendBytes.map(\.utf8), ["\u{15}\u{0B}\u{1B}[200~/color cyan\u{1B}[201~"])
+        XCTAssertEqual(stack.store.debugTerminalSendBytes.map(\.utf8), ["\u{15}\u{0B}"])
         XCTAssertEqual(stack.store.session(withID: session.id)?.activity, .idle)
         let deadline = Date().addingTimeInterval(5)
-        while stack.store.debugTerminalSendBytes.count < 6 && Date() < deadline {
+        while stack.store.debugTerminalSendBytes.count < 9 && Date() < deadline {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
         XCTAssertEqual(stack.store.debugTerminalSendBytes.map(\.utf8), [
-            "\u{15}\u{0B}\u{1B}[200~/color cyan\u{1B}[201~", "\r",
-            "\u{15}\u{0B}\u{1B}[200~/rename NMA-1234 Fix login redirect\u{1B}[201~", "\r",
-            "\u{15}\u{0B}\u{1B}[200~start story NMA-1234\u{1B}[201~", "\r",
+            "\u{15}\u{0B}", "\u{1B}[200~/color cyan\u{1B}[201~", "\r",
+            "\u{15}\u{0B}", "\u{1B}[200~/rename NMA-1234 Fix login redirect\u{1B}[201~", "\r",
+            "\u{15}\u{0B}", "\u{1B}[200~start story NMA-1234\u{1B}[201~", "\r",
         ])
         XCTAssertTrue(stack.store.debugTerminalSendBytes.allSatisfy { $0.sessionID == session.id })
         XCTAssertEqual(stack.store.session(withID: session.id)?.activity, .working)
         receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-start-story-again")
-        XCTAssertEqual(stack.store.debugTerminalSendBytes.count, 6, "ready events must not replay the story command")
+        XCTAssertEqual(stack.store.debugTerminalSendBytes.count, 9, "ready events must not replay the story command")
     }
 
     func testStartStoryRejectsInvalidKeyBeforeLaunching() async throws {
@@ -543,11 +543,11 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             .filter { $0.sessionID == session.id }
             .map(\.utf8)
         XCTAssertEqual(sent, [
-            "\u{15}\u{0B}\u{1B}[200~/rename NMA-1234 Review\u{1B}[201~",
+            "\u{15}\u{0B}", "\u{1B}[200~/rename NMA-1234 Review\u{1B}[201~",
             "\r",
-            "\u{15}\u{0B}\u{1B}[200~/color purple\u{1B}[201~",
+            "\u{15}\u{0B}", "\u{1B}[200~/color purple\u{1B}[201~",
             "\r",
-            "\u{15}\u{0B}\u{1B}[200~Review !\(Sentinel.mrIID)\u{1B}[201~",
+            "\u{15}\u{0B}", "\u{1B}[200~Review !\(Sentinel.mrIID)\u{1B}[201~",
             "\r",
         ], "each command is submitted by its own carriage return")
         XCTAssertEqual(stack.store.session(withID: session.id)?.activity, .working)
@@ -566,9 +566,9 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         stack.store.queuedCommandSpacing = 0
         receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-mr-only-review")
         XCTAssertEqual(stack.store.debugTerminalSendBytes.filter { $0.sessionID == session.id }.map(\.utf8), [
-            "\u{15}\u{0B}\u{1B}[200~/rename Review !42\u{1B}[201~", "\r",
-            "\u{15}\u{0B}\u{1B}[200~/color purple\u{1B}[201~", "\r",
-            "\u{15}\u{0B}\u{1B}[200~Review !42\u{1B}[201~", "\r",
+            "\u{15}\u{0B}", "\u{1B}[200~/rename Review !42\u{1B}[201~", "\r",
+            "\u{15}\u{0B}", "\u{1B}[200~/color purple\u{1B}[201~", "\r",
+            "\u{15}\u{0B}", "\u{1B}[200~Review !42\u{1B}[201~", "\r",
         ])
         XCTAssertEqual(stack.store.session(withID: session.id)?.activity, .working)
     }
@@ -605,9 +605,9 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             .filter { $0.sessionID == session.id }
             .map(\.utf8)
         XCTAssertEqual(sent, [
-            "\u{15}\u{0B}\u{1B}[200~/rename MR-\(Sentinel.mrIID) Self Review\u{1B}[201~",
+            "\u{15}\u{0B}", "\u{1B}[200~/rename MR-\(Sentinel.mrIID) Self Review\u{1B}[201~",
             "\r",
-            "\u{15}\u{0B}\u{1B}[200~/color purple\u{1B}[201~",
+            "\u{15}\u{0B}", "\u{1B}[200~/color purple\u{1B}[201~",
             "\r",
         ], "each command is submitted by its own carriage return")
     }
@@ -640,9 +640,9 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             .filter { $0.sessionID == session.id }
             .map(\.utf8)
         XCTAssertEqual(sent, [
-            "\u{15}\u{0B}\u{1B}[200~/rename agent-review\u{1B}[201~",
+            "\u{15}\u{0B}", "\u{1B}[200~/rename agent-review\u{1B}[201~",
             "\r",
-            "\u{15}\u{0B}\u{1B}[200~/color purple\u{1B}[201~",
+            "\u{15}\u{0B}", "\u{1B}[200~/color purple\u{1B}[201~",
             "\r",
         ], "each command is submitted by its own carriage return")
     }
@@ -1003,7 +1003,7 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         stack.store.queuedCommandSpacing = 0
         receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-repeated-review")
         XCTAssertEqual(stack.store.debugTerminalSendBytes.filter {
-            $0.sessionID == session.id && $0.utf8 == "\u{15}\u{0B}\u{1B}[200~Review !\(Sentinel.mrIID)\u{1B}[201~"
+            $0.sessionID == session.id && $0.utf8 == "\u{1B}[200~Review !\(Sentinel.mrIID)\u{1B}[201~"
         }.count, 1, "reopening a review must not queue another prompt")
     }
 

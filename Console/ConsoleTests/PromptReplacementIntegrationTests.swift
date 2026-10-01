@@ -125,6 +125,41 @@ final class PromptReplacementIntegrationTests: XCTestCase {
         return ""
     }
 
+    /// Opt-in end-to-end check against Claude's actual paste sanitization and
+    /// submission handler, using SwiftTerm's PTY writes rather than a mock.
+    func testLiveClaudeQuickCommandSubmitsWithoutInvisibleCharacterConfirmation() async throws {
+        guard let executable = ProcessInfo.processInfo.environment["CONSOLE_LIVE_CLAUDE"] else {
+            throw XCTSkip("Set TEST_RUNNER_CONSOLE_LIVE_CLAUDE to the Claude executable")
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("claude-input-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        roots.append(root)
+        let store = SessionStore(launcher: ShellSessionLauncher(), locator: ClaudeExecutableLocator(defaults: defaults))
+        store.loginShellEnvironmentCapture = { nil }
+        let sessionID = try store.createSession(name: "Claude input test", workingDirectory: root)
+        let terminal = try XCTUnwrap(store.session(withID: sessionID)?.terminalView)
+        defer { terminal.terminate() }
+        var environment = ProcessInfo.processInfo.environment
+        environment["TERM"] = "xterm-256color"
+        terminal.startProcess(
+            executable: executable,
+            args: ["--tools", "", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
+                   "--settings", "{\"disableAllHooks\":true}", "--permission-mode", "plan",
+                   "--system-prompt", "This is a terminal input test. Reply only with QUICK_SUBMIT_OK. Do not perform any actions."],
+            environment: environment.map { "\($0.key)=\($0.value)" }.sorted(),
+            execName: "claude", currentDirectory: root.path
+        )
+        let ready = await waitForScreen(terminal, toContain: "plan mode on", timeout: 30)
+        XCTAssertTrue(ready.contains("plan mode on"), "Claude did not reach its input prompt")
+        guard ready.contains("plan mode on") else { return }
+        XCTAssertEqual(store.sendSlashCommand(
+            "Did the author post new comments or commits? If so, let's re-review the MR.", to: sessionID
+        ), .submitted)
+        let result = await waitForScreen(terminal, toContain: "QUICK_SUBMIT_OK", timeout: 60)
+        XCTAssertFalse(result.contains("invisible characters"), "Clear-line controls were pasted as text")
+        XCTAssertTrue(result.contains("QUICK_SUBMIT_OK"), "Claude did not submit and answer the command")
+    }
+
     // MARK: - Cursor in the middle of a single-line draft
 
     func testReplacementClearsDraftWithCursorInMiddleBeforeSubmitting() async throws {
@@ -178,9 +213,10 @@ final class PromptReplacementIntegrationTests: XCTestCase {
         XCTAssertEqual(store.sendSlashCommand("printf 'ORDER_OK\\n' > result", to: sessionID), .submitted)
 
         let sent = store.debugTerminalSendBytes
-        XCTAssertEqual(sent.count, 2)
+        XCTAssertEqual(sent.count, 3)
         XCTAssertEqual(sent.first?.sessionID, sessionID)
-        XCTAssertEqual(sent.first?.utf8, "\u{15}\u{0B}\u{1B}[200~printf 'ORDER_OK\\n' > result\u{1B}[201~")
+        XCTAssertEqual(sent.first?.utf8, "\u{15}\u{0B}")
+        XCTAssertEqual(sent[1].utf8, "\u{1B}[200~printf 'ORDER_OK\\n' > result\u{1B}[201~")
         XCTAssertEqual(sent.last?.utf8, "\r", "the Return is written separately so it submits")
 
         let output = try await waitForOutput(root)

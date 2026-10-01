@@ -1026,8 +1026,10 @@ final class SessionStore {
     /// the command. Rejected once the session has exited, including while it
     /// sits at its fallback login shell.
     ///
-    /// The command text and its Return are written as two separate, spaced
-    /// writes. Claude Code reads a single burst containing the text and the
+    /// Clear-line controls, command text, and Return are three spaced writes.
+    /// Combining clear-line controls with the paste makes Claude consume Return
+    /// to confirm removal of invisible characters instead of submitting.
+    /// Claude Code reads a single burst containing the text and the
     /// carriage return as one paste, so the embedded Return is inserted into
     /// the input line instead of submitting it. The queued-command path uses
     /// the same split.
@@ -1039,22 +1041,27 @@ final class SessionStore {
         guard session.activity != .exited else {
             return .rejected(.sessionNotAcceptingInput)
         }
-        sendToTerminal(
-            PromptSubmissionEngine.replacementCommandText(command),
-            sessionID: sessionID,
-            terminalView: session.terminalView
-        )
-        afterQueuedCommandSpacing { [weak self] in
-            guard let self,
-                  let session = self.session(withID: sessionID),
-                  session.activity != .exited else { return }
-            self.sendToTerminal(
-                PromptSubmissionEngine.returnBytes,
-                sessionID: sessionID,
-                terminalView: session.terminalView
-            )
-        }
+        sendReplacementCommand(command, to: sessionID)
         return .submitted
+    }
+
+    /// Keep clear-line controls out of the paste: Claude otherwise inserts them
+    /// as invisible characters and consumes Return to confirm sanitization.
+    private func sendReplacementCommand(_ command: String, to sessionID: UUID,
+                                        onSubmitted: @escaping () -> Void = {}) {
+        guard let session = session(withID: sessionID), session.activity != .exited else { return }
+        sendToTerminal(PromptSubmissionEngine.clearDraftBytes, sessionID: sessionID, terminalView: session.terminalView)
+        afterQueuedCommandSpacing { [weak self] in
+            guard let self, let session = self.session(withID: sessionID), session.activity != .exited else { return }
+            self.sendToTerminal(PromptSubmissionEngine.replacementCommandText(command),
+                                sessionID: sessionID, terminalView: session.terminalView)
+            self.afterQueuedCommandSpacing { [weak self] in
+                guard let self, let session = self.session(withID: sessionID), session.activity != .exited else { return }
+                self.sendToTerminal(PromptSubmissionEngine.returnBytes,
+                                    sessionID: sessionID, terminalView: session.terminalView)
+                onSubmitted()
+            }
+        }
     }
 
     // MARK: - Session color command
@@ -1171,7 +1178,7 @@ final class SessionStore {
         }
     }
 
-    /// Spacing between a header-menu command's text and its Return, and between
+    /// Spacing between clear-line controls, pasted text, Return, and between
     /// consecutive queued commands. Claude Code reads a burst containing the
     /// text and one or more carriage returns as a single paste, so the embedded
     /// returns never submit. Tests shorten this to zero and take the
@@ -1210,28 +1217,16 @@ final class SessionStore {
         submitQueuedCommands(commands, index: 0, sessionID: sessionID)
     }
 
-    /// Submits queued commands one at a time. Each command's clear-and-text
-    /// bytes and its own carriage return are separate writes, spaced apart,
+    /// Submits queued commands one at a time. Clear-line controls, pasted text,
+    /// and each command's carriage return are separate writes, spaced apart,
     /// so Claude Code submits each command individually instead of reading
     /// them as one pasted line.
     private func submitQueuedCommands(_ commands: [QueuedInput], index: Int, sessionID: UUID) {
         guard index < commands.count,
               let session = session(withID: sessionID),
               session.activity != .exited else { return }
-        sendToTerminal(
-            PromptSubmissionEngine.replacementCommandText(commands[index].text),
-            sessionID: sessionID,
-            terminalView: session.terminalView
-        )
-        afterQueuedCommandSpacing { [weak self] in
-            guard let self,
-                  let session = self.session(withID: sessionID),
-                  session.activity != .exited else { return }
-            self.sendToTerminal(
-                PromptSubmissionEngine.returnBytes,
-                sessionID: sessionID,
-                terminalView: session.terminalView
-            )
+        sendReplacementCommand(commands[index].text, to: sessionID) { [weak self] in
+            guard let self else { return }
             if case .prompt(_, let onSubmitted) = commands[index] {
                 self.applyEvent(.promptSubmitted, to: sessionID)
                 onSubmitted?()
