@@ -1,8 +1,7 @@
 import Foundation
 import WebKit
 
-/// A prepared launch: automatic local display name. Source metadata stays
-/// local.
+/// A prepared launch with an automatic display name and source metadata.
 struct SessionDraft: Equatable {
     let purpose: SessionPurpose
     let source: SessionLaunchSource?
@@ -29,7 +28,7 @@ struct SessionLaunchFailure: Equatable {
 ///
 /// WebView-derived ticket/MR fields are local routing and display data.
 /// Contextual launches open an idle session in the configured folder unless
-/// Home explicitly requests `Review !<iid>` using the validated MR URL number.
+/// Home explicitly requests a review or story-start prompt using a validated identifier.
 /// Other work context is typed into Claude explicitly. MR response prep
 /// (`launchResponsePrep`): a background, read-only session that receives a
 /// Console-authored prompt naming only the validated project and MR number.
@@ -127,15 +126,29 @@ final class SessionLaunchCoordinator {
 
     // MARK: - Typed entry points for browser toolbars / future cards
 
-    /// `displayName` overrides the automatic key-based session name. Home's
-    /// new-ticket card passes the new-ticket rule (`NMA-1234` → `NMA-1234`);
-    /// Jira-panel launches keep the automatic key name.
-    func beginJiraTicketLaunch(key: String, title: String?, url: URL?, displayName: String? = nil, agent: String? = nil) async {
+    /// Home's Start story action names the session with its key and short
+    /// title, then queues cyan, rename, and the story prompt through the same
+    /// readiness gate and 200 ms spacing used by review launches.
+    func beginJiraTicketLaunch(key: String, title: String?, url: URL?, displayName: String? = nil, agent: String? = nil, submitStartStoryPrompt: Bool = false) async {
+        let storyKey = JiraSourceContext.parseKey(from: key)
+        if submitStartStoryPrompt && storyKey == nil {
+            lastFailure = SessionLaunchFailure(message: "The story has an invalid Jira key. Refresh Jira and try again.", offersSettingsRoute: false)
+            return
+        }
         let source = SessionLaunchSource.jira(key: key, title: title, url: url)
         var prepared = draft(purpose: .existingTicket, source: source)
-        if let displayName { prepared.name = displayName }
+        if submitStartStoryPrompt, let storyKey {
+            prepared.name = NewTicketSessionNaming.displayName(forJiraKey: storyKey, title: title)
+        } else if let displayName {
+            prepared.name = displayName
+        }
         prepared.agent = agent
-        await startContextualLaunch(prepared)
+        let sessionID = await startContextualLaunch(prepared)
+        guard submitStartStoryPrompt, let storyKey, let sessionID,
+              let session = store.session(withID: sessionID) else { return }
+        store.queueSlashCommand("/color cyan", for: sessionID)
+        store.queueSlashCommand("/rename \(session.name)", for: sessionID)
+        store.queuePrompt("start story \(storyKey)", for: sessionID)
     }
 
     /// `displayName` overrides the automatic MR-based session name. Home's

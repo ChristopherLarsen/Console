@@ -170,12 +170,27 @@ struct SessionWorkspace: Identifiable, Codable, Equatable {
 
 /// Display-name rules for new-ticket session creation. The story number is
 /// the identity the developer recognizes: `NMA-1234` renders as `NMA-1234`.
-/// Any other project key keeps its full key. Local display only — the name
-/// never reaches Claude.
+/// Any other project key keeps its full key. Home story launches also use
+/// the name for Claude's explicit rename command.
 nonisolated enum NewTicketSessionNaming {
-    /// `NMA-1234` → `NMA-1234`; any other key keeps its full uppercased key.
-    static func displayName(forJiraKey key: String) -> String {
-        key.uppercased()
+    /// Keep the full key and, when supplied, append at most 20 characters
+    /// from the title, preferring whole words. Control bytes never enter the
+    /// terminal's rename command.
+    static func displayName(forJiraKey key: String, title: String? = nil) -> String {
+        let safeTitle = (title ?? "").unicodeScalars.map { scalar in
+            scalar.value < 0x20 || (0x7F...0x9F).contains(scalar.value) ? " " : String(scalar)
+        }.joined()
+        let words = safeTitle.split(whereSeparator: \.isWhitespace)
+        var shortTitle = ""
+        for word in words {
+            let candidate = shortTitle.isEmpty ? String(word) : shortTitle + " " + word
+            guard candidate.count <= 20 else {
+                if shortTitle.isEmpty { shortTitle = String(word.prefix(20)) }
+                break
+            }
+            shortTitle = candidate
+        }
+        return key.uppercased() + (shortTitle.isEmpty ? "" : " " + shortTitle)
     }
 
     /// Parses user-typed story input — `1234`, `S-1234`, `NMA-1234`, or

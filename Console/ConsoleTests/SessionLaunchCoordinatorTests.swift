@@ -449,6 +449,48 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
         assertSourceMetadataAbsent(from: stack)
     }
 
+    func testHomeStartStoryQueuesCyanRenameAndPromptAfterReadyWithSpacing() async throws {
+        let stack = makeStack()
+        try addWorkspace(stack, named: "StartStory")
+        await stack.coordinator.beginJiraTicketLaunch(
+            key: "NMA-1234", title: "Fix login redirect behavior", url: nil,
+            agent: SessionStore.newStoryAgentName,
+            submitStartStoryPrompt: true
+        )
+        let session = try XCTUnwrap(stack.store.selectedSession)
+        XCTAssertEqual(session.name, "NMA-1234 Fix login redirect")
+        XCTAssertTrue(stack.launcher.lastArguments?.contains(SessionStore.newStoryAgentName) == true)
+        XCTAssertTrue(stack.store.debugTerminalSendBytes.isEmpty)
+        XCTAssertEqual(stack.store.queuedCommandSpacing, 0.2)
+        receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-start-story")
+        XCTAssertEqual(stack.store.debugTerminalSendBytes.map(\.utf8), ["\u{15}\u{0B}\u{1B}[200~/color cyan\u{1B}[201~"])
+        XCTAssertEqual(stack.store.session(withID: session.id)?.activity, .idle)
+        let deadline = Date().addingTimeInterval(5)
+        while stack.store.debugTerminalSendBytes.count < 6 && Date() < deadline {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(stack.store.debugTerminalSendBytes.map(\.utf8), [
+            "\u{15}\u{0B}\u{1B}[200~/color cyan\u{1B}[201~", "\r",
+            "\u{15}\u{0B}\u{1B}[200~/rename NMA-1234 Fix login redirect\u{1B}[201~", "\r",
+            "\u{15}\u{0B}\u{1B}[200~start story NMA-1234\u{1B}[201~", "\r",
+        ])
+        XCTAssertTrue(stack.store.debugTerminalSendBytes.allSatisfy { $0.sessionID == session.id })
+        XCTAssertEqual(stack.store.session(withID: session.id)?.activity, .working)
+        receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-start-story-again")
+        XCTAssertEqual(stack.store.debugTerminalSendBytes.count, 6, "ready events must not replay the story command")
+    }
+
+    func testStartStoryRejectsInvalidKeyBeforeLaunching() async throws {
+        let stack = makeStack()
+        try addWorkspace(stack, named: "InvalidStory")
+        await stack.coordinator.beginJiraTicketLaunch(
+            key: "NMA-1234\n/exit", title: nil, url: nil, submitStartStoryPrompt: true
+        )
+        XCTAssertEqual(stack.launcher.launchCount, 0)
+        XCTAssertNotNil(stack.coordinator.lastFailure)
+        XCTAssertTrue(stack.store.debugTerminalSendBytes.isEmpty)
+    }
+
     func testToolbarMergeRequestLaunchKeepsSentinelOutOfClaude() async throws {
         let stack = makeStack()
         try addWorkspace(

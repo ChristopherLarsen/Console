@@ -65,6 +65,16 @@ final class SessionLaunchNamingTests: XCTestCase {
         XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "ab2-9"), "AB2-9")
     }
 
+    func testStoryTitleUsesWholeWordsWithinTwentyCharacters() {
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "nma-42", title: "Fix login redirect behavior"), "NMA-42 Fix login redirect")
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "NMA-42", title: "12345678901234567890 more"), "NMA-42 12345678901234567890")
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "NMA-42", title: "123456789012345678901"), "NMA-42 12345678901234567890")
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "NMA-42", title: "  Fix\nlogin\tredirect\u{1B} "), "NMA-42 Fix login redirect")
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "NMA-42", title: " \n\t"), "NMA-42")
+        let emoji = String(repeating: "👩🏽‍💻", count: 21)
+        XCTAssertEqual(NewTicketSessionNaming.displayName(forJiraKey: "NMA-42", title: emoji), "NMA-42 " + String(emoji.prefix(20)))
+    }
+
     func testStoryNumberParsingAcceptsFriendlyForms() {
         XCTAssertEqual(NewTicketSessionNaming.storyNumber(fromRaw: "1234"), "1234")
         XCTAssertEqual(NewTicketSessionNaming.storyNumber(fromRaw: " 42 "), "42")

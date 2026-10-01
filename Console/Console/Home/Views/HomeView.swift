@@ -609,7 +609,8 @@ struct HomeView: View {
                 title: title,
                 url: url,
                 displayName: NewTicketSessionNaming.displayName(forJiraKey: key),
-                agent: agent
+                agent: agent,
+                submitStartStoryPrompt: agent == SessionStore.newStoryAgentName
             )
         }
         model.refreshJiraHandler = { [sources] in
