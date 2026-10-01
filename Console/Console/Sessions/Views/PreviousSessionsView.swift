@@ -12,6 +12,7 @@ struct PreviousSessionsView: View {
 
     @State private var model = PreviousSessionsModel()
     @State private var searchText = ""
+    @State private var onlyNMAOrMR = true
     @State private var resumingSessionIDs: Set<UUID> = []
     @State private var errorMessage: String?
 
@@ -92,7 +93,11 @@ struct PreviousSessionsView: View {
                     .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
             )
 
-            Spacer(minLength: 8)
+            Toggle("NMA/MR", isOn: $onlyNMAOrMR)
+                .toggleStyle(.checkbox)
+                .fixedSize()
+                .help("Show only sessions associated with an NMA story or merge request")
+                .accessibilityIdentifier("PreviousSessions.NMAOrMRFilter")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -125,7 +130,7 @@ struct PreviousSessionsView: View {
             } else if displayedRecords.isEmpty {
                 messageView(
                     searchText.isEmpty
-                        ? "No previous sessions found."
+                        ? (onlyNMAOrMR ? "No NMA/MR sessions found. Uncheck NMA/MR to show other sessions." : "No previous sessions found.")
                         : "No sessions match your search."
                 )
             } else {
@@ -171,7 +176,7 @@ struct PreviousSessionsView: View {
     private var showAllSessionsFooter: Bool {
         !model.isShowingAllSessions
             && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !displayedRecords.isEmpty
+            && !model.records.isEmpty
     }
 
     /// Indexes every available transcript, not just the most recent 50.
@@ -216,6 +221,9 @@ struct PreviousSessionsView: View {
         if let folder = workspaceStore.defaultFolder {
             let canonical = CheckoutPath.canonical(folder.directoryURL)
             records = records.filter { CheckoutPath.canonical($0.workingDirectory) == canonical }
+        }
+        if onlyNMAOrMR {
+            records = records.filter { $0.isAssociatedWithNMAOrMR(artifacts: store.associations.artifacts(for: $0.id)) }
         }
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !query.isEmpty {

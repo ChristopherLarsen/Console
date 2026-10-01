@@ -20,8 +20,24 @@ struct SessionHistoryRecord: Identifiable, Equatable {
     let ticketKey: String?
     /// True when the recorded working directory no longer exists.
     let isWorkingDirectoryMissing: Bool
+    var hasMergeRequestTitle: Bool = false
 
     var id: UUID { claudeSessionID }
+
+    func isAssociatedWithNMAOrMR(artifacts: [SessionArtifact]) -> Bool {
+        if hasMergeRequestTitle { return true }
+        if let ticketKey {
+            let key = JiraSourceContext.normalizedConsoleKey(ticketKey.uppercased())
+            if key.firstMatch(of: /^(NMA|MR)-\d+$/) != nil { return true }
+        }
+        return artifacts.contains { artifact in
+            if artifact.kind == .gitlabMergeRequest { return true }
+            guard artifact.kind == .jiraIssue else { return false }
+            let key = artifact.url.flatMap { JiraSourceContext.parseKey(from: $0.absoluteString) }
+                ?? JiraSourceContext.parseKey(from: artifact.label)
+            return key?.hasPrefix("NMA-") == true
+        }
+    }
 
     /// White-background cards identify ticket sessions; everything else
     /// renders on the neutral card background.

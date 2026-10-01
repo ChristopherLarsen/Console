@@ -146,7 +146,8 @@ final class SessionHistoryReader {
                 title: title,
                 isCustomTitle: isCustomTitle
             ),
-            isWorkingDirectoryMissing: !FileManager.default.fileExists(atPath: workingDirectory.path)
+            isWorkingDirectoryMissing: !FileManager.default.fileExists(atPath: workingDirectory.path),
+            hasMergeRequestTitle: isCustomTitle && title.firstMatch(of: /^(?i)(?:Review !|MR[- !])\d+\b/) != nil
         )
     }
 

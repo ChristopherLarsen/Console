@@ -72,6 +72,30 @@ final class SessionHistoryTests: XCTestCase {
         ["role": "user", "content": text]
     }
 
+    func testNMAOrMRFilterUsesAssociationsAndExplicitTitles() async throws {
+        let titles = ["NMA-1234 Fix login", "MR-42 Self Review", "Review !42", "General work", "SCRUM-9 cleanup", "S-17"]
+        for title in titles {
+            try writeTranscript(UUID(), lines: [line(type: "user", title: title, message: userMessage("Work"))])
+        }
+        let incidentalID = UUID()
+        try writeTranscript(incidentalID, lines: [line(type: "user", message: userMessage("Review !42"))])
+        let reader = SessionHistoryReader(ticketAssociations: .init(defaults: defaults), root: historyRoot)
+        let records = await reader.loadRecords()
+        let matched = records.filter { $0.isAssociatedWithNMAOrMR(artifacts: []) }.map(\.title)
+        XCTAssertEqual(Set(matched), Set(["NMA-1234 Fix login", "MR-42 Self Review", "Review !42", "S-17"]))
+        let incidental = try XCTUnwrap(records.first { $0.id == incidentalID })
+        XCTAssertFalse(incidental.isAssociatedWithNMAOrMR(artifacts: []))
+        XCTAssertTrue(incidental.isAssociatedWithNMAOrMR(artifacts: [
+            .init(kind: .gitlabMergeRequest, label: "MR !42", url: URL(string: "https://gitlab.test/a/b/-/merge_requests/42")!)
+        ]))
+        XCTAssertTrue(incidental.isAssociatedWithNMAOrMR(artifacts: [
+            .init(kind: .jiraIssue, label: "NMA-42", url: URL(string: "https://jira.test/browse/NMA-42")!)
+        ]))
+        XCTAssertFalse(incidental.isAssociatedWithNMAOrMR(artifacts: [
+            .init(kind: .jiraIssue, label: "ENG-42", url: URL(string: "https://jira.test/browse/ENG-42")!)
+        ]))
+    }
+
     // MARK: - Transcript parsing
 
     func testWorkCatalogReclassifiesCachedHistoryWithoutTranscriptChanges() async throws {
