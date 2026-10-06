@@ -109,17 +109,12 @@ struct HomeView: View {
                         .accessibilityIdentifier("HomeNextRefreshAge")
                     }
 
-                    Button {
-                        sources.refreshJira()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 18, weight: .regular))
-                            .frame(minWidth: 28, minHeight: 28)
-                            .contentShape(Rectangle())
-                    }
-                    .focusEffectDisabled()
-                    .help("Refresh Jira")
-                    .accessibilityIdentifier("HomeNextRefreshButton")
+                    UnfocusedIconButton(
+                        systemName: "arrow.clockwise",
+                        help: "Refresh Jira",
+                        identifier: "HomeNextRefreshButton",
+                        action: { sources.refreshJira() }
+                    )
                 }
             }
         )
@@ -278,17 +273,12 @@ struct HomeView: View {
                         .accessibilityIdentifier("HomeInProgressRefreshAge")
                     }
 
-                    Button {
-                        sources.refreshJira()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 18, weight: .regular))
-                            .frame(minWidth: 28, minHeight: 28)
-                            .contentShape(Rectangle())
-                    }
-                    .focusEffectDisabled()
-                    .help("Refresh Jira")
-                    .accessibilityIdentifier("HomeInProgressRefreshButton")
+                    UnfocusedIconButton(
+                        systemName: "arrow.clockwise",
+                        help: "Refresh Jira",
+                        identifier: "HomeInProgressRefreshButton",
+                        action: { sources.refreshJira() }
+                    )
                 }
             }
         )
@@ -425,18 +415,13 @@ struct HomeView: View {
                         .accessibilityIdentifier("HomeReviewRefreshAge")
                     }
 
-                    Button {
-                        reviewScanScheduler?.scanNow()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 18, weight: .regular))
-                            .frame(minWidth: 28, minHeight: 28)
-                            .contentShape(Rectangle())
-                    }
-                    .focusEffectDisabled()
-                    .help("Refresh reviews")
-                    .disabled(isReviewRefreshing || reviewScanScheduler == nil)
-                    .accessibilityIdentifier("HomeReviewRefreshButton")
+                    UnfocusedIconButton(
+                        systemName: "arrow.clockwise",
+                        help: "Refresh reviews",
+                        identifier: "HomeReviewRefreshButton",
+                        isEnabled: !isReviewRefreshing && reviewScanScheduler != nil,
+                        action: { reviewScanScheduler?.scanNow() }
+                    )
                 }
             }
         )

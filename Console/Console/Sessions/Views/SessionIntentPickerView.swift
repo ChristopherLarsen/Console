@@ -69,6 +69,7 @@ struct SessionIntentPickerView: View {
                             ConsoleNavigation.showSettings()
                         }
                         .buttonStyle(.plain)
+                        .suppressedFocusRing()
                         .font(.footnote)
                         .foregroundStyle(Color.accentColor)
                         .accessibilityIdentifier("Sessions.Launcher.OpenSettings")
@@ -103,6 +104,7 @@ struct SessionIntentPickerView: View {
                     intentRowLabel(purpose)
                 }
                 .buttonStyle(.plain)
+                .suppressedFocusRing()
                 .keyboardShortcut(purpose.keyboardCharacter)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("\(purpose.displayName). \(purpose.intentDescription)")
@@ -120,6 +122,7 @@ struct SessionIntentPickerView: View {
                 selfReviewRowLabel
             }
             .buttonStyle(.plain)
+            .suppressedFocusRing()
             .keyboardShortcut("6")
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Self Review. Pick one of your open merge requests to review yourself.")
@@ -133,6 +136,7 @@ struct SessionIntentPickerView: View {
                 resumeSessionRowLabel
             }
             .buttonStyle(.plain)
+            .suppressedFocusRing()
             .keyboardShortcut("7")
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Resume Session. Reopen a previous Claude conversation from its transcript history.")
@@ -409,6 +413,7 @@ struct SessionIntentPickerView: View {
                         reviewCandidateRow(item)
                     }
                     .buttonStyle(.plain)
+                    .suppressedFocusRing()
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(reviewCandidateAccessibilityLabel(item))
                     .accessibilityIdentifier("\(reviewStepIdentifier).Candidate.\(index)")
@@ -572,6 +577,7 @@ struct SessionIntentPickerView: View {
                                 selfReviewCandidateRow(item)
                             }
                             .buttonStyle(.plain)
+                            .suppressedFocusRing()
                             .accessibilityElement(children: .ignore)
                             .accessibilityLabel(selfReviewCandidateAccessibilityLabel(item))
                             .accessibilityIdentifier("\(selfReviewStepIdentifier).Candidate.\(index)")
@@ -665,6 +671,7 @@ struct SessionIntentPickerView: View {
                 .labelStyle(.titleAndIcon)
         }
         .buttonStyle(.plain)
+        .suppressedFocusRing()
         .font(.caption)
         .accessibilityIdentifier("\(identifierPrefix).Back")
     }
@@ -690,6 +697,7 @@ struct SessionIntentPickerView: View {
                     .labelStyle(.titleAndIcon)
             }
             .buttonStyle(.plain)
+            .suppressedFocusRing()
             .font(.caption)
             .accessibilityIdentifier("\(identifierPrefix).Back")
 
@@ -772,6 +780,7 @@ struct SessionIntentPickerView: View {
                     .font(.caption.weight(.medium))
             }
             .buttonStyle(.plain)
+            .suppressedFocusRing()
             .accessibilityIdentifier("Sessions.Launcher.CustomizeToggle")
 
             if isCustomizing {
