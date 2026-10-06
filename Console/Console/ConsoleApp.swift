@@ -1004,6 +1004,7 @@ private struct MainWindowConfigurator: NSViewRepresentable {
         // Register with the window manager so the global hotkey can raise it reliably
         // without depending on fragile NSWindow identifier matching.
         ConsoleWindowManager.mainWindow = window
+        FirstResponderGuard.installForAllWindows()
 
         if let panel = window as? NSPanel {
             panel.isFloatingPanel = false

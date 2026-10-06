@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 
 extension View {
@@ -90,4 +91,89 @@ private final class NoFocusRingButton: NSButton {
     override func drawFocusRingMask() {}
 
     override var focusRingMaskBounds: NSRect { .zero }
+}
+
+/// Keeps a window from handing first responder to a button on its own.
+///
+/// With Full Keyboard Access on (`AppleKeyboardUIMode` = 3), every button is a key
+/// view. When the window becomes key, or after `makeFirstResponder(nil)`, AppKit and
+/// SwiftUI pick the first key view in the loop, and that control draws a focus ring
+/// the user never asked for. This observer sends that focus back to the window unless
+/// the responder takes text input or the user pressed Tab to get there.
+@MainActor
+final class FirstResponderGuard {
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Console", category: "FirstResponder")
+    private static var guards: [ObjectIdentifier: FirstResponderGuard] = [:]
+
+    private weak var window: NSWindow?
+    private var observation: NSKeyValueObservation?
+
+    private static var keyObserver: NSObjectProtocol?
+
+    /// Guards every window, including sheets and popovers, as it becomes key.
+    static func installForAllWindows() {
+        guard keyObserver == nil else { return }
+        NSApp.windows.forEach(install(on:))
+        keyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { note in
+            MainActor.assumeIsolated {
+                if let window = note.object as? NSWindow { install(on: window) }
+            }
+        }
+    }
+
+    static func install(on window: NSWindow) {
+        let key = ObjectIdentifier(window)
+        guard guards[key] == nil else { return }
+        guards[key] = FirstResponderGuard(window: window)
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: window, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { _ = guards.removeValue(forKey: key) }
+        }
+    }
+
+    private init(window: NSWindow) {
+        self.window = window
+        observation = window.observe(\.firstResponder, options: [.initial, .new]) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.check() }
+        }
+    }
+
+    private func check() {
+        guard let window, let responder = window.firstResponder else { return }
+        let event = NSApp.currentEvent
+        let description = Self.describe(responder)
+        guard Self.shouldClear(responder, window: window, event: event) else {
+            Self.logger.debug("first responder \(description, privacy: .public) kept, event \(Self.describe(event), privacy: .public)")
+            return
+        }
+        Self.logger.debug("first responder \(description, privacy: .public) cleared, event \(Self.describe(event), privacy: .public)")
+        window.makeFirstResponder(nil)
+    }
+
+    private static func shouldClear(_ responder: NSResponder, window: NSWindow, event: NSEvent?) -> Bool {
+        guard let view = responder as? NSView, view !== window.contentView else { return false }
+        // Text fields, editors and the terminal keep focus they were given.
+        if responder is NSText || responder is NSTextInputClient { return false }
+        // Tab and Shift-Tab are the user keyboard-navigating; that ring is wanted.
+        if event?.type == .keyDown, event?.keyCode == 48 { return false }
+        return true
+    }
+
+    private static func describe(_ responder: NSResponder) -> String {
+        var parts = [String(describing: type(of: responder))]
+        if let view = responder as? NSView {
+            if let id = view.identifier?.rawValue { parts.append("id=\(id)") }
+            if let label = view.accessibilityLabel(), !label.isEmpty { parts.append("label=\(label)") }
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private static func describe(_ event: NSEvent?) -> String {
+        guard let event else { return "none" }
+        if event.type == .keyDown { return "keyDown \(event.keyCode)" }
+        return "\(event.type.rawValue)"
+    }
 }
