@@ -1,8 +1,19 @@
+import AppKit
 import SwiftUI
+
+/// Picks the full sidebar title when it fits the text slot, otherwise the short one.
+enum SidebarRowLabel {
+    static func resolved(full: String, compact: String?, availableWidth: CGFloat, fontSize: CGFloat = 13) -> String {
+        guard let compact, availableWidth > 0 else { return full }
+        let needed = (full as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: fontSize)]).width
+        return needed <= availableWidth ? full : compact
+    }
+}
 
 /// A customizable sidebar row that replaces NavigationLink for full theming control.
 struct SidebarRow: View {
     let label: String
+    var compactLabel: String? = nil
     let icon: String
     let isSelected: Bool
     var isDisabled: Bool = false
@@ -12,6 +23,7 @@ struct SidebarRow: View {
 
     @Environment(ThemeManager.self) private var themeManager
     @State private var isHovered: Bool = false
+    @State private var textSlotWidth: CGFloat = 0
 
     var body: some View {
         Button(action: { if !isDisabled { action() } }) {
@@ -29,11 +41,16 @@ struct SidebarRow: View {
                         .frame(width: 20)
                 }
 
-                Text(label)
+                Text(visibleLabel)
                     .font(.system(size: 13))
                     .foregroundStyle(textColor)
-
-                Spacer()
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onGeometryChange(for: CGFloat.self) { proxy in
+                        proxy.size.width
+                    } action: { width in
+                        textSlotWidth = width
+                    }
             }
             .padding(.leading, indented ? 28 : 8)
             .padding(.trailing, 8)
@@ -69,6 +86,10 @@ struct SidebarRow: View {
                 Color.clear
             }
         }
+    }
+
+    private var visibleLabel: String {
+        SidebarRowLabel.resolved(full: label, compact: compactLabel, availableWidth: textSlotWidth)
     }
 
     private var iconColor: Color {

@@ -77,7 +77,7 @@ struct BriefView: View {
                             ProgressView()
                                 .controlSize(.mini)
                         } else {
-                            Image(systemName: "sparkles")
+                            Text("Polish")
                         }
                     }
                     .disabled(viewModel.isRefining || !viewModel.canRefineWithAI)

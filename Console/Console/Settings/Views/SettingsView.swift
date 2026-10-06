@@ -446,7 +446,7 @@ struct SettingsView: View {
 
                 HStack {
                     Spacer()
-                    Text("Uses managed Claude access; default haiku. Failed or incomplete scans keep previous cards.")
+                    Text("Uses managed Claude access; default \(AppSettings.mrScanModelDefault). Failed or incomplete scans keep previous cards.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }

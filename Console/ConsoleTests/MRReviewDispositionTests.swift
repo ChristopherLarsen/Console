@@ -154,6 +154,6 @@ final class MRReviewDispositionTests: XCTestCase {
         defaults.set("  ", forKey: AppSettings.mrDispositionPromptKey)
         defaults.set("\n", forKey: AppSettings.mrScanModelKey)
         XCTAssertEqual(MRDispositionConfiguration.load(defaults).prompt, MRDispositionPrompt.defaultText)
-        XCTAssertEqual(MRDispositionConfiguration.load(defaults).model, "haiku")
+        XCTAssertEqual(MRDispositionConfiguration.load(defaults).model, AppSettings.mrScanModelDefault)
     }
 }

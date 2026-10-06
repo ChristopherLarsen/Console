@@ -59,6 +59,18 @@ final class ToDoStore {
         save(items.filter { $0.id != id })
     }
 
+    /// Moves `id` into the slot currently occupied by `targetID`. Other items
+    /// shift to make room. A missing id, or a drop onto itself, changes nothing.
+    func move(_ id: UUID, toSlotOf targetID: UUID) {
+        guard let source = items.firstIndex(where: { $0.id == id }),
+              let target = items.firstIndex(where: { $0.id == targetID }),
+              source != target else { return }
+        var updated = items
+        let moved = updated.remove(at: source)
+        updated.insert(moved, at: target)
+        save(updated)
+    }
+
     static func singleLine(_ title: String) -> String? {
         let title = title.split(whereSeparator: { $0.isNewline })
             .joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)

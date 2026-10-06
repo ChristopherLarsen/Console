@@ -63,6 +63,7 @@ struct SidebarView: View {
 
                         SidebarRow(
                             label: SidebarSelection.previousSessions.label,
+                            compactLabel: "Prev Sessions",
                             icon: SidebarSelection.previousSessions.icon,
                             isSelected: selection == .previousSessions
                         ) {

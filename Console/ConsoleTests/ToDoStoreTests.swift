@@ -34,6 +34,34 @@ final class ToDoStoreTests: XCTestCase {
         XCTAssertEqual(ToDoStore(fileURL: fileURL).items.map(\.title), ["Second item"])
     }
 
+    func testReorderPersistsAndFailedSaveKeepsOrder() throws {
+        let store = ToDoStore(fileURL: fileURL)
+        XCTAssertTrue(store.add("A"))
+        XCTAssertTrue(store.add("B"))
+        XCTAssertTrue(store.add("C"))
+        let ids = store.items.map(\.id)
+
+        store.move(ids[0], toSlotOf: ids[1])
+        XCTAssertEqual(store.items.map(\.title), ["B", "A", "C"])
+        store.move(ids[0], toSlotOf: ids[2])
+        XCTAssertEqual(store.items.map(\.title), ["B", "C", "A"])
+        XCTAssertEqual(ToDoStore(fileURL: fileURL).items.map(\.title), ["B", "C", "A"])
+
+        store.move(ids[0], toSlotOf: ids[0])
+        store.move(UUID(), toSlotOf: ids[1])
+        XCTAssertEqual(store.items.map(\.title), ["B", "C", "A"])
+
+        store.move(ids[0], toSlotOf: ids[1])
+        XCTAssertEqual(store.items.map(\.title), ["A", "B", "C"])
+
+        let saved = store.items
+        try FileManager.default.removeItem(at: fileURL)
+        try FileManager.default.createDirectory(at: fileURL, withIntermediateDirectories: true)
+        store.move(saved[0].id, toSlotOf: saved[2].id)
+        XCTAssertEqual(store.items, saved)
+        XCTAssertNotNil(store.errorMessage)
+    }
+
     func testBlankInputDoesNotEraseAnItem() throws {
         let store = ToDoStore(fileURL: fileURL)
         XCTAssertFalse(store.add(" \n "))
