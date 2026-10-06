@@ -1125,4 +1125,38 @@ final class SessionLaunchCoordinatorTests: XCTestCase {
             "the resume still reopens the same conversation"
         )
     }
+
+    func testCommandPromptLaunchesNamedSessionAndKeepsPromptNewlines() async throws {
+        let stack = makeStack()
+        let folder = try addWorkspace(stack, named: "CommandHome")
+        stack.store.queuedCommandSpacing = 0
+
+        let started = await stack.coordinator.beginCommandPrompt(
+            name: "Fix the tests",
+            prompt: "Look at the failing test.\nLeave the product behavior alone."
+        )
+
+        XCTAssertTrue(started)
+        let session = try XCTUnwrap(stack.store.sessions.first { $0.activity != .exited })
+        XCTAssertEqual(session.name, "Fix the tests")
+        XCTAssertEqual(session.purpose, .general)
+        XCTAssertEqual(session.workingDirectory, folder.directoryURL)
+
+        receiveLifecycleEvent(stack, sessionID: session.id, event: .sessionStarted, eventID: "evt-command-prompt")
+        let sent = stack.store.debugTerminalSendBytes.map(\.utf8).joined()
+        XCTAssertTrue(sent.contains("/rename Fix the tests"))
+        XCTAssertTrue(sent.contains("Look at the failing test.\nLeave the product behavior alone."))
+        stack.store.terminateAll()
+    }
+
+    func testCommandPromptWithoutSessionFolderFails() async {
+        let stack = makeStack()
+        let started = await stack.coordinator.beginCommandPrompt(name: "Fix", prompt: "Do the thing")
+        XCTAssertFalse(started)
+        XCTAssertEqual(
+            stack.coordinator.lastFailure?.message,
+            SessionLaunchCoordinator.LaunchError.sessionFolderMissing.errorDescription
+        )
+        XCTAssertTrue(stack.store.sessions.isEmpty)
+    }
 }

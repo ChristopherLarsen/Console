@@ -1201,9 +1201,19 @@ final class SessionStore {
     /// commands and submits it once the bridge reports the session live. It is
     /// typed like a queued command (text, then a separately written Return)
     /// and marks the session Working. Exited sessions drop it.
-    func queuePrompt(_ prompt: String, for sessionID: UUID, onSubmitted: (@MainActor () -> Void)? = nil) {
-        let line = prompt.components(separatedBy: .newlines).joined(separator: " ")
-            .trimmingCharacters(in: .whitespaces)
+    func queuePrompt(
+        _ prompt: String,
+        for sessionID: UUID,
+        collapsingNewlines: Bool = true,
+        onSubmitted: (@MainActor () -> Void)? = nil
+    ) {
+        let normalized = prompt
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let line = (collapsingNewlines
+            ? normalized.components(separatedBy: .newlines).joined(separator: " ")
+            : normalized)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !line.isEmpty, let session = session(withID: sessionID), session.activity != .exited else { return }
         if session.bridgeStatus == .active {
             submitQueuedCommands([.prompt(line, onSubmitted: onSubmitted)], index: 0, sessionID: sessionID)

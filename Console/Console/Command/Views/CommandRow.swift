@@ -56,6 +56,7 @@ struct ExpandableCommandRow: View {
     }
 
     private func fillMissingAIFields() {
+        guard !command.isClaudePromptCommand else { return }
         var changed = false
         if command.shortSummary.isEmpty {
             let placeholder = command.generatePlaceholderSummary()
@@ -110,7 +111,15 @@ struct ExpandableCommandRow: View {
                     }
                 }
 
-                if let phrase = command.triggerPhrases.first, !phrase.isEmpty {
+                if command.isClaudePromptCommand {
+                    let hint = CommandPromptText.hint(from: command.claudePrompt)
+                    if !hint.isEmpty {
+                        Text(hint)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                } else if let phrase = command.triggerPhrases.first, !phrase.isEmpty {
                     HStack(spacing: 3) {
                         Text("Say:")
                             .font(.caption)
@@ -122,7 +131,7 @@ struct ExpandableCommandRow: View {
                     .lineLimit(1)
                 }
 
-                if !command.shortSummary.isEmpty {
+                if !command.isClaudePromptCommand, !command.shortSummary.isEmpty {
                     Text(command.shortSummary)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -147,11 +156,18 @@ struct ExpandableCommandRow: View {
             Divider()
                 .padding(.top, 8)
 
-            if command.triggerPhrases.count > 0 {
-                triggerPhrasesSection
+            if command.isClaudePromptCommand {
+                Text(command.claudePrompt)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                if command.triggerPhrases.count > 0 {
+                    triggerPhrasesSection
+                }
+                actionsSection
             }
-
-            actionsSection
 
             Divider()
 
@@ -294,7 +310,7 @@ struct ExpandableCommandRow: View {
                     Text("Stop")
                         .font(.callout)
                 } else {
-                    Text("Test")
+                    Text(command.isClaudePromptCommand ? "Run" : "Test")
                         .font(.callout)
                 }
             }
@@ -302,8 +318,8 @@ struct ExpandableCommandRow: View {
         .buttonStyle(.plain)
         .foregroundStyle(Color.accentColor)
         .disabled(isTesting && onStop == nil)
-        .help(isTesting ? "Stop command" : "Test command")
-        .accessibilityLabel(isTesting ? "Stop command" : "Test command")
+        .help(isTesting ? "Stop command" : (command.isClaudePromptCommand ? "Run command" : "Test command"))
+        .accessibilityLabel(isTesting ? "Stop command" : (command.isClaudePromptCommand ? "Run command" : "Test command"))
     }
 
     private func testCommand() {

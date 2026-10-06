@@ -225,7 +225,30 @@ final class SessionLaunchCoordinator {
         store.queueSlashCommand("/color purple", for: sessionID)
     }
 
-    // MARK: - Launch
+    /// Starts a Claude Code session in the Session Folder, names it from the
+    /// command title, and sends `prompt` as the first message. Newlines in the
+    /// prompt are kept. Failure is recorded on `lastFailure`.
+    @discardableResult
+    func beginCommandPrompt(name: String, prompt: String) async -> Bool {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !body.isEmpty else {
+            lastFailure = SessionLaunchFailure(
+                message: "This command needs a title and text to send.",
+                offersSettingsRoute: false
+            )
+            return false
+        }
+        var prepared = draft(purpose: .general, source: nil)
+        prepared.name = title
+        guard let sessionID = await startContextualLaunch(prepared),
+              let session = store.session(withID: sessionID) else {
+            return false
+        }
+        store.queueSlashCommand("/rename \(session.name)", for: sessionID)
+        store.queuePrompt(body, for: sessionID, collapsingNewlines: false)
+        return true
+    }
 
     // MARK: - Launch
 

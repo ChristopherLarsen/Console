@@ -370,6 +370,10 @@ struct ConsoleApp: App {
             sessionStore.injectUITestPreviewSessions()
         }
         #endif
+
+        localCommandExecutor.promptLauncher = { command in
+            await coordinator.beginCommandPrompt(name: command.name, prompt: command.claudePrompt)
+        }
     }
 
     var body: some Scene {

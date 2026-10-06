@@ -12,18 +12,15 @@ struct CommandListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Command.name) private var commands: [Command]
 
-    @Environment(AIProviderManager.self) private var aiProviderManager
     @Environment(LocalCommandExecutor.self) private var commandExecutor
 
     @State private var showCreationSheet = false
-    @State private var showNoProviderAlert = false
     @State private var commandToDelete: Command?
     @State private var showDeleteAlert = false
     @State private var selectedCommand: Command?
     
     @State private var expandedCommandIDs: Set<UUID> = []
     @State private var sortOption: CommandSortOption = .alphabetical
-    @State private var availableHeight: CGFloat = 600
 
     private var sortedCommandList: [Command] {
         switch sortOption {
@@ -55,16 +52,15 @@ struct CommandListView: View {
                 commandList
             }
         }
-        
-        .background(GeometryReader { geo in
-            Color.clear.onAppear { availableHeight = geo.size.height }
-                .onChange(of: geo.size.height) { _, newHeight in availableHeight = newHeight }
-        })
         .sheet(isPresented: $showCreationSheet) {
-            CommandCreationView(maxHeight: availableHeight - 100)
+            CommandPromptEditor()
         }
         .sheet(item: $selectedCommand) { command in
-            CommandDetailView(command: command)
+            if command.isClaudePromptCommand {
+                CommandPromptEditor(command: command)
+            } else {
+                CommandDetailView(command: command)
+            }
         }
         .alert("Delete Command?", isPresented: $showDeleteAlert) {
             Button("Cancel", role: .cancel) { commandToDelete = nil }
@@ -72,11 +68,6 @@ struct CommandListView: View {
         } message: {
             if let cmd = commandToDelete {
                 Text("Permanently delete \"\(cmd.name)\"?")
-            }
-        }
-        .overlay {
-            if showNoProviderAlert {
-                noProviderOverlay
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .showCommandCreation)) { _ in
@@ -87,56 +78,6 @@ struct CommandListView: View {
             }
         }
     
-    }
-
-    // MARK: - No Provider Alert
-
-    private var noProviderOverlay: some View {
-        ZStack {
-            Color.black.opacity(0.4)
-                .ignoresSafeArea()
-                .onTapGesture {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        showNoProviderAlert = false
-                    }
-                }
-
-            VStack(spacing: 16) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 36))
-                    .foregroundStyle(Color.accentColor)
-
-                Text("No Local LLM Connected")
-                    .font(.headline)
-
-                Text("Create Command generates with your local LLM. Would you like to go to AI Provider to set one up for Console?")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 260)
-
-                HStack(spacing: 12) {
-                    CapsuleButton("Cancel", style: .neutral) {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            showNoProviderAlert = false
-                        }
-                    }
-
-                    CapsuleButton("OK", style: .primary) {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            showNoProviderAlert = false
-                        }
-                        ConsoleNavigation.showAIProvider()
-                    }
-                }
-                .padding(.top, 4)
-            }
-            .padding(28)
-            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
-        }
-        .transition(.opacity)
     }
 
     // MARK: - Header
@@ -268,7 +209,7 @@ struct CommandListView: View {
             Text("No Commands Yet!")
                 .font(.title3.weight(.medium))
 
-            Text("Use your AI provider to\n**create a command**")
+            Text("Add a title and the text Claude should run.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -319,22 +260,8 @@ struct CommandListView: View {
         persistChanges()
     }
 
-    /// Create Command generates with the local LLM only. Any other provider —
-    /// or a local server that isn't running — gets the error dialogue instead
-    /// of the creation popup.
     private func handleAddCommand() {
-        guard aiProviderManager.selectedProvider == .lmStudio else {
-            showNoProviderAlert = true
-            return
-        }
-        Task {
-            let result = await aiProviderManager.testConnection(for: .lmStudio)
-            if result.isSuccess {
-                showCreationSheet = true
-            } else {
-                showNoProviderAlert = true
-            }
-        }
+        showCreationSheet = true
     }
 
     private func persistChanges() {

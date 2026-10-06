@@ -13,6 +13,9 @@ enum CommandExporter {
         if !command.commandDescription.isEmpty {
             json["description"] = command.commandDescription
         }
+        if !command.claudePrompt.isEmpty {
+            json["claudePrompt"] = command.claudePrompt
+        }
         json["actions"] = command.actions.sorted(by: { $0.order < $1.order }).map { action -> [String: Any] in
             var map: [String: Any] = [
                 "type": action.type.rawValue,

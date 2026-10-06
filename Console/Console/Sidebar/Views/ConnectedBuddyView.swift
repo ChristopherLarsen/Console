@@ -1,9 +1,12 @@
 import SwiftUI
+import SwiftData
 import Foundation
 
 /// Sidebar status card with ConsoleBuddy image, last-request provider connection dot, and machine name.
 struct ConnectedBuddyView: View {
     @Environment(AIProviderManager.self) private var aiProviderManager: AIProviderManager?
+    @Environment(LocalCommandExecutor.self) private var commandExecutor: LocalCommandExecutor?
+    @State private var showsCommandPicker = false
     /// The provider connection indicator only means something when the AI
     /// provider feature is enabled in Settings.
     @AppStorage(AppSettings.aiProviderEnabledKey) private var isAIProviderEnabled = false
@@ -43,15 +46,23 @@ struct ConnectedBuddyView: View {
 
     var body: some View {
         Button {
-            Task { await MenuBarViewModel.shared?.beginPushToTalk() }
+            showsCommandPicker = true
         } label: {
             panel
         }
         .buttonStyle(.plain)
-        .help("Click to speak a voice command")
+        .help("Choose a command")
         .accessibilityLabel(accessibilityStatus)
-        .accessibilityHint("Starts listening for a voice command")
+        .accessibilityHint("Shows commands you can run")
         .accessibilityAddTraits(.isButton)
+        .popover(isPresented: $showsCommandPicker, arrowEdge: .trailing) {
+            if let commandExecutor {
+                CommandPromptPicker {
+                    showsCommandPicker = false
+                }
+                .environment(commandExecutor)
+            }
+        }
     }
 
     private var panel: some View {
@@ -107,4 +118,6 @@ struct ConnectedBuddyView: View {
     ConnectedBuddyView()
         .frame(width: 180)
         .padding()
+        .modelContainer(for: Command.self, inMemory: true)
+        .environment(LocalCommandExecutor())
 }

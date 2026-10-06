@@ -4,7 +4,7 @@ import SwiftData
 struct CreateCommandIntent: AppIntent {
     static var title: LocalizedStringResource = "Create Command"
     static var description = IntentDescription(
-        "Generate a new Console command from a natural language description using your configured AI provider."
+        "Save a command. The description is sent as the first message in a new Claude session."
     )
 
     @Parameter(title: "Description")
@@ -15,49 +15,32 @@ struct CreateCommandIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> {
-        guard let container = AppDependencies.shared.modelContainer,
-              let aiProviderManager = AppDependencies.shared.aiProviderManager else {
+        guard let container = AppDependencies.shared.modelContainer else {
             throw IntentError.notReady
         }
 
-        guard let generator = await aiProviderManager.generator() else {
-            throw IntentError.noProviderConfigured
+        let body = InputSanitizer.commandPrompt(commandDescription)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else {
+            throw IntentError.generationFailed("Enter the text Claude should run.")
         }
 
-        var prompt = commandDescription
-        let phrases = triggerPhrases.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !phrases.isEmpty {
-            prompt += "\n\nUser-specified trigger phrases: \(phrases)"
+        let phraseTitle = triggerPhrases
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+        let firstLine = body.split(whereSeparator: \.isNewline).first.map(String.init) ?? body
+        let name = InputSanitizer.commandName(phraseTitle ?? firstLine)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            throw IntentError.generationFailed("Enter a title.")
         }
 
-        let command: Command
-        do {
-            command = try await RetryHelper.withRetry(maxAttempts: 3) {
-                try await generator.generateCommand(from: prompt)
-            }
-        } catch {
-            throw IntentError.generationFailed(error.localizedDescription)
-        }
-
-        let validator = CommandValidator()
-        let validation = validator.validateCommand(command)
-        if case .failure(let msg) = validation {
-            throw IntentError.generationFailed(msg)
-        }
-
-        // Merge user-supplied trigger phrases
-        if !phrases.isEmpty {
-            let userPhrases = phrases
-                .components(separatedBy: ",")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            for phrase in userPhrases {
-                if !command.triggerPhrases.contains(where: { $0.lowercased() == phrase.lowercased() }) {
-                    command.triggerPhrases.append(phrase)
-                }
-            }
-        }
-
+        let command = Command(
+            name: name,
+            claudePrompt: body,
+            shortSummary: CommandPromptText.hint(from: body, lineCount: 1)
+        )
         let context = ModelContext(container)
         context.insert(command)
         do {
@@ -67,7 +50,7 @@ struct CreateCommandIntent: AppIntent {
             throw IntentError.generationFailed("Failed to save command: \(error.localizedDescription)")
         }
 
-        return .result(value: "Created command \"\(command.name)\" with \(command.actions.count) action(s).")
+        return .result(value: "Created command \"\(command.name)\".")
     }
 
     static var parameterSummary: some ParameterSummary {

@@ -6,6 +6,9 @@ final class Command: Identifiable {
     @Attribute(.unique) var id: UUID
     var name: String
     var commandDescription: String
+    /// Text sent as the first message when this command starts a Claude session.
+    /// Console-owned commands leave this empty and keep their app actions.
+    var claudePrompt: String = ""
     var triggerPhrases: [String]
     var actions: [CommandAction]
     var executionMode: CommandExecutionMode
@@ -28,6 +31,7 @@ final class Command: Identifiable {
         id: UUID = UUID(),
         name: String,
         commandDescription: String = "",
+        claudePrompt: String = "",
         triggerPhrases: [String] = [],
         actions: [CommandAction] = [],
         executionMode: CommandExecutionMode = .appIntents,
@@ -44,6 +48,7 @@ final class Command: Identifiable {
         self.id = id
         self.name = name
         self.commandDescription = commandDescription
+        self.claudePrompt = claudePrompt
         self.triggerPhrases = triggerPhrases
         self.actions = actions
         self.executionMode = executionMode
@@ -60,11 +65,17 @@ final class Command: Identifiable {
 
     var isDangerous: Bool { requiresConfirmation }
 
+    /// A user-authored command whose text starts a Claude session.
+    var isClaudePromptCommand: Bool {
+        !isConsole && !claudePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// Behavioral duplicate: new command identity and name, identical configuration.
     func duplicating(name: String? = nil) -> Command {
         Command(
             name: name ?? "\(self.name) Copy",
             commandDescription: commandDescription,
+            claudePrompt: claudePrompt,
             triggerPhrases: triggerPhrases,
             actions: actions.map { $0.duplicating() },
             executionMode: executionMode,

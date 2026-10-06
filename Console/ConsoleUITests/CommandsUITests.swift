@@ -53,11 +53,11 @@ final class CommandsUITests: XCTestCase {
         let sheetTitle = app.staticTexts["Create Command"]
         XCTAssertTrue(sheetTitle.waitForExistence(timeout: 5), "Creation sheet should appear")
 
-        let phraseField = app.textFields["e.g. open music, play tunes"]
-        XCTAssertTrue(phraseField.exists, "Command phrase text field should be visible")
+        let titleField = app.textFields["Command title"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 2), "Command title field should be visible")
 
-        let descriptionLabel = app.staticTexts["Command Description"]
-        XCTAssertTrue(descriptionLabel.exists, "Command Description label should be visible")
+        let promptLabel = app.staticTexts["Prompt"]
+        XCTAssertTrue(promptLabel.exists, "Prompt label should be visible")
     }
 
     // MARK: - Command Creation No Provider

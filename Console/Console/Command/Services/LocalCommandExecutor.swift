@@ -34,6 +34,9 @@ final class LocalCommandExecutor: CommandRunning {
     private let completionChecker = CompletionChecker()
 
     var modelContext: ModelContext?
+    /// Starts a Claude session for a title-and-prompt command. The app installs
+    /// this; tests can install a fake. Nil means the command cannot be launched.
+    var promptLauncher: (@MainActor (Command) async -> Bool)?
 
     init(
         actionExecutor: (any CommandActionExecuting)? = nil,
@@ -135,6 +138,10 @@ final class LocalCommandExecutor: CommandRunning {
             if shouldHalt {
                 return finishCancelled(command, runID: runID, logs: [], startTime: Date())
             }
+        }
+
+        if command.isClaudePromptCommand {
+            return await executeClaudePrompt(command, runID: runID)
         }
 
         let startTime = Date()
@@ -304,6 +311,50 @@ final class LocalCommandExecutor: CommandRunning {
         case cancelled
         case denied
         case silent
+    }
+
+    private func executeClaudePrompt(_ command: Command, runID: UUID) async -> CommandRun {
+        if shouldHalt {
+            return finishCancelled(command, runID: runID, logs: [], startTime: Date())
+        }
+        let startTime = Date()
+        command.lastExecutedAt = startTime
+        if let modelContext {
+            try? modelContext.save()
+        }
+        let launched = await promptLauncher?(command) ?? false
+        let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
+        let resultValue: Result<String, Error> = launched
+            ? .success("Started a Claude session")
+            : .failure(ClaudePromptLaunchError.unavailable)
+        let entry = ExecutionLogEntry(
+            timestamp: Date(),
+            actionIndex: 0,
+            actionType: .appIntent,
+            payload: command.claudePrompt,
+            result: resultValue,
+            durationMs: durationMs
+        )
+        let executionResult = ExecutionResult(
+            command: command,
+            logs: [entry],
+            overallSuccess: launched,
+            totalDurationMs: durationMs
+        )
+        let run = CommandRun(id: runID, result: executionResult)
+        let feedback: RunFeedback = (promptLauncher == nil && !launched)
+            ? .finished(success: false, command: command, logs: [entry])
+            : .silent
+        endRun(run, feedback: feedback)
+        return run
+    }
+
+    private enum ClaudePromptLaunchError: LocalizedError {
+        case unavailable
+
+        var errorDescription: String? {
+            "Could not start a Claude session. Choose a Session Folder in Settings."
+        }
     }
 
     // MARK: - Console Actions

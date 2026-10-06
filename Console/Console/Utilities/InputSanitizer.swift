@@ -34,6 +34,21 @@ struct InputSanitizer {
         return filter(input, allowed: allowed, maxLength: 500)
     }
 
+    // MARK: - Claude command prompt
+    // The text is sent to a Claude session, so punctuation and newlines stay.
+    // Control characters other than tab and newline are removed.
+
+    static func commandPrompt(_ input: String, maxLength: Int = 8_000) -> String {
+        var result = ""
+        result.reserveCapacity(min(input.count, maxLength))
+        for scalar in input.unicodeScalars {
+            if result.count >= maxLength { break }
+            let keep = scalar == "\n" || scalar == "\t" || (scalar.value >= 0x20 && scalar.value != 0x7F)
+            if keep { result.unicodeScalars.append(scalar) }
+        }
+        return result
+    }
+
     // MARK: - Search Query
     // Allow: letters, numbers, spaces, hyphens
 

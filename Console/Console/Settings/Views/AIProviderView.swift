@@ -116,7 +116,7 @@ struct AIProviderView: View {
             Text("No AI provider configured")
                 .font(.subheadline)
                 .fontWeight(.semibold)
-            Text("You can still use Console with the starter commands and any commands you create manually. An AI provider is only needed to generate new commands from natural language descriptions.")
+            Text("Commands are a title and the text sent to a Claude session. The AI provider stays available for other Console features.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }

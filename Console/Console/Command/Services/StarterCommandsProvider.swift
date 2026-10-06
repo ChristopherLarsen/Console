@@ -46,70 +46,6 @@ enum StarterCommandsProvider {
             shortSummary: "Show recent voice commands"
         ),
         StarterEntry(
-            name: "Open Terminal",
-            phrases: ["open terminal", "launch terminal", "start terminal"],
-            mode: .appIntents,
-            actions: [
-                CommandAction(type: .appIntent, payload: "openApplication:Terminal", order: 0)
-            ],
-            requiresConfirmation: false,
-            isConsole: false,
-            shortSummary: "Launch the Terminal app"
-        ),
-        StarterEntry(
-            name: "Open Browser",
-            phrases: ["open browser", "open safari", "launch browser", "open web"],
-            mode: .appIntents,
-            actions: [
-                CommandAction(type: .appIntent, payload: "openApplication:Safari", order: 0)
-            ],
-            requiresConfirmation: false,
-            isConsole: false,
-            shortSummary: "Launch Safari"
-        ),
-        StarterEntry(
-            name: "Open Finder",
-            phrases: ["open finder", "launch finder", "show finder"],
-            mode: .appIntents,
-            actions: [
-                CommandAction(type: .appIntent, payload: "openApplication:Finder", order: 0)
-            ],
-            requiresConfirmation: false,
-            isConsole: false,
-            shortSummary: "Open a Finder window"
-        ),
-        StarterEntry(
-            name: "Show Desktop",
-            phrases: ["show desktop", "hide windows", "clear desktop", "minimize all"],
-            mode: .appIntents,
-            actions: [
-                CommandAction(type: .appIntent, payload: "showDesktop", order: 0)
-            ],
-            requiresConfirmation: false,
-            isConsole: false,
-            shortSummary: "Hide all windows"
-        ),
-        StarterEntry(
-            name: "New Finder Window",
-            phrases: ["new finder window", "open new window"],
-            mode: .appleScript,
-            actions: [
-                CommandAction(
-                    type: .appleScript,
-                    payload: """
-                    tell application "Finder"
-                        make new Finder window
-                        activate
-                    end tell
-                    """,
-                    order: 0
-                )
-            ],
-            requiresConfirmation: false,
-            isConsole: false,
-            shortSummary: "Open a new Finder window"
-        ),
-        StarterEntry(
             name: "Stop Listening",
             phrases: ["off", "stop listening"],
             mode: .appIntents,
@@ -202,9 +138,33 @@ enum StarterCommandsProvider {
         if changed { try? modelContext.save() }
     }
 
+    /// Removes saved commands that are not Console-owned and not a title-plus-prompt
+    /// command. That drops the old operating-system launchers and any user command
+    /// whose actions were AppleScript, shell, or an app intent.
+    @MainActor
+    @discardableResult
+    static func deleteNonPromptUserCommands(in modelContext: ModelContext) -> Int {
+        let existing = (try? modelContext.fetch(FetchDescriptor<Command>())) ?? []
+        var removed = 0
+        for command in existing {
+            if command.isConsole || command.isClaudePromptCommand { continue }
+            modelContext.delete(command)
+            removed += 1
+        }
+        guard removed > 0 else { return 0 }
+        do {
+            try modelContext.save()
+            NotificationCenter.default.post(name: .commandVocabularyDidChange, object: nil)
+        } catch {
+            printDebug("[Console] Failed to delete legacy commands: \(error)")
+        }
+        return removed
+    }
+
     @MainActor
     static func loadStarterCommands(into modelContext: ModelContext) -> Int {
         migratePayloads(in: modelContext)
+        deleteNonPromptUserCommands(in: modelContext)
         var loaded = 0
         let descriptor = FetchDescriptor<Command>()
         let existingCommands = (try? modelContext.fetch(descriptor)) ?? []

@@ -182,7 +182,7 @@ struct AIProviderConfigSection: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
-                Text("The AI provider is used to generate command actions from natural language. We recommend using the most capable model as they are better able to reliably generate commands.")
+                Text("The AI provider stays available for other Console features. Commands are written by hand and sent to a Claude session.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
