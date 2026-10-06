@@ -311,6 +311,7 @@ final class SessionHistoryTests: XCTestCase {
             workingDirectory: scanned.workingDirectory,
             gitBranch: nil,
             transcriptByteCount: scanned.transcriptByteCount,
+            transcriptURL: fileURL,
             ticketKey: nil,
             isWorkingDirectoryMissing: false
         )
@@ -422,5 +423,79 @@ final class SessionHistoryTests: XCTestCase {
         let other = UUID()
         associations.associate("   ", with: other)
         XCTAssertNil(associations.key(for: other))
+    }
+
+    // MARK: - Trash
+
+    func testMoveToTrashRemovesTheTranscriptAndKeepsItRestorable() throws {
+        let url = fixtureRoot.appendingPathComponent("\(UUID().uuidString).jsonl")
+        let contents = Data("transcript".utf8)
+        try contents.write(to: url)
+
+        let trashed = try ClaudeSessionTranscriptTrash.moveToTrash(url)
+        defer { if let trashed { try? FileManager.default.removeItem(at: trashed) } }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        let restored = try Data(contentsOf: XCTUnwrap(trashed))
+        XCTAssertEqual(restored, contents)
+    }
+
+    func testTrashDropsTheCardOnlyAfterTheTranscriptMoves() async throws {
+        let id = UUID()
+        let fileURL = try writeTranscript(id, lines: [
+            line(type: "user", title: "Delete me", message: userMessage("bye")),
+        ])
+        let reader = SessionHistoryReader(root: historyRoot)
+        let model = PreviousSessionsModel(reader: reader, trashTranscript: { url in
+            try FileManager.default.removeItem(at: url)
+        })
+        await model.loadAllSessions()
+        let record = try XCTUnwrap(model.records.first { $0.claudeSessionID == id })
+        XCTAssertEqual(
+            record.transcriptURL.resolvingSymlinksInPath().path,
+            fileURL.resolvingSymlinksInPath().path
+        )
+
+        try model.moveTranscriptToTrash(record)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+        XCTAssertFalse(model.records.contains { $0.claudeSessionID == id })
+        await model.loadAllSessions()
+        XCTAssertFalse(model.records.contains { $0.claudeSessionID == id })
+    }
+
+    func testTrashKeepsTheCardWhenTheMoveFails() async throws {
+        let id = UUID()
+        let fileURL = try writeTranscript(id, lines: [
+            line(type: "user", message: userMessage("stay")),
+        ])
+        let model = PreviousSessionsModel(reader: SessionHistoryReader(root: historyRoot), trashTranscript: { _ in
+            throw CocoaError(.fileWriteUnknown)
+        })
+        await model.loadAllSessions()
+        let record = try XCTUnwrap(model.records.first { $0.claudeSessionID == id })
+
+        XCTAssertThrowsError(try model.moveTranscriptToTrash(record))
+        XCTAssertTrue(model.records.contains { $0.claudeSessionID == id })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
+    func testTrashDropsACardWhoseTranscriptIsAlreadyGone() async throws {
+        let id = UUID()
+        let fileURL = try writeTranscript(id, lines: [
+            line(type: "user", message: userMessage("already gone")),
+        ])
+        var didTrash = false
+        let model = PreviousSessionsModel(reader: SessionHistoryReader(root: historyRoot), trashTranscript: { _ in
+            didTrash = true
+        })
+        await model.loadAllSessions()
+        let record = try XCTUnwrap(model.records.first { $0.claudeSessionID == id })
+        try FileManager.default.removeItem(at: fileURL)
+
+        try model.moveTranscriptToTrash(record)
+
+        XCTAssertFalse(didTrash)
+        XCTAssertFalse(model.records.contains { $0.claudeSessionID == id })
     }
 }

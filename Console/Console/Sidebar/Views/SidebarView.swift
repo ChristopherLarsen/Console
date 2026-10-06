@@ -62,6 +62,14 @@ struct SidebarView: View {
                         }
 
                         SidebarRow(
+                            label: SidebarSelection.previousSessions.label,
+                            icon: SidebarSelection.previousSessions.icon,
+                            isSelected: selection == .previousSessions
+                        ) {
+                            selection = .previousSessions
+                        }
+
+                        SidebarRow(
                             label: SidebarSelection.commands.label,
                             icon: SidebarSelection.commands.icon,
                             isSelected: selection == .commands
@@ -135,8 +143,8 @@ struct SidebarView: View {
         }
     }
 
-    /// Ctrl-1…Ctrl-N select the sidebar destinations in visible order:
-    /// the primary list rows, then Settings. AI Provider only claims a
+    /// Ctrl-1…Ctrl-9, then Ctrl-0, select the sidebar destinations in visible
+    /// order: the primary list rows, then Settings. AI Provider only claims a
     /// number while the Settings toggle makes its row exist.
     private var sidebarHotkeys: some View {
         ForEach(Array(navigableDestinations.enumerated()), id: \.element) { index, destination in
@@ -145,7 +153,10 @@ struct SidebarView: View {
             } label: {
                 EmptyView()
             }
-            .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .control)
+            .keyboardShortcut(
+                KeyEquivalent(Character(ConsoleNavigation.hotkeyKeyCharacter(forOffset: index))),
+                modifiers: .control
+            )
             .opacity(0)
             .accessibilityHidden(true)
         }
@@ -192,7 +203,7 @@ struct SidebarView: View {
 
     private var navigableDestinations: [SidebarSelection] {
         var destinations: [SidebarSelection] = [
-            .home, .jira, .mergeRequests, .sessions, .commands, .brief, .toDo,
+            .home, .jira, .mergeRequests, .sessions, .previousSessions, .commands, .brief, .toDo,
         ]
         if isAIProviderEnabled {
             destinations.append(.aiProvider)

@@ -349,6 +349,8 @@ struct MainView: View {
             AIProviderView()
         case .sessions:
             SessionsView()
+        case .previousSessions:
+            PreviousSessionsView(showsDismissButton: false, allowsDeletion: true)
         case .settings:
             SettingsView()
         }

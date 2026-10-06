@@ -15,6 +15,7 @@ enum SidebarVoiceNavigation {
         .commands: ["commands", "my commands"],
         .aiProvider: ["ai provider", "a i provider", "provider"],
         .sessions: ["sessions", "session", "claude sessions"],
+        .previousSessions: ["previous sessions", "previous session"],
         .settings: ["settings", "preferences"],
     ]
 

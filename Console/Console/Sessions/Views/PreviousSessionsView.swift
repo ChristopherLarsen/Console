@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// "Previous Sessions" modal opened from the New Session launcher. Lists
-/// Claude's local transcript history as resume cards, filtered to the
-/// configured Session Folder by default or across All Projects, ordered by
-/// most recently active.
+/// Previous Claude transcripts as resume cards. The New Session launcher
+/// presents this as a modal ("Select a previous session"). The sidebar page
+/// uses the same list and adds Trash on hover, which moves that transcript
+/// to the Trash. Cards are filtered to the configured Session Folder, ordered
+/// by most recently active.
 struct PreviousSessionsView: View {
     @Environment(SessionStore.self) private var store
     @Environment(SessionLaunchCoordinator.self) private var coordinator
@@ -16,9 +17,15 @@ struct PreviousSessionsView: View {
     @State private var resumingSessionIDs: Set<UUID> = []
     @State private var errorMessage: String?
 
-    /// Called when the modal finishes: successful resume or handed-off
-    /// shared-checkout warning. The launcher closes with it.
-    let onFinished: () -> Void
+    /// The New Session sheet shows a close button and dismisses after a
+    /// successful resume. The sidebar page does not.
+    var showsDismissButton: Bool = true
+    /// Sidebar page: hover reveals Trash, which moves the transcript file
+    /// to the Trash and drops the card.
+    var allowsDeletion: Bool = false
+    /// Called when the modal finishes a successful resume. The launcher
+    /// closes with it.
+    var onFinished: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -48,23 +55,25 @@ struct PreviousSessionsView: View {
 
     private var header: some View {
         HStack {
-            Text("Select a previous session")
+            Text(showsDismissButton ? "Select a previous session" : "Previous Sessions")
                 .font(.headline)
             Spacer(minLength: 8)
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
+            if showsDismissButton {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .help("Close")
+                .accessibilityLabel("Close Previous Sessions")
+                .accessibilityIdentifier("PreviousSessions.CloseButton")
             }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
-            .help("Close")
-            .accessibilityLabel("Close Previous Sessions")
-            .accessibilityIdentifier("PreviousSessions.CloseButton")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -139,7 +148,8 @@ struct PreviousSessionsView: View {
                         ForEach(displayedRecords) { record in
                             PreviousSessionCard(
                                 record: record,
-                                isResuming: resumingSessionIDs.contains(record.id)
+                                isResuming: resumingSessionIDs.contains(record.id),
+                                onDelete: allowsDeletion ? { trash(record) } : nil
                             ) {
                                 resume(record)
                             }
@@ -254,12 +264,27 @@ struct PreviousSessionsView: View {
             defer { resumingSessionIDs.remove(record.id) }
             do {
                 _ = try await coordinator.launchResume(record: restoration)
-                // Success launches the terminal; close modal and launcher.
-                onFinished()
-                dismiss()
+                // Success launches the terminal. The modal also closes
+                // itself and the New Session launcher; the sidebar page
+                // stays until Sessions becomes the selection.
+                if showsDismissButton {
+                    onFinished()
+                    dismiss()
+                }
             } catch {
                 errorMessage = SessionLaunchFailure(error: error).message
             }
+        }
+    }
+
+    /// Moves the transcript to the Trash, then drops the card. A failed
+    /// move leaves the card in place.
+    private func trash(_ record: SessionHistoryRecord) {
+        errorMessage = nil
+        do {
+            try model.moveTranscriptToTrash(record)
+        } catch {
+            errorMessage = "Couldn't move “\(record.title)” to the Trash."
         }
     }
 }
@@ -276,9 +301,25 @@ final class PreviousSessionsModel {
     private(set) var isShowingAllSessions = false
 
     private let reader: SessionHistoryReader
+    private let trashTranscript: (URL) throws -> Void
 
-    init(reader: SessionHistoryReader? = nil) {
+    init(
+        reader: SessionHistoryReader? = nil,
+        trashTranscript: @escaping (URL) throws -> Void = { _ = try ClaudeSessionTranscriptTrash.moveToTrash($0) }
+    ) {
         self.reader = reader ?? SessionHistoryReader()
+        self.trashTranscript = trashTranscript
+    }
+
+    /// Moves the transcript file to the Trash and drops it from the list.
+    /// A missing file still drops the card. A failed move throws and leaves
+    /// the card in place.
+    func moveTranscriptToTrash(_ record: SessionHistoryRecord) throws {
+        if FileManager.default.fileExists(atPath: record.transcriptURL.path) {
+            try trashTranscript(record.transcriptURL)
+        }
+        reader.forgetTranscript(at: record.transcriptURL)
+        records.removeAll { $0.claudeSessionID == record.claudeSessionID }
     }
 
     func useWorkAssociations(_ store: SessionAssociationStore) {
@@ -310,75 +351,108 @@ final class PreviousSessionsModel {
 struct PreviousSessionCard: View {
     let record: SessionHistoryRecord
     let isResuming: Bool
+    var onDelete: (() -> Void)? = nil
     let action: () -> Void
 
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(record.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer(minLength: 8)
-                    if record.isWorkingDirectoryMissing {
-                        Text("Folder missing")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.red)
-                    }
-                    if let key = record.ticketKey {
-                        Text(key)
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.accentColor.opacity(0.12), in: Capsule())
-                            .foregroundStyle(Color.accentColor)
-                            .help("Ticket session")
-                    }
-                }
+    @State private var isHovered = false
 
-                HStack(spacing: 5) {
-                    Text(SessionHistoryFormatting.relativeLastActive(record.lastActive))
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Button(action: action) {
+                cardContents
+            }
+            .buttonStyle(.plain)
+            .disabled(isResuming || record.isWorkingDirectoryMissing)
+            .opacity(isResuming ? 0.6 : 1)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(cardAccessibilityLabel)
+            .accessibilityHint(record.isWorkingDirectoryMissing ? "Folder missing; cannot resume" : "Resumes this session")
+            .accessibilityIdentifier("PreviousSessions.Card.\(record.claudeSessionID.uuidString)")
+
+            if let onDelete {
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(10)
+                .opacity(isHovered ? 1 : 0)
+                .allowsHitTesting(isHovered)
+                .accessibilityHidden(!isHovered)
+                .accessibilityLabel("Move \(record.title) to the Trash")
+                .accessibilityIdentifier("PreviousSessions.Trash.\(record.claudeSessionID.uuidString)")
+                .help("Move to the Trash")
+                .zIndex(1)
+            }
+        }
+        .onHover { isHovered = $0 }
+    }
+
+    private var cardContents: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(record.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 8)
+                if record.isWorkingDirectoryMissing {
+                    Text("Folder missing")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.red)
+                }
+                if let key = record.ticketKey {
+                    Text(key)
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.12), in: Capsule())
+                        .foregroundStyle(Color.accentColor)
+                        .help("Ticket session")
+                }
+                if onDelete != nil {
+                    Color.clear
+                        .frame(width: 22, height: 22)
+                        .accessibilityHidden(true)
+                }
+            }
+
+            HStack(spacing: 5) {
+                Text(SessionHistoryFormatting.relativeLastActive(record.lastActive))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help(SessionHistoryFormatting.exactLastActive(record.lastActive))
+                if let branch = record.gitBranch {
+                    metaSeparator
+                    Label(branch, systemImage: "arrow.triangle.branch")
+                        .labelStyle(.titleAndIcon)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .help(SessionHistoryFormatting.exactLastActive(record.lastActive))
-                    if let branch = record.gitBranch {
-                        metaSeparator
-                        Label(branch, systemImage: "arrow.triangle.branch")
-                            .labelStyle(.titleAndIcon)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
                 }
-
-                Text(record.workingDirectory.path)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                    .help(record.workingDirectory.path)
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(cardBackground)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
-            )
-            .contentShape(Rectangle())
+
+            Text(record.workingDirectory.path)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .truncationMode(.head)
+                .help(record.workingDirectory.path)
         }
-        .buttonStyle(.plain)
-        .disabled(isResuming || record.isWorkingDirectoryMissing)
-        .opacity(isResuming ? 0.6 : 1)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(cardAccessibilityLabel)
-        .accessibilityHint(record.isWorkingDirectoryMissing ? "Folder missing; cannot resume" : "Resumes this session")
-        .accessibilityIdentifier("PreviousSessions.Card.\(record.claudeSessionID.uuidString)")
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(cardBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        )
+        .contentShape(Rectangle())
     }
 
     /// Ticket sessions are white; other sessions sit on light gray.

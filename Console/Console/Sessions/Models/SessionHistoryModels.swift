@@ -15,6 +15,8 @@ struct SessionHistoryRecord: Identifiable, Equatable {
     let gitBranch: String?
     /// Transcript file size in bytes.
     let transcriptByteCount: Int64
+    /// `~/.claude/projects/…/<session-id>.jsonl` this card was read from.
+    let transcriptURL: URL
     /// Ticket key from saved Console associations or a conservative
     /// ticket-style title match; nil for non-ticket sessions.
     let ticketKey: String?

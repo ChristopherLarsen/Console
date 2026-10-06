@@ -11,7 +11,9 @@ final class VoiceCommandHotkeyTests: XCTestCase {
     func testSidebarNamesNavigate() {
         let cases: [(String, SidebarSelection)] = [
             ("JIRA", .jira), ("Gira.", .jira), ("GitLab", .mergeRequests), ("git lab", .mergeRequests),
-            ("open sessions", .sessions), ("Go to the brief", .brief), ("home", .home),
+            ("open sessions", .sessions), ("previous sessions", .previousSessions),
+            ("open previous session", .previousSessions),
+            ("Go to the brief", .brief), ("home", .home),
             ("show me settings please", .settings), ("Commands", .commands),
         ]
         for (utterance, expected) in cases {

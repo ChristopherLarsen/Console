@@ -33,6 +33,12 @@ final class SessionHistoryReader {
 
     func useWorkAssociations(_ store: SessionAssociationStore) { workAssociations = store }
 
+    /// Drops a cached transcript so a later scan cannot revive a file that
+    /// was just moved to the Trash.
+    func forgetTranscript(at url: URL) {
+        cache.removeValue(forKey: url.resolvingSymlinksInPath().path)
+    }
+
     init(ticketAssociations: SessionTicketAssociations = SessionTicketAssociations(), root: URL = SessionHistoryReader.claudeProjectsRoot) {
         self.ticketAssociations = ticketAssociations
         self.root = root
@@ -110,6 +116,7 @@ final class SessionHistoryReader {
                 metadata: metadata,
                 byteCount: candidate.byteCount,
                 modified: candidate.modified,
+                transcriptURL: candidate.url,
                 associations: associations
             )
             updatedCache[path] = CachedMetadata(
@@ -127,6 +134,7 @@ final class SessionHistoryReader {
         metadata: TranscriptMetadata,
         byteCount: Int64,
         modified: Date,
+        transcriptURL: URL,
         associations: [UUID: String]
     ) -> SessionHistoryRecord {
         let title = [metadata.customTitle, metadata.summary, metadata.firstUserMessage]
@@ -141,6 +149,7 @@ final class SessionHistoryReader {
             workingDirectory: workingDirectory,
             gitBranch: metadata.gitBranch,
             transcriptByteCount: byteCount,
+            transcriptURL: transcriptURL,
             ticketKey: SessionTicketClassification.ticketKey(
                 savedAssociation: associations[sessionID],
                 title: title,
@@ -279,5 +288,16 @@ final class SessionHistoryReader {
         let plain = Date.ISO8601FormatStyle()
         if let date = try? fractional.parse(string) { return date }
         return try? plain.parse(string)
+    }
+}
+
+/// Moves one Claude transcript into the user's Trash. The original path is
+/// removed; Finder can restore the file.
+enum ClaudeSessionTranscriptTrash {
+    @discardableResult
+    static func moveToTrash(_ url: URL) throws -> URL? {
+        var resulting: NSURL?
+        try FileManager.default.trashItem(at: url, resultingItemURL: &resulting)
+        return resulting as URL?
     }
 }

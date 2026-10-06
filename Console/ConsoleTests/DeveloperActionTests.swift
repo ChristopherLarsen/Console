@@ -103,11 +103,11 @@ final class DeveloperActionTests: XCTestCase {
     func testNumberedNavigationShortcutsKeepTheirDestinations() {
         let expected: [SidebarSelection] = [
             .home, .jira, .mergeRequests,
-            .sessions, .commands, .brief,
+            .sessions, .previousSessions, .commands, .brief, .toDo,
             .aiProvider
         ]
-        // ⌃1…⌃8 across the eight sidebar destinations.
-        let hotkeyNumbers = [1, 2, 3, 4, 5, 6, 7, 8]
+        // ⌃1…⌃9 across the sidebar destinations. Settings has no number.
+        let hotkeyNumbers = Array(1...expected.count)
         for (index, destination) in expected.enumerated() {
             XCTAssertEqual(
                 ConsoleNavigation.sidebarDestination(hotkeyNumber: hotkeyNumbers[index]),
