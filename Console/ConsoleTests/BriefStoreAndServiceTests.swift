@@ -39,7 +39,6 @@ final class BriefStoreAndServiceTests: XCTestCase {
             day: day,
             activities: [CommitActivity(repositoryName: "Alpha", subject: "Did work", committedAt: day)]
         )
-        brief.source = .ai
         brief.activityRangeStart = day
         brief.activityRangeEnd = calendar.date(byAdding: .day, value: 1, to: day)
         brief.sourceRepositoryNames = ["Alpha"]
@@ -49,14 +48,13 @@ final class BriefStoreAndServiceTests: XCTestCase {
 
         XCTAssertEqual(loaded.day, brief.day)
         XCTAssertEqual(loaded.yesterdayLines, brief.yesterdayLines)
-        XCTAssertEqual(loaded.source, .ai)
         XCTAssertEqual(loaded.activityRangeStart, brief.activityRangeStart)
         XCTAssertEqual(loaded.activityRangeEnd, brief.activityRangeEnd)
         XCTAssertEqual(loaded.sourceRepositoryNames, ["Alpha"])
     }
 
-    /// Briefs persisted by older builds carry task fields the model no longer
-    /// keeps; loading must succeed and simply ignore them.
+    /// Briefs persisted by older builds carry task fields and a polish
+    /// `source` the model no longer keeps; loading must succeed and ignore them.
     func testLoadIgnoresLegacyTaskFields() throws {
         let day = startOfDay(0)
         try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: true)
@@ -66,7 +64,7 @@ final class BriefStoreAndServiceTests: XCTestCase {
           "yesterdayLines": ["Alpha — Work"],
           "todayTasks": ["Old plan"],
           "generatedAt": \(Date().timeIntervalSince1970),
-          "source": "local",
+          "source": "ai",
           "tasksManuallyEdited": true
         }
         """
@@ -174,25 +172,6 @@ final class BriefStoreAndServiceTests: XCTestCase {
         let brief = await service.regenerate(for: today, workspacePaths: ["/tmp/Repo"], workday: picked)
         XCTAssertEqual(brief.yesterdayLines, ["Repo — Picked day work"])
         XCTAssertEqual(brief.activityRangeStart, picked)
-    }
-
-    // MARK: - AI refinement
-
-    func testApplyRefinementReplacesReportLines() async throws {
-        let service = BriefGenerationService(store: store, collector: StubCollector(activityCount: 1))
-        let today = startOfDay(0)
-
-        let brief = await service.ensureBrief(for: today, workspacePaths: ["/tmp/Repo"])
-        let parsed = BriefAIResponseParser.Parsed(yesterdayLines: ["Polished line"])
-        let refined = service.applyRefinement(parsed, to: brief)
-        XCTAssertEqual(refined.yesterdayLines, ["Polished line"])
-        XCTAssertEqual(refined.source, .ai)
-
-        let refinedAgain = service.applyRefinement(
-            BriefAIResponseParser.Parsed(yesterdayLines: ["Second polish"]),
-            to: refined
-        )
-        XCTAssertEqual(refinedAgain.yesterdayLines, ["Second polish"])
     }
 
     func testRegenerateUsesChosenWorkdayAndRecordsSources() async throws {

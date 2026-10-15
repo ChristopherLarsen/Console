@@ -1,13 +1,5 @@
 import Foundation
 
-/// How the brief's report lines were produced.
-enum MorningBriefSource: String, Codable, Equatable {
-    /// Composed deterministically from local commit activity.
-    case local
-    /// Polished by the configured AI provider at the user's request.
-    case ai
-}
-
 /// One super-terse executive report for a calendar day: what was done on the
 /// previous workday. The brief renders as at most `maxYesterdayLines` lines
 /// so it can be read aloud at a morning meeting.
@@ -16,7 +8,6 @@ struct MorningBrief: Codable, Equatable, Identifiable {
     let day: Date
     var yesterdayLines: [String]
     var generatedAt: Date
-    var source: MorningBriefSource
     /// Inclusive start of the authored-date range that produced yesterday's lines.
     var activityRangeStart: Date?
     /// Exclusive end of that authored-date range.
@@ -32,7 +23,6 @@ struct MorningBrief: Codable, Equatable, Identifiable {
         day: Date,
         yesterdayLines: [String],
         generatedAt: Date,
-        source: MorningBriefSource,
         activityRangeStart: Date? = nil,
         activityRangeEnd: Date? = nil,
         sourceRepositoryNames: [String] = []
@@ -40,7 +30,6 @@ struct MorningBrief: Codable, Equatable, Identifiable {
         self.day = day
         self.yesterdayLines = yesterdayLines
         self.generatedAt = generatedAt
-        self.source = source
         self.activityRangeStart = activityRangeStart
         self.activityRangeEnd = activityRangeEnd
         self.sourceRepositoryNames = sourceRepositoryNames
@@ -76,7 +65,7 @@ struct MorningBrief: Codable, Equatable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case day, yesterdayLines, generatedAt, source
+        case day, yesterdayLines, generatedAt
         case activityRangeStart, activityRangeEnd, sourceRepositoryNames
     }
 
@@ -85,7 +74,6 @@ struct MorningBrief: Codable, Equatable, Identifiable {
         day = try container.decode(Date.self, forKey: .day)
         yesterdayLines = try container.decode([String].self, forKey: .yesterdayLines)
         generatedAt = try container.decode(Date.self, forKey: .generatedAt)
-        source = try container.decode(MorningBriefSource.self, forKey: .source)
         activityRangeStart = try container.decodeIfPresent(Date.self, forKey: .activityRangeStart)
         activityRangeEnd = try container.decodeIfPresent(Date.self, forKey: .activityRangeEnd)
         sourceRepositoryNames = try container.decodeIfPresent([String].self, forKey: .sourceRepositoryNames) ?? []
@@ -96,7 +84,6 @@ struct MorningBrief: Codable, Equatable, Identifiable {
         try container.encode(day, forKey: .day)
         try container.encode(yesterdayLines, forKey: .yesterdayLines)
         try container.encode(generatedAt, forKey: .generatedAt)
-        try container.encode(source, forKey: .source)
         try container.encodeIfPresent(activityRangeStart, forKey: .activityRangeStart)
         try container.encodeIfPresent(activityRangeEnd, forKey: .activityRangeEnd)
         try container.encode(sourceRepositoryNames, forKey: .sourceRepositoryNames)

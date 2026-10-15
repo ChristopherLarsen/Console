@@ -1,13 +1,12 @@
 import Foundation
 
-/// Kind of in-flight Brief work. Starting either kind increments the
+/// Kind of in-flight Brief work. Starting a new generation increments the
 /// shared operation generation so the later click wins.
 enum BriefOperationKind: Equatable, Sendable {
     case generate
-    case refine
 }
 
-/// Identifies one generate/refine attempt. Cancellation is decided by
+/// Identifies one generation attempt. Cancellation is decided by
 /// whether this token is still current, not by a weak view-model reference.
 struct BriefOperationToken: Equatable, Sendable {
     let id: UInt64
@@ -15,7 +14,7 @@ struct BriefOperationToken: Equatable, Sendable {
     let kind: BriefOperationKind
 }
 
-/// Result of finishing generate/refine. `.superseded` must not be written
+/// Result of finishing generation. `.superseded` must not be written
 /// to disk or applied to the UI.
 enum BriefOperationOutcome: Equatable {
     case applied(MorningBrief)
@@ -23,11 +22,11 @@ enum BriefOperationOutcome: Equatable {
 }
 
 /// Owns brief lifecycle for the app: ensures a pre-prepared brief exists for
-/// today, regenerates it, and applies AI refinement.
+/// today and regenerates it.
 ///
 /// Policy: **last-started operation wins**. Starting Regenerate supersedes an
-/// in-flight Refine, and starting Refine supersedes an in-flight Regenerate.
-/// Completions that arrive later for an older token do not update disk or UI.
+/// in-flight generation. Completions that arrive later for an older token
+/// do not update disk or UI.
 @MainActor
 final class BriefGenerationService {
     private let store: BriefStore
@@ -82,8 +81,8 @@ final class BriefGenerationService {
         token.id == sequencer.currentID
     }
 
-    /// Increments the operation generation. Any previously started generate
-    /// or refine token is superseded from this point.
+    /// Increments the operation generation. Any previously started generation
+    /// token is superseded from this point.
     @discardableResult
     func beginOperation(_ kind: BriefOperationKind,
                         for day: Date,
@@ -298,7 +297,6 @@ final class BriefGenerationService {
                 brief.activityRangeStart = latest.activityRangeStart
                 brief.activityRangeEnd = latest.activityRangeEnd
                 brief.sourceRepositoryNames = latest.sourceRepositoryNames
-                brief.source = latest.source
             }
         }
         save(brief)
@@ -325,33 +323,6 @@ final class BriefGenerationService {
                 identity: BriefAuthorIdentity()
             )
         }
-    }
-
-    // MARK: - Mutations
-
-    /// Applies parsed AI output as the new report content.
-    @discardableResult
-    func applyRefinement(_ parsed: BriefAIResponseParser.Parsed, to brief: MorningBrief) -> MorningBrief {
-        let token = beginOperation(.refine, for: brief.day)
-        switch applyRefinement(parsed, token: token) {
-        case .applied(let updated):
-            return updated
-        case .superseded:
-            return store.load(forDay: brief.day) ?? brief
-        }
-    }
-
-    func applyRefinement(_ parsed: BriefAIResponseParser.Parsed,
-                         token: BriefOperationToken) -> BriefOperationOutcome {
-        guard isCurrent(token) else { return .superseded }
-        guard let latest = store.load(forDay: token.day) else { return .superseded }
-
-        var updated = latest
-        updated.yesterdayLines = parsed.yesterdayLines
-        updated.source = .ai
-        updated.generatedAt = Date()
-        save(updated)
-        return .applied(updated)
     }
 
     /// Persists and records a failure in `lastPersistenceError` so the UI can

@@ -168,7 +168,6 @@ enum BriefComposer {
             day: day,
             yesterdayLines: lines,
             generatedAt: now,
-            source: .local,
             activityRangeStart: activityRange?.start,
             activityRangeEnd: activityRange?.end,
             sourceRepositoryNames: Self.uniqueNames(sourceRepositoryNames)

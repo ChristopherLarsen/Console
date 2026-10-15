@@ -6,13 +6,11 @@ import SwiftUI
 final class BriefViewModel {
     private(set) var brief: MorningBrief?
     private(set) var isLoading = false
-    private(set) var isRefining = false
     private(set) var errorMessage: String?
     private(set) var showCopiedFeedback = false
 
     @ObservationIgnored private let generationService: BriefGenerationService
     @ObservationIgnored private let workspacesProvider: () -> [BriefWorkspaceSnapshot]
-    @ObservationIgnored private let injectedRefiner: (any BriefRefining)?
     @ObservationIgnored private let identityReader: (any BriefIdentityReading)?
     @ObservationIgnored private var copiedFeedbackTask: Task<Void, Never>?
     @ObservationIgnored private var operationTask: Task<Void, Never>?
@@ -25,7 +23,6 @@ final class BriefViewModel {
     init(generationService: BriefGenerationService? = nil,
          workspacePathsProvider: @escaping () -> [String] = { [] },
          workspacesProvider: (() -> [BriefWorkspaceSnapshot])? = nil,
-         refiner: (any BriefRefining)? = nil,
          attributionStore: BriefAttributionStore? = nil,
          identityReader: (any BriefIdentityReading)? = nil) {
         self.generationService = generationService ?? BriefGenerationService()
@@ -38,7 +35,6 @@ final class BriefViewModel {
                 )
             }
         }
-        self.injectedRefiner = refiner
         self.attributionStore = attributionStore ?? BriefAttributionStore()
         self.identityReader = identityReader
     }
@@ -111,27 +107,6 @@ final class BriefViewModel {
         regenerate()
     }
 
-    func refineWithAI(aiProviderManager: AIProviderManager?) {
-        guard let current = brief else { return }
-        guard let refiner = makeRefiner(aiProviderManager: aiProviderManager) else {
-            errorMessage = BriefAIError.noProvider.localizedDescription
-            return
-        }
-        let token = startOperation(.refine, day: current.day)
-        let yesterdayLines = current.yesterdayLines
-        operationTask = Task { [weak self, generationService] in
-            do {
-                let parsed = try await refiner.refine(yesterdayLines: yesterdayLines)
-                let outcome = generationService.applyRefinement(parsed, token: token)
-                self?.applyOutcome(outcome, token: token)
-            } catch is CancellationError {
-                self?.applyOutcome(.superseded, token: token)
-            } catch {
-                self?.applyFailure(error, token: token)
-            }
-        }
-    }
-
     func copyReport() {
         guard let reportText = brief?.reportText,
               !reportText.isEmpty else { return }
@@ -143,12 +118,6 @@ final class BriefViewModel {
             try? await Task.sleep(for: .seconds(2))
             self?.showCopiedFeedback = false
         }
-    }
-
-    var canRefineWithAI: Bool {
-        if injectedRefiner != nil { return true }
-        guard let manager = AppDependencies.shared.aiProviderManager else { return false }
-        return manager.selectedProvider != AIProvider.none
     }
 
     // MARK: - Day rollover
@@ -179,14 +148,13 @@ final class BriefViewModel {
 
     // MARK: - Operation lifetime
 
-    /// Starts a new generate/refine. Generation is incremented first so a
+    /// Starts a new generation. The generation counter is incremented first so a
     /// cancelled predecessor that resumes immediately is already superseded.
     private func startOperation(_ kind: BriefOperationKind, day: Date) -> BriefOperationToken {
         let token = generationService.beginOperation(kind, for: day)
         operationTask?.cancel()
         currentOperation = token
-        isLoading = kind == .generate
-        isRefining = kind == .refine
+        isLoading = true
         errorMessage = nil
         return token
     }
@@ -195,7 +163,6 @@ final class BriefViewModel {
         guard currentOperation == token else { return }
         currentOperation = nil
         isLoading = false
-        isRefining = false
         guard case .applied(let incoming) = outcome else { return }
         guard shouldDisplay(incoming) else { return }
         brief = incoming
@@ -207,7 +174,6 @@ final class BriefViewModel {
         guard currentOperation == token else { return }
         currentOperation = nil
         isLoading = false
-        isRefining = false
         errorMessage = error.localizedDescription
     }
 
@@ -222,11 +188,5 @@ final class BriefViewModel {
             for: workspacesProvider(),
             probing: identityReader
         )
-    }
-
-    private func makeRefiner(aiProviderManager: AIProviderManager?) -> (any BriefRefining)? {
-        if let injectedRefiner { return injectedRefiner }
-        guard let aiProviderManager else { return nil }
-        return ProviderBackedBriefRefiner(aiProviderManager: aiProviderManager)
     }
 }

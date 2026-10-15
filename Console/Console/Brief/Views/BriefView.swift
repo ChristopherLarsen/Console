@@ -39,8 +39,7 @@ struct BriefView: View {
     private var reportCard: some View {
         VStack(spacing: 0) {
             HomePanelHeader(title: "Morning Brief") {
-                HomePanelDetail(headerDateString,
-                                sourceString)
+                HomePanelDetail(headerDateString)
             } accessory: {
                 HStack(spacing: 6) {
                     if viewModel.showCopiedFeedback {
@@ -66,24 +65,7 @@ struct BriefView: View {
                         }
                     }
                     .disabled(viewModel.isLoading)
-                    .help("Rebuild from the latest commit activity. Cancels an in-flight AI polish.")
-
-                    Button {
-                        viewModel.refineWithAI(
-                            aiProviderManager: AppDependencies.shared.aiProviderManager
-                        )
-                    } label: {
-                        if viewModel.isRefining {
-                            ProgressView()
-                                .controlSize(.mini)
-                        } else {
-                            Text("Polish")
-                        }
-                    }
-                    .disabled(viewModel.isRefining || !viewModel.canRefineWithAI)
-                    .help(viewModel.canRefineWithAI
-                          ? "Polish wording with AI. Cancels an in-flight rebuild."
-                          : "Configure an AI provider first")
+                    .help("Rebuild from the latest commit activity.")
                 }
             }
 
@@ -252,14 +234,6 @@ struct BriefView: View {
         }
         let day = viewModel.brief?.day ?? Date()
         return day.formatted(date: .abbreviated, time: .omitted)
-    }
-
-    private var sourceString: String {
-        switch viewModel.brief?.source {
-        case .ai: return "AI polished"
-        case .local: return "local"
-        case nil: return ""
-        }
     }
 }
 

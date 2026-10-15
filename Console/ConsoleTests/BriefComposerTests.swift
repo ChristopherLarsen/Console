@@ -269,7 +269,6 @@ final class BriefComposerTests: XCTestCase {
     func testComposeUsesQuietDayLineWithoutActivities() {
         let brief = BriefComposer.compose(day: Date(), activities: [])
         XCTAssertEqual(brief.yesterdayLines, [BriefComposer.quietDayLine])
-        XCTAssertEqual(brief.source, .local)
     }
 
     func testComposeRecordsRangeAndSourceRepositories() {

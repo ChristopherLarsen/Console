@@ -48,41 +48,13 @@ final class BriefViewModelTests: XCTestCase {
     }
 
     private func makeViewModel(
-        collector: SuspendableActivityCollector,
-        refiner: SuspendableBriefRefiner
+        collector: SuspendableActivityCollector
     ) -> BriefViewModel {
         let service = BriefGenerationService(store: store, collector: collector)
         return BriefViewModel(
             generationService: service,
             workspacePathsProvider: { ["/tmp/Repo"] },
-            refiner: refiner,
             attributionStore: BriefAttributionStore(defaults: attributionDefaults)
-        )
-    }
-
-    // MARK: - Overlapping regenerate / refine
-
-    func testOverlappingCompletionsPreferLastStarted_refineThenRegenerateReleasedEitherOrder() async throws {
-        try await assertLastStartedWins(
-            startRefineFirst: true,
-            releaseFirstStartedFirst: true
-        )
-        try resetStore()
-        try await assertLastStartedWins(
-            startRefineFirst: true,
-            releaseFirstStartedFirst: false
-        )
-    }
-
-    func testOverlappingCompletionsPreferLastStarted_regenerateThenRefineReleasedEitherOrder() async throws {
-        try await assertLastStartedWins(
-            startRefineFirst: false,
-            releaseFirstStartedFirst: true
-        )
-        try resetStore()
-        try await assertLastStartedWins(
-            startRefineFirst: false,
-            releaseFirstStartedFirst: false
         )
     }
 
@@ -96,8 +68,7 @@ final class BriefViewModelTests: XCTestCase {
         let collector = SuspendableActivityCollector(
             activities: [activity("Yesterday collect", on: startOfDay(-2))]
         )
-        let refiner = SuspendableBriefRefiner(parsed: .init(yesterdayLines: ["AI"]))
-        let viewModel = makeViewModel(collector: collector, refiner: refiner)
+        let viewModel = makeViewModel(collector: collector)
 
         viewModel.prepareIfNeeded(now: yesterday)
         await waitUntil { collector.pendingCount == 1 }
@@ -127,10 +98,7 @@ final class BriefViewModelTests: XCTestCase {
                 activity("Picked day work", on: picked)
             ]
         )
-        let viewModel = makeViewModel(
-            collector: collector,
-            refiner: SuspendableBriefRefiner(parsed: .init(yesterdayLines: []))
-        )
+        let viewModel = makeViewModel(collector: collector)
 
         viewModel.prepareIfNeeded(now: today)
         await waitUntil { collector.pendingCount == 1 }
@@ -158,10 +126,7 @@ final class BriefViewModelTests: XCTestCase {
         let collector = SuspendableActivityCollector(
             activities: [activity("Fresh work", on: today)]
         )
-        let viewModel = makeViewModel(
-            collector: collector,
-            refiner: SuspendableBriefRefiner(parsed: .init(yesterdayLines: []))
-        )
+        let viewModel = makeViewModel(collector: collector)
 
         viewModel.prepareIfNeeded(now: today)
         await waitUntil { collector.pendingCount == 1 }
@@ -189,79 +154,6 @@ final class BriefViewModelTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func assertLastStartedWins(startRefineFirst: Bool,
-                                       releaseFirstStartedFirst: Bool) async throws {
-        let today = startOfDay(0)
-        try seedBrief(day: today, subject: "Seed work")
-        let collector = SuspendableActivityCollector(
-            activities: [activity("Generated work", on: startOfDay(-1))]
-        )
-        let refiner = SuspendableBriefRefiner(
-            parsed: .init(yesterdayLines: ["Refined work"])
-        )
-        let viewModel = makeViewModel(collector: collector, refiner: refiner)
-        viewModel.prepareIfNeeded(now: today)
-        await waitUntil { viewModel.brief != nil }
-
-        if startRefineFirst {
-            viewModel.refineWithAI(aiProviderManager: nil)
-            await waitUntil { refiner.pendingCount == 1 }
-            viewModel.regenerate()
-            await waitUntil { viewModel.isLoading && !viewModel.isRefining }
-            await waitUntil { collector.pendingCount == 1 }
-        } else {
-            viewModel.regenerate()
-            await waitUntil { collector.pendingCount == 1 }
-            viewModel.refineWithAI(aiProviderManager: nil)
-            await waitUntil { viewModel.isRefining && !viewModel.isLoading }
-            await waitUntil { refiner.pendingCount == 1 }
-        }
-
-        let firstIsRefine = startRefineFirst
-        if releaseFirstStartedFirst {
-            if firstIsRefine {
-                refiner.releaseOldest()
-                collector.releaseOldest()
-            } else {
-                collector.releaseOldest()
-                refiner.releaseOldest()
-            }
-        } else {
-            if firstIsRefine {
-                collector.releaseOldest()
-                refiner.releaseOldest()
-            } else {
-                refiner.releaseOldest()
-                collector.releaseOldest()
-            }
-        }
-
-        await waitUntil { !viewModel.isLoading && !viewModel.isRefining }
-
-        let lastStartedIsRegenerate = startRefineFirst
-        if lastStartedIsRegenerate {
-            XCTAssertTrue(viewModel.brief?.yesterdayLines.contains(where: { $0.contains("Generated work") }) ?? false)
-            XCTAssertNotEqual(viewModel.brief?.yesterdayLines, ["Refined work"])
-            XCTAssertEqual(viewModel.brief?.source, .local)
-        } else {
-            XCTAssertEqual(viewModel.brief?.yesterdayLines, ["Refined work"])
-            XCTAssertEqual(viewModel.brief?.source, .ai)
-        }
-
-        let reloaded = try XCTUnwrap(store.load(forDay: today))
-        if lastStartedIsRegenerate {
-            XCTAssertTrue(reloaded.yesterdayLines.contains(where: { $0.contains("Generated work") }))
-        } else {
-            XCTAssertEqual(reloaded.yesterdayLines, ["Refined work"])
-        }
-    }
-
-    private func resetStore() throws {
-        try FileManager.default.removeItem(at: tempDirectory)
-        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
-        store = BriefStore(directory: tempDirectory)
-    }
-
     private func waitUntil(_ condition: @escaping @MainActor () -> Bool,
                            timeout: TimeInterval = 3,
                            file: StaticString = #filePath,
@@ -281,10 +173,7 @@ final class BriefViewModelTests: XCTestCase {
         let collector = SuspendableActivityCollector(activities: [
             activity("Fresh work", on: today)
         ])
-        let viewModel = makeViewModel(
-            collector: collector,
-            refiner: SuspendableBriefRefiner(parsed: .init(yesterdayLines: []))
-        )
+        let viewModel = makeViewModel(collector: collector)
 
         viewModel.prepareIfNeeded(now: today)
         await waitUntil { collector.pendingCount == 1 }
@@ -306,10 +195,7 @@ final class BriefViewModelTests: XCTestCase {
         let today = startOfDay(0)
         try seedBrief(day: today, subject: "Stored work")
         let collector = SuspendableActivityCollector(activities: [])
-        let viewModel = makeViewModel(
-            collector: collector,
-            refiner: SuspendableBriefRefiner(parsed: .init(yesterdayLines: []))
-        )
+        let viewModel = makeViewModel(collector: collector)
 
         viewModel.prepareIfNeeded(now: today)
         await waitUntil { viewModel.brief != nil }
@@ -337,7 +223,6 @@ final class BriefViewModelTests: XCTestCase {
         let viewModel = BriefViewModel(
             generationService: service,
             workspacePathsProvider: { ["/tmp/Repo"] },
-            refiner: SuspendableBriefRefiner(parsed: .init(yesterdayLines: [])),
             attributionStore: BriefAttributionStore(defaults: attributionDefaults)
         )
 
@@ -349,27 +234,5 @@ final class BriefViewModelTests: XCTestCase {
             viewModel.errorMessage,
             "generation whose save failed must not look like success"
         )
-    }
-}
-
-@MainActor
-final class SuspendableBriefRefiner: BriefRefining {
-    var parsed: BriefAIResponseParser.Parsed
-    private let gate = BriefContinuationGate()
-
-    var pendingCount: Int { gate.pendingCount }
-
-    init(parsed: BriefAIResponseParser.Parsed) {
-        self.parsed = parsed
-    }
-
-    func refine(yesterdayLines: [String]) async throws -> BriefAIResponseParser.Parsed {
-        await gate.wait()
-        if Task.isCancelled { throw CancellationError() }
-        return parsed
-    }
-
-    func releaseOldest() {
-        gate.releaseOldest()
     }
 }
