@@ -195,7 +195,7 @@ private let consoleTools: [MCPServerTool] = [
     ),
     MCPServerTool(
         name: "link_artifact",
-        description: "Link an informational artifact chip (JIRA issue or GitLab merge request) to the Console session. Never fetches the URL.",
+        description: "Link an informational artifact chip (JIRA issue or GitLab merge request) to the Console session. Never fetches the URL. A jira_issue URL must be a JIRA issue URL, and a gitlab_merge_request URL must be a GitLab merge request URL.",
         schema: [
             "type": "object",
             "properties": [
@@ -374,6 +374,43 @@ private func handleReportAttention(_ args: [String: Any]) -> Result<String, Tool
     return .success("ok")
 }
 
+private func isJiraIssueKey(_ candidate: String) -> Bool {
+    candidate.range(of: #"^[A-Za-z][A-Za-z0-9]*-\d+$"#, options: .regularExpression) != nil
+}
+
+/// Same acceptance rules as Console's `JiraSourceContext.parseIssueKey` and
+/// `GitLabSourceContext.parseMergeRequest`. The helper cannot import those types.
+private func artifactURLMatchesKind(_ url: URL, kind: String) -> Bool {
+    switch kind {
+    case "jira_issue":
+        let pathComponents = url.path.split(separator: "/").map(String.init)
+        if let index = pathComponents.firstIndex(of: "browse"), index + 1 < pathComponents.count,
+           isJiraIssueKey(pathComponents[index + 1]) {
+            return true
+        }
+        if let index = pathComponents.firstIndex(of: "issues"), index + 1 < pathComponents.count,
+           isJiraIssueKey(pathComponents[index + 1]) {
+            return true
+        }
+        if let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+           let value = items.first(where: { $0.name == "selectedIssue" })?.value,
+           isJiraIssueKey(value) {
+            return true
+        }
+        return false
+    case "gitlab_merge_request":
+        guard url.host != nil,
+              let match = url.path.range(of: #"/-/merge_requests/\d+"#, options: .regularExpression) else {
+            return false
+        }
+        let projectPath = String(url.path[..<match.lowerBound])
+        let trimmed = projectPath.hasSuffix("/") ? String(projectPath.dropLast()) : projectPath
+        return trimmed.split(separator: "/", omittingEmptySubsequences: true).count >= 2
+    default:
+        return false
+    }
+}
+
 private func handleLinkArtifact(_ args: [String: Any]) -> Result<String, ToolFailure> {
     guard let kind = args["kind"] as? String else {
         return .failure(ToolFailure(message: "kind is required"))
@@ -398,6 +435,10 @@ private func handleLinkArtifact(_ args: [String: Any]) -> Result<String, ToolFai
         }
         guard let url = URL(string: providedURL), url.scheme?.lowercased() == "https" else {
             return .failure(ToolFailure(message: "url must be an HTTPS URL"))
+        }
+        guard artifactURLMatchesKind(url, kind: kind) else {
+            let expected = kind == "jira_issue" ? "a JIRA issue URL" : "a GitLab merge request URL"
+            return .failure(ToolFailure(message: "url must be \(expected)"))
         }
         urlString = providedURL
     }

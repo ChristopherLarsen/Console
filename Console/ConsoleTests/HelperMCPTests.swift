@@ -265,6 +265,48 @@ final class HelperMCPTests: XCTestCase {
         assertNothingDelivered()
     }
 
+    func testJiraArtifactRejectsGitLabURL() throws {
+        let response = try send([
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "tools/call",
+            "params": [
+                "name": "link_artifact",
+                "arguments": [
+                    "kind": "jira_issue",
+                    "label": "ENG-42",
+                    "url": "https://gitlab.example.test/team/app/-/merge_requests/42",
+                ],
+            ],
+        ])
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        XCTAssertEqual(result["isError"] as? Bool, true)
+        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+        XCTAssertTrue((content.first?["text"] as? String)?.contains("JIRA") == true)
+        assertNothingDelivered()
+    }
+
+    func testGitLabArtifactRejectsJiraURL() throws {
+        let response = try send([
+            "jsonrpc": "2.0",
+            "id": 14,
+            "method": "tools/call",
+            "params": [
+                "name": "link_artifact",
+                "arguments": [
+                    "kind": "gitlab_merge_request",
+                    "label": "MR !42",
+                    "url": "https://jira.example.test/browse/ENG-42",
+                ],
+            ],
+        ])
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        XCTAssertEqual(result["isError"] as? Bool, true)
+        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+        XCTAssertTrue((content.first?["text"] as? String)?.contains("GitLab") == true)
+        assertNothingDelivered()
+    }
+
     func testNonHTTPSURLRejected() throws {
         let response = try send([
             "jsonrpc": "2.0",

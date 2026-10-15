@@ -29,6 +29,15 @@ nonisolated enum BridgeProtocol {
     }
 }
 
+private func artifactURLMatches(_ url: URL, kind: SessionArtifactKind) -> Bool {
+    switch kind {
+    case .jiraIssue:
+        return JiraSourceContext.parseIssueKey(fromURL: url) != nil
+    case .gitlabMergeRequest:
+        return GitLabSourceContext.parseMergeRequest(fromURL: url) != nil
+    }
+}
+
 enum BridgeEnvelopeError: Error, Equatable, Sendable {
     case malformedJSON
     case unsupportedVersion(Int)
@@ -39,6 +48,7 @@ enum BridgeEnvelopeError: Error, Equatable, Sendable {
     case missingField(String)
     case urlTooLong
     case urlNotHTTPS
+    case urlDoesNotMatchKind
 }
 
 /// One validated message on the bridge socket.
@@ -157,6 +167,9 @@ extension BridgeEnvelope {
                 }
                 guard let url = URL(string: urlString), url.scheme?.lowercased() == "https" else {
                     throw BridgeEnvelopeError.urlNotHTTPS
+                }
+                guard artifactURLMatches(url, kind: artifactKind) else {
+                    throw BridgeEnvelopeError.urlDoesNotMatchKind
                 }
                 envelope.artifactURL = urlString
             }

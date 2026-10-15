@@ -29,12 +29,16 @@ struct WorkArtifact: Codable, Equatable, Identifiable {
         id = artifact.id
         kind = artifact.kind
         label = artifact.label
-        url = artifact.url
         identity = Self.identity(kind: artifact.kind, url: artifact.url)
+        // A URL that does not identify this kind is not a destination for it.
+        // The label remains so a JIRA key can still resolve against the
+        // configured site.
+        url = identity == nil ? nil : artifact.url
     }
 
     var chip: SessionArtifact {
-        SessionArtifact(id: id, kind: kind, label: label, url: url)
+        let usableURL = Self.identity(kind: kind, url: url) == nil ? nil : url
+        return SessionArtifact(id: id, kind: kind, label: label, url: usableURL)
     }
 
     var ticketKey: String? {

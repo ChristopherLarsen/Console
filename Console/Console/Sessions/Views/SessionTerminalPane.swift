@@ -122,7 +122,7 @@ struct SessionTerminalPane: View {
             ServiceCapsuleButton(
                 .mergeRequest,
                 title: label,
-                isDisabled: artifact.url == nil
+                isDisabled: mergeRequestURL(for: artifact) == nil
             ) {
                 openMergeRequest(artifact)
             }
@@ -142,10 +142,16 @@ struct SessionTerminalPane: View {
         return artifact.label
     }
 
+    /// A merge-request destination, present only when the chip URL parses as one.
+    private func mergeRequestURL(for artifact: SessionArtifact) -> URL? {
+        guard let url = artifact.url, GitLabSourceContext.parseMergeRequest(fromURL: url) != nil else { return nil }
+        return url
+    }
+
     /// Queues the MR URL as a new-tab handoff and switches to the GitLab
     /// destination, which consumes it on appear.
     private func openMergeRequest(_ artifact: SessionArtifact) {
-        guard let url = artifact.url else { return }
+        guard let url = mergeRequestURL(for: artifact) else { return }
         MergeRequestDeepLink.shared.setNewTab(url: url)
         ConsoleNavigation.show(.mergeRequests)
     }

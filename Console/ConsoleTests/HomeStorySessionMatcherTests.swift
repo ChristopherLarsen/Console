@@ -73,6 +73,21 @@ final class HomeStorySessionMatcherTests: XCTestCase {
         XCTAssertNil(HomeStorySessionMatcher.jiraURL(for: keyOnly, configuredURL: ""))
     }
 
+    func testJiraNavigationIgnoresAGitLabURLOnAJIRAChip() {
+        let gitlab = URL(string: "https://gitlab.example.test/team/app/-/merge_requests/42")!
+        let mismatched = makeSession(artifacts: [.init(kind: .jiraIssue, label: "ENG-42", url: gitlab)])
+        XCTAssertEqual(
+            HomeStorySessionMatcher.jiraURL(for: mismatched, configuredURL: "https://jira.example.test")?.absoluteString,
+            "https://jira.example.test/browse/ENG-42"
+        )
+
+        let session = makeSession(artifacts: [
+            .init(kind: .jiraIssue, label: "PROJ-9", url: issueURL),
+            .init(kind: .jiraIssue, label: "ENG-42", url: gitlab),
+        ])
+        XCTAssertEqual(HomeStorySessionMatcher.jiraURL(for: session, configuredURL: ""), issueURL)
+    }
+
     func testJiraNavigationMapsNewTicketDisplayNameToNMAKey() {
         let session = makeSession(name: "S-1234", artifacts: [])
         XCTAssertEqual(HomeStorySessionMatcher.jiraURL(for: session,

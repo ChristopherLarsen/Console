@@ -105,11 +105,8 @@ enum HomeStorySessionMatcher {
     }
 
     static func jiraURL(for session: ConsoleSession, configuredURL: String, reviewItems: [MergeRequestSummary] = []) -> URL? {
-        if let artifact = session.artifacts.last(where: { $0.kind == .jiraIssue }) {
-            if let url = artifact.url { return url }
-            if let key = JiraSourceContext.parseKey(from: artifact.label) {
-                return JiraSourceContext.issueURL(key: key, configuredURL: configuredURL)
-            }
+        if let url = JiraSourceContext.issueURL(in: session.artifacts, configuredURL: configuredURL) {
+            return url
         }
         let review = reviewItems.first { item in
             reviewSession(for: item.mergeRequestURL, in: [session]) != nil

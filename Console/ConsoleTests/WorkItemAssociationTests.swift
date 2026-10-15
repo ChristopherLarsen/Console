@@ -146,6 +146,19 @@ final class WorkItemAssociationTests: XCTestCase {
         XCTAssertEqual(store.artifacts(for: session.id).count, 2)
     }
 
+    func testJiraChipDropsAURLThatIsNotAJIRAIssue() throws {
+        let store = SessionAssociationStore(url: nil)
+        let session = record()
+        let gitlab = URL(string: "https://gitlab.test/team/project/-/merge_requests/1")!
+        try store.remember(record: session, artifacts: [
+            .init(kind: .jiraIssue, label: "ENG-42", url: gitlab),
+        ])
+        let chip = try XCTUnwrap(store.artifacts(for: session.id).first)
+        XCTAssertEqual(chip.kind, .jiraIssue)
+        XCTAssertEqual(chip.label, "ENG-42")
+        XCTAssertNil(chip.url)
+    }
+
     func testUnscopedTicketIsEnrichedWithinItsWorkWithoutDuplicateChips() throws {
         let store = SessionAssociationStore(url: nil)
         let session = record()

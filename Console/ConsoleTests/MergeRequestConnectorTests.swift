@@ -19,6 +19,17 @@ final class MergeRequestConnectorTests: XCTestCase {
         )
     }
 
+    func testSessionJiraURLIgnoresAGitLabURL() {
+        let gitlab = URL(string: "https://gitlab.example.test/team/app/-/merge_requests/42")!
+        let session = makeSession(name: "Review", artifacts: [
+            .init(kind: .jiraIssue, label: "ENG-42", url: gitlab),
+        ])
+        XCTAssertEqual(
+            MergeRequestConnector.sessionJiraURL(session, configuredURL: "https://jira.example.test")?.absoluteString,
+            "https://jira.example.test/browse/ENG-42"
+        )
+    }
+
     private func reviewItem(url: String, jiraKey: String?, title: String) -> MergeRequestSummary {
         MergeRequestSummary(
             id: URL(string: url)!,

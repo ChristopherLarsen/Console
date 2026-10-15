@@ -115,16 +115,13 @@ enum MergeRequestConnector {
         return JiraSourceContext.issueKey(in: session.name)
     }
 
-    /// The session's Jira issue URL, for catalog lookups. Prefers a linked
-    /// artifact URL; otherwise the key is resolved against the configured site.
+    /// The session's Jira issue URL, for catalog lookups. A linked artifact URL
+    /// is used only when it parses as a JIRA issue; otherwise the key is
+    /// resolved against the configured site.
     static func sessionJiraURL(_ session: ConsoleSession,
                                configuredURL: String? = UserDefaults.standard.string(forKey: "webViewJiraURL")) -> URL? {
-        for artifact in session.artifacts where artifact.kind == .jiraIssue {
-            if let url = artifact.url { return url }
-            if let key = JiraSourceContext.parseKey(from: artifact.label),
-               let configuredURL, let url = JiraSourceContext.issueURL(key: key, configuredURL: configuredURL) {
-                return url
-            }
+        if let url = JiraSourceContext.issueURL(in: session.artifacts, configuredURL: configuredURL) {
+            return url
         }
         guard let key = sessionJiraKey(session), let configuredURL else { return nil }
         return JiraSourceContext.issueURL(key: key, configuredURL: configuredURL)

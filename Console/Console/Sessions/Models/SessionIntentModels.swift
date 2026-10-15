@@ -261,6 +261,19 @@ nonisolated enum JiraSourceContext {
         return components.url
     }
 
+    /// The JIRA issue a set of chips points at. A chip URL counts only when it
+    /// parses as a JIRA issue. Otherwise the newest issue key in a chip label
+    /// is resolved against `configuredURL`.
+    static func issueURL(in artifacts: [SessionArtifact], configuredURL: String?) -> URL? {
+        let jira = artifacts.filter { $0.kind == .jiraIssue }
+        if let url = jira.reversed().compactMap(\.url).first(where: { parseIssueKey(fromURL: $0) != nil }) {
+            return url
+        }
+        guard let configuredURL,
+              let key = jira.reversed().compactMap({ parseKey(from: $0.label) }).first else { return nil }
+        return issueURL(key: key, configuredURL: configuredURL)
+    }
+
     /// Uppercase project prefix of a key like `ENG-123` → `ENG`.
     static func projectKeyPrefix(of key: String) -> String? {
         guard let match = normalizedConsoleKey(key).firstMatch(of: /^([A-Za-z][A-Za-z0-9]*)-\d+$/) else { return nil }

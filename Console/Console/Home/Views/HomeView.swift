@@ -510,7 +510,10 @@ struct HomeView: View {
             let links = catalog.relatedArtifacts(to: item.mergeRequestURL, kind: .gitlabMergeRequest, workKind: .review)
                 .filter { $0.kind == .jiraIssue }
             if !links.isEmpty {
-                let urls = Set(links.compactMap(\.url))
+                let urls = Set(links.compactMap { link -> URL? in
+                    guard let url = link.url, JiraSourceContext.parseIssueKey(fromURL: url) != nil else { return nil }
+                    return url
+                })
                 if urls.count == 1 { return urls.first }
                 if urls.count > 1 { return nil }
             }

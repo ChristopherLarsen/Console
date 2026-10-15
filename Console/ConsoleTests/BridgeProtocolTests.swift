@@ -85,7 +85,7 @@ final class BridgeProtocolTests: XCTestCase {
         env.artifactURL = "http://insecure.example.com"
         XCTAssertThrowsError(try BridgeEnvelope.decode(from: env.encodedData()))
 
-        env.artifactURL = "https://secure.example.com/ok"
+        env.artifactURL = "https://secure.example.com/browse/ENG-1"
         XCTAssertNoThrow(try BridgeEnvelope.decode(from: env.encodedData()))
 
         env.artifactURL = String(repeating: "a", count: 3000)
@@ -117,6 +117,30 @@ final class BridgeProtocolTests: XCTestCase {
         completion.completionOutcome = .completed
         completion.completionSummary = "   "
         XCTAssertThrowsError(try BridgeEnvelope.decode(from: completion.encodedData()))
+    }
+
+    func testArtifactURLMustMatchKind() throws {
+        var jira = envelope(kind: .artifact)
+        jira.artifactKind = .jiraIssue
+        jira.artifactLabel = "ENG-1"
+        jira.artifactURL = "https://jira.example.test/browse/ENG-1?selectedIssue=ENG-1"
+        XCTAssertNoThrow(try BridgeEnvelope.decode(from: jira.encodedData()))
+
+        jira.artifactURL = "https://gitlab.example.test/team/app/-/merge_requests/42"
+        XCTAssertThrowsError(try BridgeEnvelope.decode(from: jira.encodedData())) { error in
+            XCTAssertEqual(error as? BridgeEnvelopeError, .urlDoesNotMatchKind)
+        }
+
+        var mergeRequest = envelope(kind: .artifact)
+        mergeRequest.artifactKind = .gitlabMergeRequest
+        mergeRequest.artifactLabel = "MR !42"
+        mergeRequest.artifactURL = "https://gitlab.example.test/team/app/-/merge_requests/42"
+        XCTAssertNoThrow(try BridgeEnvelope.decode(from: mergeRequest.encodedData()))
+
+        mergeRequest.artifactURL = "https://jira.example.test/browse/ENG-1"
+        XCTAssertThrowsError(try BridgeEnvelope.decode(from: mergeRequest.encodedData())) { error in
+            XCTAssertEqual(error as? BridgeEnvelopeError, .urlDoesNotMatchKind)
+        }
     }
 
     func testArtifactURLRejectsControlCharacters() throws {
