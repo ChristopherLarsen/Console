@@ -89,7 +89,7 @@ struct HomeView: View {
     private func nextColumn(_ board: HomeBoard, sessions: [ConsoleSession]) -> some View {
         HomeBoardColumn(
             title: "Next up",
-            detail: nil,
+            detail: nextDetail(board),
             health: .ready,
             content: {
                 nextStorySlot(board, sessions: sessions)
@@ -119,6 +119,12 @@ struct HomeView: View {
             }
         )
         .accessibilityIdentifier("HomeNextColumn")
+    }
+
+    /// Quiet count of stories whose host status is Next Up.
+    private func nextDetail(_ board: HomeBoard) -> String? {
+        guard board.jiraHealth.retainsContent else { return nil }
+        return "(\(board.nextUpCount))"
     }
 
     @ViewBuilder
@@ -288,7 +294,7 @@ struct HomeView: View {
     /// Quiet count only — the column title already names the source.
     private func inProgressDetail(_ board: HomeBoard) -> String? {
         guard board.jiraHealth.retainsContent else { return nil }
-        return "\(board.inProgressTickets.count)"
+        return "(\(board.inProgressTickets.count))"
     }
 
     private func inProgressCard(
@@ -546,7 +552,7 @@ struct HomeView: View {
     /// Quiet count only — the column title already names the source.
     private func reviewDetail(_ board: HomeBoard) -> String? {
         guard board.reviewHealth.retainsContent else { return nil }
-        return "\(board.reviewQueue.count)"
+        return "(\(board.reviewQueue.count))"
     }
 
     // MARK: - Source recovery

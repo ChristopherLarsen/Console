@@ -30,7 +30,7 @@ struct HomeBoardColumn<Accessory: View, Content: View>: View {
                 height: HomeCardMetrics.columnHeaderHeight,
                 detail: {
                     if let detail {
-                        HomePanelDetail(detail)
+                        HomePanelDetail(detail, fontSize: HomeCardMetrics.columnCountFontSize)
                     }
                 },
                 accessory: accessory

@@ -44,6 +44,8 @@ enum HomeCardMetrics {
     static let columnTitleFontSize: CGFloat = 19.5
     /// Header height that fits the larger column title.
     static let columnHeaderHeight: CGFloat = 34
+    /// Quiet item count beside a column title: the 10pt detail size plus 2pt.
+    static let columnCountFontSize: CGFloat = 12
 }
 
 extension View {
@@ -158,9 +160,9 @@ struct HomeCardGlyph: View {
 }
 
 /// The quiet "JIRA · 16" service-and-count run after a header title.
-func HomePanelDetail(_ parts: String...) -> some View {
+func HomePanelDetail(_ parts: String..., fontSize: CGFloat = 10) -> some View {
     Text(parts.filter { !$0.isEmpty }.joined(separator: " · "))
-        .font(.system(size: 10))
+        .font(.system(size: fontSize))
         .foregroundStyle(.secondary)
         .lineLimit(1)
 }
