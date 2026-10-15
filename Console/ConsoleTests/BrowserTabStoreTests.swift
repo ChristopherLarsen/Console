@@ -312,4 +312,55 @@ final class BrowserTabStoreTests: XCTestCase {
         let reloadedTabs = store.reloadStaleTabs()
         XCTAssertEqual(reloadedTabs.map(\.id), [dynamic.id])
     }
+
+    // MARK: - Pinned tabs on destination entry
+
+    func testRecordEntryDoesNotReloadOnFirstVisitOrWithinFiveMinutes() {
+        let (store, _, clock, reloaded) = makeReloadFixture(pinnedCount: 2)
+
+        XCTAssertTrue(store.recordEntryAndReloadPinnedTabsIfStale().isEmpty)
+
+        clock.advance(by: 5 * 60 - 1)
+        XCTAssertTrue(store.recordEntryAndReloadPinnedTabsIfStale().isEmpty)
+        XCTAssertTrue(reloaded().isEmpty)
+    }
+
+    func testRecordEntryReloadsBothPinnedTabsAfterFiveMinutesAndSkipsDynamicTabs() {
+        let (store, pages, clock, reloaded) = makeReloadFixture(pinnedCount: 2)
+        store.recordEntryAndReloadPinnedTabsIfStale()
+        let dynamic = store.openTab()
+
+        clock.advance(by: 5 * 60)
+        let reloadedTabs = store.recordEntryAndReloadPinnedTabsIfStale()
+
+        XCTAssertEqual(Set(reloadedTabs.map(\.id)), Set([store.tabs[0].id, store.tabs[1].id]))
+        XCTAssertEqual(reloaded(), pages.map(ObjectIdentifier.init))
+        XCTAssertFalse(reloaded().contains(ObjectIdentifier(dynamic.page)))
+
+        // This entry became the new visit. An immediate return reloads nothing,
+        // including a second call without another real visit in between.
+        clock.advance(by: 60)
+        XCTAssertTrue(store.recordEntryAndReloadPinnedTabsIfStale().isEmpty)
+        XCTAssertEqual(reloaded().count, 2)
+    }
+
+    func testRecordEntryMeasuresTimeSinceLastNavigation() {
+        let (store, _, clock, reloaded) = makeReloadFixture(pinnedCount: 2)
+        store.recordEntryAndReloadPinnedTabsIfStale()
+
+        // A visit four minutes later resets the clock even though the pages
+        // themselves are four minutes old.
+        clock.advance(by: 4 * 60)
+        XCTAssertTrue(store.recordEntryAndReloadPinnedTabsIfStale().isEmpty)
+
+        // Two minutes after that visit is still inside the window.
+        clock.advance(by: 2 * 60)
+        XCTAssertTrue(store.recordEntryAndReloadPinnedTabsIfStale().isEmpty)
+        XCTAssertTrue(reloaded().isEmpty)
+
+        // Five minutes after the latest visit refreshes both default tabs.
+        clock.advance(by: 5 * 60)
+        XCTAssertEqual(store.recordEntryAndReloadPinnedTabsIfStale().count, 2)
+        XCTAssertEqual(reloaded().count, 2)
+    }
 }

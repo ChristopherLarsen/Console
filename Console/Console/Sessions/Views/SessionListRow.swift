@@ -12,6 +12,7 @@ struct SessionListRow: View {
     let onRemove: () -> Void
     let onRename: () -> Void
     let onAttachGitLab: () -> Void
+    let onAttachJira: () -> Void
 
     var body: some View {
         HStack(spacing: 6) {
@@ -126,6 +127,8 @@ struct SessionListRow: View {
             }
             Button("Attach GitLab", action: onAttachGitLab)
                 .accessibilityIdentifier("Sessions.AttachGitLab")
+            Button("Attach JIRA", action: onAttachJira)
+                .accessibilityIdentifier("Sessions.AttachJira")
         }
     }
 

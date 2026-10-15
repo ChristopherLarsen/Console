@@ -881,6 +881,46 @@ final class SessionStoreTests: XCTestCase {
         )
     }
 
+    func testConnectJiraIssueAttachesStoryAndIsIdempotent() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(request: SessionCreationRequest(
+            purpose: .existingTicket, name: "ENG-123", workingDirectory: tmpDirectory("ConnectJira")
+        ))
+        let url = URL(string: "https://acme.atlassian.net/browse/ENG-123?focusedCommentId=9")!
+
+        try store.connectJiraIssue(sessionID: id, url: url)
+
+        let session = try XCTUnwrap(store.session(withID: id))
+        XCTAssertTrue(session.artifacts.contains {
+            $0.kind == .jiraIssue && $0.label == "ENG-123" && $0.url == url
+        })
+        XCTAssertTrue(store.associations.conversationIDs(for: url, kind: .jiraIssue).contains(session.claudeSessionID))
+
+        try store.connectJiraIssue(sessionID: id, url: url)
+        XCTAssertEqual(
+            store.session(withID: id)?.artifacts.filter { $0.kind == .jiraIssue && $0.url == url }.count, 1,
+            "connecting the same story twice is a no-op"
+        )
+    }
+
+    func testConnectJiraIssueRejectsANonIssueURL() throws {
+        let (store, _) = makeStore()
+        let id = try store.createSession(name: "Reject Jira", workingDirectory: tmpDirectory("RejectJira"))
+
+        XCTAssertThrowsError(try store.connectJiraIssue(
+            sessionID: id,
+            url: URL(string: "https://acme.atlassian.net/dashboard")!
+        )) { error in
+            XCTAssertEqual(error as? JiraIssueConnector.ConnectionError, .invalidURL)
+        }
+        XCTAssertThrowsError(try store.connectJiraIssue(
+            sessionID: UUID(),
+            url: URL(string: "https://acme.atlassian.net/browse/ENG-123")!
+        )) { error in
+            XCTAssertEqual(error as? JiraIssueConnector.ConnectionError, .sessionMissing)
+        }
+    }
+
     func testConnectMergeRequestRejectsANonMergeRequestURL() throws {
         let (store, _) = makeStore()
         let id = try store.createSession(name: "Reject", workingDirectory: tmpDirectory("Reject"))

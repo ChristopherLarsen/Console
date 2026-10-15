@@ -48,6 +48,10 @@ final class BrowserTabStore {
     /// (a new tab's page was just loaded or is blank) and refreshed whenever
     /// the destination auto-reloads stale tabs. Memory-only.
     private var contentStampedAt: [UUID: Date] = [:]
+    /// When the user last entered this destination. Nil until the first entry.
+    /// GitLab uses this — not the content stamp — so both default tabs refresh
+    /// only after five minutes have passed since that visit. Memory-only.
+    private var lastEntryAt: Date?
     private let now: () -> Date
     /// Reload seam; production calls the page's own reload.
     private let pageReloader: @MainActor (WebPage) -> Void
@@ -170,16 +174,46 @@ final class BrowserTabStore {
         for tab in tabs {
             let stampedAt = contentStampedAt[tab.id] ?? .distantPast
             guard current.timeIntervalSince(stampedAt) >= maxAge else { continue }
-            if tab.page.isLoading {
-                // An in-flight load is the freshest content there is.
-                contentStampedAt[tab.id] = current
-                continue
-            }
-            pageReloader(tab.page)
-            contentStampedAt[tab.id] = current
-            reloaded.append(tab)
+            reloadIfIdle(tab, at: current, into: &reloaded)
         }
         return reloaded
+    }
+
+    /// Records an entry into this destination and reloads its pinned tabs when
+    /// the previous entry was at least `maxAge` ago.
+    ///
+    /// The clock is the last time the user opened the destination, so a return
+    /// within five minutes leaves both default tabs alone, and a later return
+    /// refreshes them together. The first entry reloads nothing. Dynamic tabs
+    /// are left untouched. A page already mid-load is treated as current.
+    @discardableResult
+    func recordEntryAndReloadPinnedTabsIfStale(
+        maxAge: TimeInterval = BrowserTabStore.staleTabReloadInterval
+    ) -> [BrowserTab] {
+        let current = now()
+        let previous = lastEntryAt
+        lastEntryAt = current
+        guard let previous, current.timeIntervalSince(previous) >= maxAge else { return [] }
+        var reloaded: [BrowserTab] = []
+        for tab in tabs where tab.isPinned {
+            reloadIfIdle(tab, at: current, into: &reloaded)
+        }
+        return reloaded
+    }
+
+    private func reloadIfIdle(
+        _ tab: BrowserTab,
+        at current: Date,
+        into reloaded: inout [BrowserTab]
+    ) {
+        if tab.page.isLoading {
+            // An in-flight load is the freshest content there is.
+            contentStampedAt[tab.id] = current
+            return
+        }
+        pageReloader(tab.page)
+        contentStampedAt[tab.id] = current
+        reloaded.append(tab)
     }
 
     /// Closes a non-pinned tab. Closing the active tab activates its right

@@ -422,7 +422,7 @@ struct HomeBoardResponsePrepCard: View {
                     HomeCardGlyph(color: stateColor, needsYou: false)
                 }
 
-                Text("!\(item.iid)")
+                Text("!\(String(item.iid))")
                     .font(HomeCardMetrics.identityFont)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

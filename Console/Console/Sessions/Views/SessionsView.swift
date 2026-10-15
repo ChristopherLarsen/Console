@@ -17,6 +17,9 @@ struct SessionsView: View {
     @State private var gitLabURLText = ""
     @State private var gitLabConnectError: String?
     @State private var gitLabMergeRequests: [AttachableMergeRequest] = []
+    @State private var connectingJiraID: UUID?
+    @State private var jiraURLText = ""
+    @State private var jiraConnectError: String?
     @State private var listResizeStartWidth: CGFloat = SessionWorkspaceLayout.listIdealWidth
     @State private var isResizingList = false
 
@@ -108,6 +111,7 @@ struct SessionsView: View {
             set: { if !$0 { pendingRenameID = nil } }
         )) {
             TextField("Session name", text: $renameText)
+                .background(TextFieldAutofocus(selectAll: true))
                 .accessibilityIdentifier("Sessions.RenameField")
             Button("Rename") {
                 if let id = pendingRenameID {
@@ -131,6 +135,17 @@ struct SessionsView: View {
                 onPick: attachMergeRequest,
                 onConnect: attachTypedMergeRequest,
                 onCancel: { connectingGitLabID = nil; gitLabConnectError = nil }
+            )
+        }
+        .sheet(isPresented: Binding(
+            get: { connectingJiraID != nil },
+            set: { if !$0 { connectingJiraID = nil; jiraConnectError = nil } }
+        )) {
+            ConnectJiraIssueSheet(
+                urlText: $jiraURLText,
+                errorText: jiraConnectError,
+                onConnect: attachTypedJiraIssue,
+                onCancel: { connectingJiraID = nil; jiraConnectError = nil }
             )
         }
         .onChange(of: store.selectedSessionID) { _, newID in
@@ -332,7 +347,8 @@ struct SessionsView: View {
                             renameText = session.name
                             pendingRenameID = session.id
                         },
-                        onAttachGitLab: { attachGitLab(session) }
+                        onAttachGitLab: { attachGitLab(session) },
+                        onAttachJira: { attachJira(session) }
                     )
                 }
             }
@@ -432,6 +448,32 @@ struct SessionsView: View {
     private func attachMergeRequest(_ item: AttachableMergeRequest) {
         gitLabURLText = item.url.absoluteString
         attachTypedMergeRequest()
+    }
+
+    // MARK: - Attach JIRA
+
+    /// Opens the attach sheet. A Jira story URL already on the clipboard is
+    /// filled in; anything else leaves the field empty for the user to type.
+    private func attachJira(_ session: ConsoleSession) {
+        jiraURLText = JiraIssueConnector.clipboardIssueText() ?? ""
+        jiraConnectError = nil
+        connectingJiraID = session.id
+    }
+
+    private func attachTypedJiraIssue() {
+        guard let id = connectingJiraID,
+              store.session(withID: id) != nil else { return }
+        guard let url = JiraIssueConnector.issueURL(from: jiraURLText) else {
+            jiraConnectError = JiraIssueConnector.ConnectionError.invalidURL.errorDescription
+            return
+        }
+        do {
+            try store.connectJiraIssue(sessionID: id, url: url)
+            connectingJiraID = nil
+            jiraConnectError = nil
+        } catch {
+            jiraConnectError = error.localizedDescription
+        }
     }
 
     private func attachTypedMergeRequest() {

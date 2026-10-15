@@ -1412,6 +1412,32 @@ final class SessionStore {
         refreshWorkArtifactProjections()
     }
 
+    /// Attaches a Jira story URL to a session so the header can open that
+    /// issue. The URL must identify one story; a story already attached is
+    /// left untouched.
+    func connectJiraIssue(sessionID: UUID, url: URL) throws {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
+            throw JiraIssueConnector.ConnectionError.sessionMissing
+        }
+        guard let identity = WorkArtifact.identity(kind: .jiraIssue, url: url),
+              let key = JiraSourceContext.parseIssueKey(fromURL: url) else {
+            throw JiraIssueConnector.ConnectionError.invalidURL
+        }
+        let alreadyConnected = sessions[index].artifacts.contains { artifact in
+            guard artifact.kind == .jiraIssue, let existing = artifact.url else { return false }
+            return WorkArtifact.identity(kind: .jiraIssue, url: existing) == identity
+        }
+        guard !alreadyConnected else { return }
+
+        var artifacts = sessions[index].artifacts
+        artifacts.append(.init(kind: .jiraIssue, label: key, url: url))
+        let session = sessions[index]
+        try associations.remember(record: .init(claudeSessionID: session.claudeSessionID,
+            name: session.name, workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general),
+            artifacts: artifacts)
+        refreshWorkArtifactProjections()
+    }
+
     private func rememberAssociation(for session: ConsoleSession) {
         guard session.purpose != .blank else { return }
         do {

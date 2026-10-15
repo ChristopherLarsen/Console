@@ -57,9 +57,10 @@ struct MergeRequestsView: View {
                 }
                 .onAppear {
                     mountWebViewAfterSettling()
-                    // Long-idle tabs reload in place before anything else so
-                    // the destination never presents hour-old content.
-                    tabStore.reloadStaleTabs()
+                    // Five minutes since the last time the user opened GitLab
+                    // reloads both default tabs (MRs to Review and My MRs)
+                    // before anything else is shown.
+                    tabStore.recordEntryAndReloadPinnedTabsIfStale()
                     selectPinnedTabIfHinted()
                     loadActiveList()
                     openPendingNewTab()
