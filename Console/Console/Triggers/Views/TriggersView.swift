@@ -12,7 +12,6 @@ struct TriggersView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 Form {
-                    VoiceCommandHotkeySection()
                     triggerWordsSection
                 }
                 .formStyle(.grouped)

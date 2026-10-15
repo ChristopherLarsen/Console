@@ -708,12 +708,6 @@ struct ConsoleApp: App {
         didRunAppBootstrap = true
 
         GlobalHotkeyManager.shared.install()
-        // Voice-command hotkey (~ or fn; Settings → Voice Command Key). Local to
-        // Console; ~ is ignored while typing in a text field, terminal or page.
-        VoiceCommandHotkeyMonitor.shared.onTrigger = {
-            Task { await MenuBarViewModel.shared?.beginPushToTalk() }
-        }
-        VoiceCommandHotkeyMonitor.shared.install()
         #if DEBUG
         if developerModeManager.isDeveloperModeEnabled {
             applyAlwaysOnTop(alwaysOnTop)

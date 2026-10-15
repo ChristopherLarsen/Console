@@ -40,7 +40,6 @@ struct SettingsView: View {
             ManagedClaudeAccessSection()
             terminalSection
             quickCommandsSection
-            VoiceCommandHotkeySection()
             urlsSection
             mrReviewScansSection
             appearanceSection
