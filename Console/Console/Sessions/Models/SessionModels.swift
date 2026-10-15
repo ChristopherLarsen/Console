@@ -125,6 +125,16 @@ enum DisplayedSessionState: String, Sendable, Equatable {
         }
     }
 
+    /// Status copy for a session card or header, or nil when the session has
+    /// not reported a state yet. `.starting` is that placeholder — the process
+    /// exists, but nothing has described it — so the UI shows no text.
+    var statusText: String? {
+        switch self {
+        case .starting: return nil
+        default: return label
+        }
+    }
+
     /// Lower sorts earlier in the displayed-state priority list.
     var priorityRank: Int {
         switch self {

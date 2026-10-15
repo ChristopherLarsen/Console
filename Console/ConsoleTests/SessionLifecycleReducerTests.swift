@@ -41,6 +41,23 @@ final class SessionLifecycleReducerTests: XCTestCase {
         XCTAssertEqual(state.displayedState, .idle)
     }
 
+    func testStartingHasNoStatusTextUntilAStateIsReported() {
+        XCTAssertNil(DisplayedSessionState.starting.statusText)
+        XCTAssertNil(fresh.displayedState.statusText)
+
+        var state = fresh
+        state.apply(.sessionStarted)
+        XCTAssertEqual(state.displayedState.statusText, "Idle")
+
+        let reported: [DisplayedSessionState] = [
+            .needsApproval, .needsInput, .blocked, .needsReview, .error,
+            .done, .working, .idle, .exited, .unknown,
+        ]
+        for displayed in reported {
+            XCTAssertEqual(displayed.statusText, displayed.label)
+        }
+    }
+
     func testPromptSubmitSetsWorkingClearsCompletionAndTransientAttention() {
         var state = fresh
         state.apply(.turnCompleted)

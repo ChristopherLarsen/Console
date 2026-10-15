@@ -4,8 +4,9 @@ import SwiftUI
 /// state, and unread attention. The select surface is a real button; exited
 /// sessions expose a sibling remove button.
 struct SessionListRow: View {
+    @Environment(SessionStore.self) private var store
+
     let session: ConsoleSession
-    let displayedState: DisplayedSessionState
     let isSelected: Bool
     let onSelect: () -> Void
     let onTerminate: () -> Void
@@ -13,6 +14,28 @@ struct SessionListRow: View {
     let onRename: () -> Void
     let onAttachGitLab: () -> Void
     let onAttachJira: () -> Void
+
+    /// Store copy of this card's session. Read during `body` so the card
+    /// subscribes to activity and attention changes directly.
+    private var liveSession: ConsoleSession {
+        store.session(withID: session.id) ?? session
+    }
+
+    private var displayedState: DisplayedSessionState {
+        displayedSessionState(activity: liveSession.activity, attention: liveSession.attention)
+    }
+
+    /// macOS does not repaint a Menu or plain Button label when its SwiftUI
+    /// content changes, so a card would keep the status it had when the
+    /// control was first created. Changing this identity rebuilds the control.
+    private var cardControlIdentity: String {
+        [
+            displayedState.rawValue,
+            liveSession.name,
+            liveSession.workingDirectory.lastPathComponent,
+            mergeRequestLabel ?? "",
+        ].joined(separator: "\n")
+    }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -26,20 +49,22 @@ struct SessionListRow: View {
                 }
                 .buttonStyle(.plain)
                 .menuIndicator(.hidden)
+                .id(cardControlIdentity)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(accessibilityRowLabel)
                 .accessibilityAddTraits(.isSelected)
                 .accessibilityHint("Opens session options")
-                .accessibilityIdentifier("SessionRow.\(session.id.uuidString)")
+                .accessibilityIdentifier("SessionRow.\(liveSession.id.uuidString)")
             } else {
                 Button(action: onSelect) {
                     rowContent
                 }
                 .buttonStyle(.plain)
+                .id(cardControlIdentity)
                 // One coherent accessibility element for the whole row's metadata.
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(accessibilityRowLabel)
-                .accessibilityIdentifier("SessionRow.\(session.id.uuidString)")
+                .accessibilityIdentifier("SessionRow.\(liveSession.id.uuidString)")
             }
 
             if showsAttentionBadge {
@@ -49,7 +74,7 @@ struct SessionListRow: View {
                 )
             }
 
-            if session.activity == .exited {
+            if liveSession.activity == .exited {
                 Button {
                     onRemove()
                 } label: {
@@ -58,8 +83,8 @@ struct SessionListRow: View {
                 }
                 .buttonStyle(.plain)
                 .help("Remove Exited Session")
-                .accessibilityLabel("Remove \(session.name)")
-                .accessibilityIdentifier("RemoveSessionButton.\(session.id.uuidString)")
+                .accessibilityLabel("Remove \(liveSession.name)")
+                .accessibilityIdentifier("RemoveSessionButton.\(liveSession.id.uuidString)")
             }
         }
         .contextMenu {
@@ -76,13 +101,13 @@ struct SessionListRow: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
-                    if let purpose = session.purpose {
+                    if let purpose = liveSession.purpose {
                         Image(systemName: purpose.symbolName)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .help(purpose.displayName)
                     }
-                    Text(session.name)
+                    Text(liveSession.name)
                         .font(.system(size: 12, weight: .medium))
                         .lineLimit(1)
                 }
@@ -92,18 +117,20 @@ struct SessionListRow: View {
                         .font(.caption2.monospaced())
                         .lineLimit(1)
                         .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("SessionRow.MergeRequest.\(session.id.uuidString)")
+                        .accessibilityIdentifier("SessionRow.MergeRequest.\(liveSession.id.uuidString)")
                 }
 
-                Text(session.workingDirectory.lastPathComponent)
+                Text(liveSession.workingDirectory.lastPathComponent)
                     .font(.caption2)
                     .lineLimit(1)
                     .foregroundStyle(.tertiary)
-                    .help(session.workingDirectory.path)
+                    .help(liveSession.workingDirectory.path)
 
-                Text(displayedState.label)
-                    .font(.caption2)
-                    .foregroundStyle(stateColor)
+                if let status = displayedState.statusText {
+                    Text(status)
+                        .font(.caption2)
+                        .foregroundStyle(stateColor)
+                }
             }
 
             Spacer(minLength: 0)
@@ -120,7 +147,7 @@ struct SessionListRow: View {
     private var contextMenuItems: some View {
         Group {
             Button("Rename", action: onRename)
-            if session.activity != .exited {
+            if liveSession.activity != .exited {
                 Button("Terminate", action: onTerminate)
             } else {
                 Button("Remove", action: onRemove)
@@ -135,7 +162,7 @@ struct SessionListRow: View {
     /// The session's associated merge request as `MR !<iid>`, from the URL when
     /// it parses, otherwise from the artifact label. Nil when none is attached.
     private var mergeRequestLabel: String? {
-        guard let artifact = session.artifacts.last(where: { $0.kind == .gitlabMergeRequest }) else {
+        guard let artifact = liveSession.artifacts.last(where: { $0.kind == .gitlabMergeRequest }) else {
             return nil
         }
         if let url = artifact.url, let info = GitLabSourceContext.parseMergeRequest(fromURL: url) {
@@ -148,16 +175,18 @@ struct SessionListRow: View {
     }
 
     private var accessibilityRowLabel: String {
-        "\(purposePrefix)\(session.name)\(mergeRequestLabel.map { ", \($0)" } ?? ""), \(session.workingDirectory.lastPathComponent), \(displayedState.label)\(showsAttentionBadge ? ", needs attention" : "")"
+        let base = "\(purposePrefix)\(liveSession.name)\(mergeRequestLabel.map { ", \($0)" } ?? ""), \(liveSession.workingDirectory.lastPathComponent)"
+        let withStatus = displayedState.statusText.map { "\(base), \($0)" } ?? base
+        return withStatus + (showsAttentionBadge ? ", needs attention" : "")
     }
 
     private var purposePrefix: String {
-        guard let purpose = session.purpose else { return "" }
+        guard let purpose = liveSession.purpose else { return "" }
         return "\(purpose.displayName). "
     }
 
     private var showsAttentionBadge: Bool {
-        switch session.attention {
+        switch liveSession.attention {
         case .permission, .question:
             true
         case .unreadCompletion:

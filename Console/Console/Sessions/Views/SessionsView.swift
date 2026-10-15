@@ -335,10 +335,6 @@ struct SessionsView: View {
                 ForEach(store.sessions) { session in
                     SessionListRow(
                         session: session,
-                        displayedState: displayedSessionState(
-                            activity: session.activity,
-                            attention: session.attention
-                        ),
                         isSelected: session.id == store.selectedSessionID,
                         onSelect: { store.select(sessionID: session.id) },
                         onTerminate: { requestTerminate(session) },
@@ -363,10 +359,6 @@ struct SessionsView: View {
             if let session = store.selectedSession {
                 SessionTerminalPane(
                     session: session,
-                    displayedState: displayedSessionState(
-                        activity: session.activity,
-                        attention: session.attention
-                    ),
                     onQuickCommand: { command in
                         store.sendSlashCommand(command, to: session.id)
                         store.focusSelectedTerminal()

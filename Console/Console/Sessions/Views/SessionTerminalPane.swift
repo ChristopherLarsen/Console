@@ -4,11 +4,22 @@ import SwiftTerm
 /// Selected terminal pane: header with name and state, optional compact info
 /// strip (summary + artifact chips), and the persistent terminal view.
 struct SessionTerminalPane: View {
+    @Environment(SessionStore.self) private var store
+
     let session: ConsoleSession
-    let displayedState: DisplayedSessionState
     let onQuickCommand: (String) -> Void
     let onColor: (String) -> Void
     let onTerminate: () -> Void
+
+    /// Store copy of the open session. Read during `body` so the header
+    /// status subscribes to activity and attention changes directly.
+    private var liveSession: ConsoleSession {
+        store.session(withID: session.id) ?? session
+    }
+
+    private var displayedState: DisplayedSessionState {
+        displayedSessionState(activity: liveSession.activity, attention: liveSession.attention)
+    }
 
     /// The Quick Commands configured in Settings. `@AppStorage` observes the
     /// same defaults key the settings window writes, so edits show up here
@@ -24,65 +35,75 @@ struct SessionTerminalPane: View {
         VStack(spacing: 0) {
             header
 
-            if let warning = session.instrumentationWarning {
+            if let warning = liveSession.instrumentationWarning {
                 SessionInstrumentationWarning(message: warning)
                 Divider()
             }
 
             if showsInfoStrip {
-                SessionInfoStrip(session: session)
+                SessionInfoStrip(session: liveSession)
                 Divider()
             }
 
             TerminalSurface {
-                TerminalHost(terminalView: session.terminalView)
+                TerminalHost(terminalView: liveSession.terminalView)
             }
         }
     }
 
     private var showsInfoStrip: Bool {
-        session.summary != nil
+        liveSession.summary != nil
     }
 
     /// The session's most recent merge-request artifact, rendered as the
     /// tappable header badge.
     private var mergeRequestArtifact: SessionArtifact? {
-        session.artifacts.last { $0.kind == .gitlabMergeRequest }
+        liveSession.artifacts.last { $0.kind == .gitlabMergeRequest }
     }
 
     /// Solid fill for the state badge: each state's own channel colour, with
-    /// the neutral parked channel (Idle, Starting, Exited, Unknown) falling
-    /// back to black. Paired with white text so the label always reads.
+    /// the neutral parked channel (Idle, Exited, Unknown) falling back to
+    /// black. Paired with white text so the label always reads.
     private var stateBadgeColor: SwiftUI.Color {
         displayedState.attentionChannel == .parked ? .black : displayedState.tint
+    }
+
+    private var headerAccessibilityLabel: String {
+        if let status = displayedState.statusText {
+            "Session \(liveSession.name), \(status)"
+        } else {
+            "Session \(liveSession.name)"
+        }
     }
 
     private var header: some View {
         HStack(spacing: 8) {
             // One coherent accessibility element for name and state metadata.
             HStack(spacing: 8) {
-                Text(session.name)
+                Text(liveSession.name)
                     .font(.headline)
                     .lineLimit(1)
 
-                Text(displayedState.label)
-                    .font(.caption)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(stateBadgeColor))
-                    .foregroundStyle(.white)
+                if let status = displayedState.statusText {
+                    Text(status)
+                        .font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(stateBadgeColor))
+                        .foregroundStyle(.white)
+                }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Session \(session.name), \(displayedState.label)")
+            .accessibilityLabel(headerAccessibilityLabel)
             .accessibilityIdentifier("Sessions.Header")
-            .help(session.workingDirectory.path)
+            .help(liveSession.workingDirectory.path)
 
             Spacer()
 
             mergeRequestBadge
 
             if let url = HomeStorySessionMatcher.jiraURL(
-                for: session, configuredURL: webViewJiraURL, reviewItems: MRReviewScanController.shared.items
+                for: liveSession, configuredURL: webViewJiraURL, reviewItems: MRReviewScanController.shared.items
             ) {
                 let storyKey = JiraSourceContext.parseIssueKey(fromURL: url)
                 ServiceCapsuleButton(.jira, title: storyKey) {
@@ -200,7 +221,7 @@ struct SessionTerminalPane: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .disabled(session.activity == .exited)
+        .disabled(liveSession.activity == .exited)
         .help("Replace the current input line and press Return. Clear multiline drafts manually first.")
         .accessibilityLabel("Quick Commands")
         .accessibilityIdentifier("Sessions.QuickCommandsMenu")
@@ -230,7 +251,7 @@ struct SessionTerminalPane: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .disabled(session.activity == .exited)
+        .disabled(liveSession.activity == .exited)
         .help("Set Claude session color — replaces the current input line. Clear multiline drafts manually first.")
         .accessibilityLabel("Set Claude Session Color")
         .accessibilityIdentifier("SessionColorMenu")
