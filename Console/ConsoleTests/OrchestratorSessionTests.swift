@@ -110,6 +110,23 @@ final class OrchestratorSessionTests: XCTestCase {
         XCTAssertTrue(brief.contains("prompt_console_session"))
         XCTAssertTrue(brief.contains("Worker"))
         XCTAssertTrue(brief.contains("Run the orchestrator-run skill"))
+        XCTAssertFalse(brief.contains("Optional("))
+    }
+
+    func testScanBriefPrintsTicketStatusWithoutOptionalWrapper() {
+        let ticket = JiraTicketSummary(
+            key: "NMA-17",
+            summary: "Active story",
+            status: "In Progress",
+            priority: nil,
+            updatedText: nil,
+            issueURL: URL(string: "https://jira.example.com/browse/NMA-17")!,
+            sourceOrder: 0
+        )
+        let snapshot = HomeBoardSnapshot(jiraTickets: [ticket], jiraStatus: .current)
+        let brief = OrchestratorScanBrief.build(sessions: [], homeSnapshot: snapshot)
+        XCTAssertTrue(brief.contains("NMA-17 (In Progress)"))
+        XCTAssertFalse(brief.contains("Optional("))
     }
 
     func testRunOrchestratorDebouncesWhileRunning() throws {

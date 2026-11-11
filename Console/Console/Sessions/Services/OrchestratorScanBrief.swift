@@ -29,7 +29,13 @@ enum OrchestratorScanBrief {
             lines.append("## Home board")
             let nextKeys = board.nextStories.prefix(3).map(\.key)
             lines.append("- Next up: \(nextKeys.isEmpty ? "(none)" : nextKeys.joined(separator: ", "))")
-            let inProgress = board.inProgressTickets.prefix(5).map { "\($0.key) (\($0.status))" }
+            let inProgress = board.inProgressTickets.prefix(5).map { ticket -> String in
+                guard let status = ticket.status?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !status.isEmpty else {
+                    return ticket.key
+                }
+                return "\(ticket.key) (\(status))"
+            }
             lines.append("- In progress: \(inProgress.isEmpty ? "(none)" : inProgress.joined(separator: ", "))")
             let reviews = board.reviewQueue.prefix(5).compactMap { item -> String? in
                 guard let iid = item.iidText else { return nil }
