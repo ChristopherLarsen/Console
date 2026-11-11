@@ -77,7 +77,7 @@ final class OrchestratorSessionTests: XCTestCase {
         XCTAssertEqual(store.sessions.map(\.id), [orchestratorID, workerID])
     }
 
-    func testTerminateSessionRefusesOrchestrator() throws {
+    func testTerminateSessionClosesOrchestrator() throws {
         let store = makeStore()
         let directory = tmpDirectory("terminate")
 
@@ -88,8 +88,22 @@ final class OrchestratorSessionTests: XCTestCase {
             revealsSession: false
         ))
         store.terminateSession(id: orchestratorID)
-        XCTAssertNotNil(store.session(withID: orchestratorID))
-        XCTAssertEqual(store.session(withID: orchestratorID)?.purpose, .orchestrator)
+        XCTAssertNil(store.session(withID: orchestratorID))
+    }
+
+    func testRemoveSessionDropsExitedOrchestrator() throws {
+        let store = makeStore()
+        let directory = tmpDirectory("remove-orchestrator")
+        let orchestratorID = try store.createSession(request: SessionCreationRequest(
+            purpose: .orchestrator,
+            name: "Orchestrator 2",
+            workingDirectory: directory,
+            revealsSession: false
+        ))
+        store.handleProcessTerminated(sessionID: orchestratorID, startExitShell: false)
+        XCTAssertEqual(store.session(withID: orchestratorID)?.activity, .exited)
+        store.removeSession(id: orchestratorID)
+        XCTAssertNil(store.session(withID: orchestratorID))
     }
 
     func testUserSelectablePurposesOmitOrchestrator() {

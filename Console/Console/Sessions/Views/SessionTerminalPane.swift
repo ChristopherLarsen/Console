@@ -137,17 +137,16 @@ struct SessionTerminalPane: View {
                 .accessibilityLabel("Compact Session")
                 .accessibilityIdentifier("CompactSessionButton")
                 .disabled(liveSession.activity == .exited)
-            } else {
-                Button(action: onTerminate) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.red)
-                }
-                .buttonStyle(.plain)
-                .help("Terminate Session")
-                .accessibilityLabel("Terminate Session")
-                .accessibilityIdentifier("StopSessionButton")
             }
+            Button(action: onTerminate) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.red)
+            }
+            .buttonStyle(.plain)
+            .help("Terminate Session")
+            .accessibilityLabel("Terminate Session")
+            .accessibilityIdentifier("StopSessionButton")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

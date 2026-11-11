@@ -79,7 +79,7 @@ struct SessionListRow: View {
                 )
             }
 
-            if liveSession.activity == .exited, !isOrchestrator {
+            if liveSession.activity == .exited {
                 Button {
                     onRemove()
                 } label: {
@@ -152,11 +152,10 @@ struct SessionListRow: View {
     private var contextMenuItems: some View {
         Group {
             Button("Rename", action: onRename)
-            if isOrchestrator {
-                if liveSession.activity != .exited {
+            if liveSession.activity != .exited {
+                if isOrchestrator {
                     Button("Compact", action: onCompact)
                 }
-            } else if liveSession.activity != .exited {
                 Button("Terminate", action: onTerminate)
             } else {
                 Button("Remove", action: onRemove)

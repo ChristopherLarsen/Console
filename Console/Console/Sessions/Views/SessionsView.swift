@@ -490,7 +490,6 @@ struct SessionsView: View {
     }
 
     private func requestTerminate(_ session: ConsoleSession) {
-        guard session.purpose != .orchestrator else { return }
         let state = displayedSessionState(activity: session.activity, attention: session.attention)
         switch state {
         case .working, .needsApproval, .needsInput:

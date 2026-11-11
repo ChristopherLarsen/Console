@@ -105,7 +105,7 @@ final class SessionLaunchCoordinator {
             return existing.id
         }
         if let exited = store.orchestratorSession(), exited.activity == .exited {
-            store.removeSession(id: exited.id, force: true)
+            store.removeSession(id: exited.id)
         }
         let folder = try validatedSessionFolder(purpose: .orchestrator)
         let sessionID = try store.createSession(request: SessionCreationRequest(

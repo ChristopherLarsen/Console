@@ -791,10 +791,10 @@ final class SessionStore {
     /// User-initiated termination from the Sessions UI: stops the process
     /// like `stopSession` and, unlike a plain stop, closes the session once
     /// its process is gone so the pane returns to the empty state instead of
-    /// a dead terminal view. The orchestrator session is never terminable here.
+    /// a dead terminal view. Applies to the orchestrator the same as any
+    /// other row; the next launch can create a fresh one if none remains.
     func terminateSession(id: UUID) {
         guard let session = session(withID: id) else { return }
-        guard session.purpose != .orchestrator else { return }
         guard session.activity != .exited else {
             closeSession(id: id)
             return
@@ -907,11 +907,8 @@ final class SessionStore {
     }
 
     /// Removes an exited session (and its retained scrollback) from the list.
-    /// The orchestrator row is never removed from the UI; pass `force` only
-    /// from `ensureOrchestrator` when replacing an exited orchestrator.
-    func removeSession(id: UUID, force: Bool = false) {
+    func removeSession(id: UUID) {
         guard let session = session(withID: id), session.activity == .exited else { return }
-        if session.purpose == .orchestrator && !force { return }
         closeSession(id: id)
     }
 
