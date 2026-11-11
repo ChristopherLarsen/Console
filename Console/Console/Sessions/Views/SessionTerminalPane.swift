@@ -10,6 +10,11 @@ struct SessionTerminalPane: View {
     let onQuickCommand: (String) -> Void
     let onColor: (String) -> Void
     let onTerminate: () -> Void
+    var onCompact: (() -> Void)? = nil
+
+    private var isOrchestrator: Bool {
+        liveSession.purpose == .orchestrator
+    }
 
     /// Store copy of the open session. Read during `body` so the header
     /// status subscribes to activity and attention changes directly.
@@ -119,15 +124,30 @@ struct SessionTerminalPane: View {
 
             colorMenu
 
-            Button(action: onTerminate) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.red)
+            if isOrchestrator {
+                Button {
+                    onCompact?()
+                } label: {
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Compact Session")
+                .accessibilityLabel("Compact Session")
+                .accessibilityIdentifier("CompactSessionButton")
+                .disabled(liveSession.activity == .exited)
+            } else {
+                Button(action: onTerminate) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+                .help("Terminate Session")
+                .accessibilityLabel("Terminate Session")
+                .accessibilityIdentifier("StopSessionButton")
             }
-            .buttonStyle(.plain)
-            .help("Terminate Session")
-            .accessibilityLabel("Terminate Session")
-            .accessibilityIdentifier("StopSessionButton")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

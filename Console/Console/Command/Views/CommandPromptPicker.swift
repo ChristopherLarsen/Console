@@ -1,7 +1,7 @@
 import SwiftUI
 import SwiftData
 
-/// Title list opened from the sidebar buddy. Choosing a row runs it immediately.
+/// Title list opened from the Commands menu. Choosing a row runs it immediately.
 struct CommandPromptPicker: View {
     var onRan: () -> Void
 

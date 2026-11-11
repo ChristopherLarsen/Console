@@ -16,7 +16,13 @@ nonisolated enum BridgeProtocol {
         case artifact
         case completion
         case cwd
+        case createSession = "create_session"
+        case closeSession = "close_session"
+        case promptSession = "prompt_session"
     }
+
+    static let maxPromptLength = 1500
+    static let maxAgentLength = 80
 
     /// Reduced lifecycle events (post hook filtering). Raw hook event names
     /// never cross the bridge.
@@ -67,6 +73,20 @@ struct BridgeEnvelope: Equatable, Sendable {
     var completionOutcome: BridgeCompletionOutcome?
     var completionSummary: String?
     var cwdDirectory: String?
+    /// Purpose raw value for `create_session` envelopes.
+    var createPurpose: String?
+    /// Optional display name for `create_session` envelopes.
+    var createName: String?
+    /// Optional initial prompt for `create_session` envelopes.
+    var createInitialPrompt: String?
+    /// Optional Claude agent name for `create_session` envelopes.
+    var createAgent: String?
+    /// Target Console session UUID for `close_session` / `prompt_session`.
+    var targetSessionID: String?
+    /// Prompt text for `prompt_session` envelopes.
+    var promptText: String?
+    /// Correlates an MCP tool call with a result file beside the socket.
+    var requestID: String?
 }
 
 extension BridgeEnvelope {
@@ -87,6 +107,13 @@ extension BridgeEnvelope {
         if let completionOutcome { container["completion_outcome"] = completionOutcome.rawValue }
         if let completionSummary { container["completion_summary"] = completionSummary }
         if let cwdDirectory { container["cwd_directory"] = cwdDirectory }
+        if let createPurpose { container["create_purpose"] = createPurpose }
+        if let createName { container["create_name"] = createName }
+        if let createInitialPrompt { container["create_initial_prompt"] = createInitialPrompt }
+        if let createAgent { container["create_agent"] = createAgent }
+        if let targetSessionID { container["target_session_id"] = targetSessionID }
+        if let promptText { container["prompt_text"] = promptText }
+        if let requestID { container["request_id"] = requestID }
         guard JSONSerialization.isValidJSONObject(container),
               var data = try? JSONSerialization.data(withJSONObject: container, options: [.sortedKeys]) else {
             throw BridgeEnvelopeError.malformedJSON
@@ -192,6 +219,58 @@ extension BridgeEnvelope {
             }
             try validateText(directory, maxLength: 4096, field: "cwdDirectory")
             envelope.cwdDirectory = directory
+        case .createSession:
+            guard let purpose = raw.createPurpose else {
+                throw BridgeEnvelopeError.missingField("createPurpose")
+            }
+            envelope.createPurpose = try validatedTrimmedText(
+                purpose, maxLength: 64, field: "createPurpose"
+            )
+            if let name = raw.createName {
+                envelope.createName = try validatedTrimmedText(
+                    name, maxLength: 80, field: "createName"
+                )
+            }
+            if let prompt = raw.createInitialPrompt {
+                envelope.createInitialPrompt = try validatedTrimmedText(
+                    prompt, maxLength: BridgeProtocol.maxPromptLength, field: "createInitialPrompt"
+                )
+            }
+            if let agent = raw.createAgent {
+                envelope.createAgent = try validatedTrimmedText(
+                    agent, maxLength: BridgeProtocol.maxAgentLength, field: "createAgent"
+                )
+            }
+            if let requestID = raw.requestID {
+                try validateIdentifier(requestID, field: "requestID")
+                envelope.requestID = requestID
+            }
+        case .closeSession:
+            guard let target = raw.targetSessionID else {
+                throw BridgeEnvelopeError.missingField("targetSessionID")
+            }
+            try validateIdentifier(target, field: "targetSessionID")
+            envelope.targetSessionID = target
+            if let requestID = raw.requestID {
+                try validateIdentifier(requestID, field: "requestID")
+                envelope.requestID = requestID
+            }
+        case .promptSession:
+            guard let target = raw.targetSessionID else {
+                throw BridgeEnvelopeError.missingField("targetSessionID")
+            }
+            try validateIdentifier(target, field: "targetSessionID")
+            envelope.targetSessionID = target
+            guard let prompt = raw.promptText else {
+                throw BridgeEnvelopeError.missingField("promptText")
+            }
+            envelope.promptText = try validatedTrimmedText(
+                prompt, maxLength: BridgeProtocol.maxPromptLength, field: "promptText"
+            )
+            if let requestID = raw.requestID {
+                try validateIdentifier(requestID, field: "requestID")
+                envelope.requestID = requestID
+            }
         }
         return envelope
     }
@@ -257,6 +336,13 @@ private struct RawEnvelope: Decodable {
     var completionOutcome: BridgeCompletionOutcome?
     var completionSummary: String?
     var cwdDirectory: String?
+    var createPurpose: String?
+    var createName: String?
+    var createInitialPrompt: String?
+    var createAgent: String?
+    var targetSessionID: String?
+    var promptText: String?
+    var requestID: String?
 
     enum CodingKeys: String, CodingKey {
         case protocolVersion = "protocol_version"
@@ -273,5 +359,12 @@ private struct RawEnvelope: Decodable {
         case completionOutcome = "completion_outcome"
         case completionSummary = "completion_summary"
         case cwdDirectory = "cwd_directory"
+        case createPurpose = "create_purpose"
+        case createName = "create_name"
+        case createInitialPrompt = "create_initial_prompt"
+        case createAgent = "create_agent"
+        case targetSessionID = "target_session_id"
+        case promptText = "prompt_text"
+        case requestID = "request_id"
     }
 }

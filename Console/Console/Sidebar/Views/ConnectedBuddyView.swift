@@ -2,11 +2,11 @@ import SwiftUI
 import SwiftData
 import Foundation
 
-/// Sidebar status card with ConsoleBuddy image, last-request provider connection dot, and machine name.
+/// Sidebar status card with ConsoleBuddy image, last-request provider connection
+/// dot, and machine name. Clicking runs an orchestrator pass.
 struct ConnectedBuddyView: View {
     @Environment(AIProviderManager.self) private var aiProviderManager: AIProviderManager?
-    @Environment(LocalCommandExecutor.self) private var commandExecutor: LocalCommandExecutor?
-    @State private var showsCommandPicker = false
+    @Environment(SessionLaunchCoordinator.self) private var launchCoordinator: SessionLaunchCoordinator?
     /// The provider connection indicator only means something when the AI
     /// provider feature is enabled in Settings.
     @AppStorage(AppSettings.aiProviderEnabledKey) private var isAIProviderEnabled = false
@@ -44,25 +44,39 @@ struct ConnectedBuddyView: View {
         }
     }
 
+    private var orchestratorHelp: String {
+        switch launchCoordinator?.orchestratorRunState {
+        case .running:
+            return "Orchestrator run in progress"
+        case .awaitingUser:
+            return "Waiting for your approval in Orchestrator"
+        case .idle, .none:
+            return "Run orchestrator"
+        }
+    }
+
+    private var orchestratorHint: String {
+        switch launchCoordinator?.orchestratorRunState {
+        case .running:
+            return "Focuses the Orchestrator session; a run is already in progress"
+        case .awaitingUser:
+            return "Focuses the Orchestrator session; answer its questions to continue"
+        case .idle, .none:
+            return "Opens Sessions and runs the orchestrator"
+        }
+    }
+
     var body: some View {
         Button {
-            showsCommandPicker = true
+            launchCoordinator?.runOrchestrator()
         } label: {
             panel
         }
         .buttonStyle(.plain)
-        .help("Choose a command")
+        .help(orchestratorHelp)
         .accessibilityLabel(accessibilityStatus)
-        .accessibilityHint("Shows commands you can run")
+        .accessibilityHint(orchestratorHint)
         .accessibilityAddTraits(.isButton)
-        .popover(isPresented: $showsCommandPicker, arrowEdge: .trailing) {
-            if let commandExecutor {
-                CommandPromptPicker {
-                    showsCommandPicker = false
-                }
-                .environment(commandExecutor)
-            }
-        }
     }
 
     private var panel: some View {
@@ -119,5 +133,4 @@ struct ConnectedBuddyView: View {
         .frame(width: 180)
         .padding()
         .modelContainer(for: Command.self, inMemory: true)
-        .environment(LocalCommandExecutor())
 }

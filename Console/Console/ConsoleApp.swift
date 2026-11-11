@@ -93,6 +93,7 @@ struct ConsoleApp: App {
     @State private var sessionWorkspaceLayout = SessionWorkspaceLayoutController()
     @State private var developerActions: DeveloperActionRunner
     @State private var sessionNewRequest = SessionNewRequestController()
+    @State private var showsCommandPicker = false
     private var syntheticTranscriptSource: SyntheticTranscriptSource?
     @AppStorage("tabSelection") private var tabSelection: TabSelection = .triggers
     #if DEBUG
@@ -277,6 +278,9 @@ struct ConsoleApp: App {
         _ = sessionStore.addLifecycleSubscriber { [weak responsePrep] id, event in
             responsePrep?.handleLifecycle(sessionID: id, event: event)
         }
+        _ = sessionStore.addLifecycleSubscriber { [weak coordinator] id, event in
+            coordinator?.handleOrchestratorLifecycle(sessionID: id, event: event)
+        }
         if !Self.isRunningUnitTests {
             MRReviewScanController.shared.authoredScanObserver = { [weak responsePrep] items in
                 responsePrep?.handleAuthoredScan(items)
@@ -387,7 +391,7 @@ struct ConsoleApp: App {
             } else {
                 ZStack {
                     Group {
-                        MainView()
+                        MainView(showsCommandPicker: $showsCommandPicker)
                             .background(WindowCloseInterceptor())
                     }
                     .onDisappear {
@@ -526,6 +530,13 @@ struct ConsoleApp: App {
             }
             #endif
             CommandGroup(replacing: .windowArrangement) { }
+            CommandMenu("Commands") {
+                Button("Run Command…") {
+                    ConsoleWindowManager.bringToFront("main")
+                    showsCommandPicker = true
+                }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
+            }
             CommandMenu("Go") {
                 // Sidebar destinations on ⌃1…⌃9 and ⌃0, in sidebar order.
                 ForEach(
@@ -721,8 +732,16 @@ struct ConsoleApp: App {
         pingLocalProviderIfNeeded()
         runStartupUpdateCheckIfNeeded()
         sessionStore.startBridgeIfNeeded()
+        ensureOrchestratorSessionIfPossible()
         prepareMorningBriefIfNeeded()
         startMRReviewScansIfNeeded()
+    }
+
+    /// Best-effort create of the persistent orchestrator row when a Session
+    /// Folder is already configured. Failures stay silent until Big Blue.
+    private func ensureOrchestratorSessionIfPossible() {
+        guard !Self.isRunningUnitTests else { return }
+        _ = try? launchCoordinator.ensureOrchestratorSession()
     }
 
     /// Automated MR review scans: process-scoped cadence, started once per

@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 
 struct MainView: View {
+    @Binding var showsCommandPicker: Bool
     @State private var toDoStore = ToDoStore()
     @State private var themeManager = ThemeManager()
     @AppStorage("sidebarSelection") private var sidebarSelection: SidebarSelection = .home
@@ -19,6 +20,7 @@ struct MainView: View {
     @Environment(SessionWorkspaceStore.self) private var workspaceStore
     @Environment(SessionStore.self) private var sessionStore
     @Environment(SessionWorkspaceLayoutController.self) private var sessionWorkspaceLayout
+    @Environment(LocalCommandExecutor.self) private var commandExecutor
     @State private var mrScan = MRReviewScanController.shared
 
     private static let terminalMinExpandedHeight: CGFloat = 150
@@ -97,6 +99,12 @@ struct MainView: View {
         .sheet(item: Binding(get: { launchCoordinator.pendingAuthoredMR },
                              set: { launchCoordinator.pendingAuthoredMR = $0 })) { item in
             AuthoredMRSessionPicker(item: item)
+        }
+        .popover(isPresented: $showsCommandPicker, arrowEdge: .top) {
+            CommandPromptPicker {
+                showsCommandPicker = false
+            }
+            .environment(commandExecutor)
         }
         .tint(Color.accentColor)
         .preferredColorScheme(themeManager.colorScheme)
@@ -377,7 +385,7 @@ struct MainView: View {
 }
 
 #Preview {
-    MainView()
+    MainView(showsCommandPicker: .constant(false))
         .environment(SessionStore())
         .environment(SessionWorkspaceStore())
         .environment(IOSProjectProfileStore())
@@ -385,5 +393,6 @@ struct MainView: View {
         .environment(SessionLaunchCoordinator(store: SessionStore(), workspaceStore: SessionWorkspaceStore()))
         .environment(SessionWorkspaceLayoutController())
         .environment(SessionNewRequestController())
+        .environment(LocalCommandExecutor())
         .modelContainer(for: [Command.self, WakeWord.self], inMemory: true)
 }

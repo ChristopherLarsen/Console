@@ -4,7 +4,7 @@ import Foundation
 //
 // Two modes:
 //   ConsoleTermBridge hook <event-name>   Forward one reduced lifecycle event to Console.
-//   ConsoleTermBridge mcp                 Serve the three Console MCP tools over stdio.
+//   ConsoleTermBridge mcp                 Serve the Console MCP tools over stdio.
 //
 // Configuration arrives through the environment of the Claude process:
 //   CONSOLE_TERM_BRIDGE_HELPER       Absolute path to this helper.
@@ -42,6 +42,13 @@ struct BridgeEnvelope {
     var completionOutcome: String?
     var completionSummary: String?
     var cwdDirectory: String?
+    var createPurpose: String?
+    var createName: String?
+    var createInitialPrompt: String?
+    var createAgent: String?
+    var targetSessionID: String?
+    var promptText: String?
+    var requestID: String?
 
     func encodedLine() -> Data? {
         var object: [String: Any] = [
@@ -60,6 +67,13 @@ struct BridgeEnvelope {
         if let completionOutcome { object["completion_outcome"] = completionOutcome }
         if let completionSummary { object["completion_summary"] = completionSummary }
         if let cwdDirectory { object["cwd_directory"] = cwdDirectory }
+        if let createPurpose { object["create_purpose"] = createPurpose }
+        if let createName { object["create_name"] = createName }
+        if let createInitialPrompt { object["create_initial_prompt"] = createInitialPrompt }
+        if let createAgent { object["create_agent"] = createAgent }
+        if let targetSessionID { object["target_session_id"] = targetSessionID }
+        if let promptText { object["prompt_text"] = promptText }
+        if let requestID { object["request_id"] = requestID }
         guard JSONSerialization.isValidJSONObject(object),
               let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
             return nil
@@ -220,6 +234,58 @@ private let consoleTools: [MCPServerTool] = [
             "additionalProperties": false,
         ]
     ),
+    MCPServerTool(
+        name: "list_console_sessions",
+        description: "List Console's open sessions (id, name, purpose, activity, attention, summary, bridge_status, artifacts) from the local sessions snapshot.",
+        schema: [
+            "type": "object",
+            "properties": [:],
+            "additionalProperties": false,
+        ]
+    ),
+    MCPServerTool(
+        name: "create_console_session",
+        description: "Ask Console to create a visible session in the Sessions list. Prefer after user approval. Purpose must be a user-selectable Console purpose (not orchestrator). Optional initial_prompt is queued after create.",
+        schema: [
+            "type": "object",
+            "properties": [
+                "purpose": [
+                    "type": "string",
+                    "enum": ["blank", "newTicket", "existingTicket", "review", "general"],
+                ],
+                "name": ["type": "string", "minLength": 1, "maxLength": 80],
+                "initial_prompt": ["type": "string", "minLength": 1, "maxLength": 1500],
+                "agent": ["type": "string", "minLength": 1, "maxLength": 80],
+            ],
+            "required": ["purpose"],
+            "additionalProperties": false,
+        ]
+    ),
+    MCPServerTool(
+        name: "close_console_session",
+        description: "Ask Console to terminate and remove another visible session by Console session id. Refuses the orchestrator. Prefer after user approval.",
+        schema: [
+            "type": "object",
+            "properties": [
+                "session_id": ["type": "string", "minLength": 1, "maxLength": 64],
+            ],
+            "required": ["session_id"],
+            "additionalProperties": false,
+        ]
+    ),
+    MCPServerTool(
+        name: "prompt_console_session",
+        description: "Queue a directive prompt into another Console session after user approval. Prefer this over SendMessage for actionable direction. Refuses the orchestrator.",
+        schema: [
+            "type": "object",
+            "properties": [
+                "session_id": ["type": "string", "minLength": 1, "maxLength": 64],
+                "prompt": ["type": "string", "minLength": 1, "maxLength": 1500],
+            ],
+            "required": ["session_id", "prompt"],
+            "additionalProperties": false,
+        ]
+    ),
 ]
 
 private func runMCPMode() {
@@ -316,6 +382,14 @@ private func handleToolsCall(request: [String: Any], stdout: FileHandle) {
         outcome = handleLinkArtifact(args)
     case "report_completion":
         outcome = handleReportCompletion(args)
+    case "list_console_sessions":
+        outcome = handleListConsoleSessions()
+    case "create_console_session":
+        outcome = handleCreateConsoleSession(args)
+    case "close_console_session":
+        outcome = handleCloseConsoleSession(args)
+    case "prompt_console_session":
+        outcome = handlePromptConsoleSession(args)
     default:
         outcome = .failure(ToolFailure(message: "Unknown tool: \(toolName)"))
     }
@@ -476,6 +550,160 @@ private func handleReportCompletion(_ args: [String: Any]) -> Result<String, Too
         completionSummary: summary
     ))
     return .success("ok")
+}
+
+private var sessionsSnapshotPath: String? { environmentValue("CONSOLE_SESSIONS_SNAPSHOT") }
+private var mcpResultsDirectory: String? { environmentValue("CONSOLE_MCP_RESULTS_DIR") }
+
+/// Close/prompt only write a result file; create also materializes a plugin and
+/// launches Claude on the main queue, so it needs a longer bound.
+private let mcpResultTimeoutSeconds: TimeInterval = 2.0
+private let mcpCreateResultTimeoutSeconds: TimeInterval = 8.0
+
+private func waitForMCPResult(
+    requestID: String,
+    timeout: TimeInterval = mcpResultTimeoutSeconds
+) -> String {
+    guard let directory = mcpResultsDirectory, !directory.isEmpty else {
+        return #"{"ok":false,"error":"mcp results directory unavailable"}"#
+    }
+    let path = URL(fileURLWithPath: directory).appendingPathComponent("\(requestID).json").path
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+           let text = String(data: data, encoding: .utf8),
+           !text.isEmpty {
+            try? FileManager.default.removeItem(atPath: path)
+            return text
+        }
+        Thread.sleep(forTimeInterval: 0.05)
+    }
+    return #"{"ok":false,"error":"timeout waiting for Console"}"#
+}
+
+private func handleListConsoleSessions() -> Result<String, ToolFailure> {
+    guard let path = sessionsSnapshotPath, !path.isEmpty else {
+        return .failure(ToolFailure(message: "sessions snapshot unavailable"))
+    }
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+          let text = String(data: data, encoding: .utf8),
+          !text.isEmpty else {
+        return .success("[]")
+    }
+    return .success(text)
+}
+
+private let creatablePurposes: Set<String> = [
+    "blank", "newTicket", "existingTicket", "review", "general",
+]
+
+private func handleCreateConsoleSession(_ args: [String: Any]) -> Result<String, ToolFailure> {
+    guard let purpose = args["purpose"] as? String else {
+        return .failure(ToolFailure(message: "purpose is required"))
+    }
+    guard creatablePurposes.contains(purpose) else {
+        return .failure(ToolFailure(message: "purpose must be one of blank, newTicket, existingTicket, review, general"))
+    }
+    var name: String?
+    if let rawName = args["name"] as? String {
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return .failure(ToolFailure(message: "name must not be empty"))
+        }
+        guard trimmed.count <= 80 else {
+            return .failure(ToolFailure(message: "name must be at most 80 characters"))
+        }
+        name = trimmed
+    }
+    var initialPrompt: String?
+    if let rawPrompt = args["initial_prompt"] as? String {
+        let trimmed = rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return .failure(ToolFailure(message: "initial_prompt must not be empty"))
+        }
+        guard trimmed.count <= 1500 else {
+            return .failure(ToolFailure(message: "initial_prompt must be at most 1500 characters"))
+        }
+        initialPrompt = trimmed
+    }
+    var agent: String?
+    if let rawAgent = args["agent"] as? String {
+        let trimmed = rawAgent.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return .failure(ToolFailure(message: "agent must not be empty"))
+        }
+        guard trimmed.count <= 80 else {
+            return .failure(ToolFailure(message: "agent must be at most 80 characters"))
+        }
+        agent = trimmed
+    }
+    let requestID = UUID().uuidString
+    sendEnvelope(BridgeEnvelope(
+        kind: "create_session",
+        createPurpose: purpose,
+        createName: name,
+        createInitialPrompt: initialPrompt,
+        createAgent: agent,
+        requestID: requestID
+    ))
+    return .success(waitForMCPResult(requestID: requestID, timeout: mcpCreateResultTimeoutSeconds))
+}
+
+private func handleCloseConsoleSession(_ args: [String: Any]) -> Result<String, ToolFailure> {
+    guard let rawID = args["session_id"] as? String else {
+        return .failure(ToolFailure(message: "session_id is required"))
+    }
+    let sessionID = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !sessionID.isEmpty else {
+        return .failure(ToolFailure(message: "session_id must not be empty"))
+    }
+    guard sessionID.count <= 64 else {
+        return .failure(ToolFailure(message: "session_id must be at most 64 characters"))
+    }
+    if let selfID = consoleSessionID, sessionID.caseInsensitiveCompare(selfID) == .orderedSame {
+        return .failure(ToolFailure(message: "refused: cannot close the orchestrator session"))
+    }
+    let requestID = UUID().uuidString
+    sendEnvelope(BridgeEnvelope(
+        kind: "close_session",
+        targetSessionID: sessionID,
+        requestID: requestID
+    ))
+    return .success(waitForMCPResult(requestID: requestID))
+}
+
+private func handlePromptConsoleSession(_ args: [String: Any]) -> Result<String, ToolFailure> {
+    guard let rawID = args["session_id"] as? String else {
+        return .failure(ToolFailure(message: "session_id is required"))
+    }
+    let sessionID = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !sessionID.isEmpty else {
+        return .failure(ToolFailure(message: "session_id must not be empty"))
+    }
+    guard sessionID.count <= 64 else {
+        return .failure(ToolFailure(message: "session_id must be at most 64 characters"))
+    }
+    if let selfID = consoleSessionID, sessionID.caseInsensitiveCompare(selfID) == .orderedSame {
+        return .failure(ToolFailure(message: "refused: cannot prompt the orchestrator session"))
+    }
+    guard let rawPrompt = args["prompt"] as? String else {
+        return .failure(ToolFailure(message: "prompt is required"))
+    }
+    let prompt = rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !prompt.isEmpty else {
+        return .failure(ToolFailure(message: "prompt must not be empty"))
+    }
+    guard prompt.count <= 1500 else {
+        return .failure(ToolFailure(message: "prompt must be at most 1500 characters"))
+    }
+    let requestID = UUID().uuidString
+    sendEnvelope(BridgeEnvelope(
+        kind: "prompt_session",
+        targetSessionID: sessionID,
+        promptText: prompt,
+        requestID: requestID
+    ))
+    return .success(waitForMCPResult(requestID: requestID))
 }
 
 // MARK: - Stdio helpers

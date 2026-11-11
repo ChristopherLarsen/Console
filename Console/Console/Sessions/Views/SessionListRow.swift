@@ -10,10 +10,15 @@ struct SessionListRow: View {
     let isSelected: Bool
     let onSelect: () -> Void
     let onTerminate: () -> Void
+    let onCompact: () -> Void
     let onRemove: () -> Void
     let onRename: () -> Void
     let onAttachGitLab: () -> Void
     let onAttachJira: () -> Void
+
+    private var isOrchestrator: Bool {
+        liveSession.purpose == .orchestrator
+    }
 
     /// Store copy of this card's session. Read during `body` so the card
     /// subscribes to activity and attention changes directly.
@@ -74,7 +79,7 @@ struct SessionListRow: View {
                 )
             }
 
-            if liveSession.activity == .exited {
+            if liveSession.activity == .exited, !isOrchestrator {
                 Button {
                     onRemove()
                 } label: {
@@ -147,7 +152,11 @@ struct SessionListRow: View {
     private var contextMenuItems: some View {
         Group {
             Button("Rename", action: onRename)
-            if liveSession.activity != .exited {
+            if isOrchestrator {
+                if liveSession.activity != .exited {
+                    Button("Compact", action: onCompact)
+                }
+            } else if liveSession.activity != .exited {
                 Button("Terminate", action: onTerminate)
             } else {
                 Button("Remove", action: onRemove)

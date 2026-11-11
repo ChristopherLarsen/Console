@@ -97,7 +97,7 @@ struct SessionIntentPickerView: View {
 
     private var intentRows: some View {
         VStack(spacing: 6) {
-            ForEach(SessionPurpose.allCases, id: \.self) { purpose in
+            ForEach(SessionPurpose.userSelectableCases, id: \.self) { purpose in
                 Button {
                     handleIntentTap(purpose)
                 } label: {
@@ -238,7 +238,7 @@ struct SessionIntentPickerView: View {
         case .newTicket: return true
         case .existingTicket: return retainedJiraSource == nil
         case .review: return retainedMergeRequestSource == nil
-        case .general, .blank: return false
+        case .general, .blank, .orchestrator: return false
         }
     }
 
@@ -287,6 +287,9 @@ struct SessionIntentPickerView: View {
 
         case .blank:
             launch(purpose: purpose, source: nil)
+
+        case .orchestrator:
+            break
         }
     }
 
@@ -811,6 +814,7 @@ extension SessionPurpose {
         case .review: return "3"
         case .general: return "4"
         case .blank: return "5"
+        case .orchestrator: return "0"
         }
     }
 }

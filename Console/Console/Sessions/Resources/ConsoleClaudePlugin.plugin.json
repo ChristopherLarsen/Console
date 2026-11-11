@@ -1,5 +1,5 @@
 {
-  "description" : "Console lifecycle instrumentation and agent-to-Console messaging bridge. Reports session state to Console and exposes three Console tools.",
+  "description" : "Console lifecycle instrumentation, agent-to-Console messaging, and orchestrator skills. Reports session state and exposes Console MCP tools for list/create/close/prompt of sessions.",
   "name" : "console-bridge",
-  "version" : "1.0.0"
+  "version" : "1.2.0"
 }

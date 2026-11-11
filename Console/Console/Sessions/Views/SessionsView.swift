@@ -338,6 +338,7 @@ struct SessionsView: View {
                         isSelected: session.id == store.selectedSessionID,
                         onSelect: { store.select(sessionID: session.id) },
                         onTerminate: { requestTerminate(session) },
+                        onCompact: { store.compactSession(id: session.id) },
                         onRemove: { store.removeSession(id: session.id) },
                         onRename: {
                             renameText = session.name
@@ -367,7 +368,8 @@ struct SessionsView: View {
                         store.sendColorCommand(argument, to: session.id)
                         store.focusSelectedTerminal()
                     },
-                    onTerminate: { requestTerminate(session) }
+                    onTerminate: { requestTerminate(session) },
+                    onCompact: { store.compactSession(id: session.id) }
                 )
                 .id(session.id)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -488,6 +490,7 @@ struct SessionsView: View {
     }
 
     private func requestTerminate(_ session: ConsoleSession) {
+        guard session.purpose != .orchestrator else { return }
         let state = displayedSessionState(activity: session.activity, attention: session.attention)
         switch state {
         case .working, .needsApproval, .needsInput:

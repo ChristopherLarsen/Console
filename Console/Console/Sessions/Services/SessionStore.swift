@@ -383,6 +383,8 @@ final class SessionStore {
                     "CONSOLE_TERM_BRIDGE_SOCKET": socketPath ?? "",
                     "CONSOLE_TERM_BRIDGE_SESSION_ID": consoleID.uuidString,
                     "CONSOLE_TERM_BRIDGE_TOKEN": sessionToken,
+                    "CONSOLE_SESSIONS_SNAPSHOT": sessionsSnapshotPath() ?? "",
+                    "CONSOLE_MCP_RESULTS_DIR": mcpResultsDirectoryURL()?.path ?? "",
                 ]
             )
             // Unknown until a validated envelope arrives; never start as active.
@@ -424,7 +426,7 @@ final class SessionStore {
         )
 
         let previousSelection = selectedSessionID
-        sessions.append(session)
+        insertSession(session)
         if let token {
             sessionTokens[consoleID] = token
         }
@@ -483,7 +485,7 @@ final class SessionStore {
         )
 
         let previousSelection = selectedSessionID
-        sessions.append(session)
+        insertSession(session)
         if request.revealsSession { selectedSessionID = consoleID }
         if let record { startingRestorations[consoleID] = record }
 
@@ -540,24 +542,24 @@ final class SessionStore {
         )
     }
 
-    /// Claude Code agent every review session runs under. The agent is
-    /// expected to exist in the user's Claude configuration.
+    /// Claude Code agent Self Review / Agent Review launches request explicitly.
+    /// Not applied as a silent purpose default — missing agents fail the child.
     static let reviewAgentName = "agent-review"
 
     /// Claude Code agent Home's Next-up "Start story" launches run under. The
     /// agent is expected to exist in the user's Claude configuration.
     static let newStoryAgentName = "agent-nhl"
 
-    /// The agent a launch runs under: an explicit request agent wins, otherwise
-    /// the purpose's default (review sessions use the review agent).
+    /// The agent a launch runs under. Only an explicit request agent is used;
+    /// review purpose alone does not imply `--agent agent-review`.
     static func agent(for request: SessionCreationRequest) -> String? {
-        request.agent ?? (request.purpose == .review ? reviewAgentName : nil)
+        request.agent
     }
 
     /// Exact launch arguments: Claude session identity with bypassed
     /// permission prompts, an optional named agent, and when a plugin
     /// directory is available the bundled plugin plus preapproval of only the
-    /// three Console MCP tool names. The local Console display name is omitted
+    /// Console MCP tool names. The local Console display name is omitted
     /// — it must not reach the child CLI. Uninstrumented launches pass identity
     /// only so a missing plugin cannot block Claude.
     ///
@@ -789,9 +791,10 @@ final class SessionStore {
     /// User-initiated termination from the Sessions UI: stops the process
     /// like `stopSession` and, unlike a plain stop, closes the session once
     /// its process is gone so the pane returns to the empty state instead of
-    /// a dead terminal view.
+    /// a dead terminal view. The orchestrator session is never terminable here.
     func terminateSession(id: UUID) {
         guard let session = session(withID: id) else { return }
+        guard session.purpose != .orchestrator else { return }
         guard session.activity != .exited else {
             closeSession(id: id)
             return
@@ -800,6 +803,22 @@ final class SessionStore {
         startingRestorations.removeValue(forKey: id)
         persistRestorationSnapshot()
         stopSession(id: id)
+    }
+
+    /// The persistent orchestrator row, if one exists (live or exited).
+    func orchestratorSession() -> ConsoleSession? {
+        sessions.first(where: { $0.purpose == .orchestrator })
+    }
+
+    /// Best-effort Claude Code version for capability hints.
+    func claudeVersionHint() -> String? {
+        locator.resolvedClaudeVersion()
+    }
+
+    /// Queues Claude Code `/compact` for a live session. Used by the
+    /// orchestrator's Compact control in place of Terminate.
+    func compactSession(id: UUID) {
+        queueSlashCommand("/compact", for: id)
     }
 
     /// Closes the pending force-stop offer without killing the process.
@@ -888,9 +907,29 @@ final class SessionStore {
     }
 
     /// Removes an exited session (and its retained scrollback) from the list.
-    func removeSession(id: UUID) {
+    /// The orchestrator row is never removed from the UI; pass `force` only
+    /// from `ensureOrchestrator` when replacing an exited orchestrator.
+    func removeSession(id: UUID, force: Bool = false) {
         guard let session = session(withID: id), session.activity == .exited else { return }
+        if session.purpose == .orchestrator && !force { return }
         closeSession(id: id)
+    }
+
+    /// Inserts a session, keeping the orchestrator pinned at the top.
+    private func insertSession(_ session: ConsoleSession) {
+        if session.purpose == .orchestrator {
+            sessions.insert(session, at: 0)
+        } else {
+            sessions.append(session)
+            pinOrchestratorToTop()
+        }
+        writeSessionsSnapshot()
+    }
+
+    private func pinOrchestratorToTop() {
+        guard let index = sessions.firstIndex(where: { $0.purpose == .orchestrator }), index != 0 else { return }
+        let orchestrator = sessions.remove(at: index)
+        sessions.insert(orchestrator, at: 0)
     }
 
     /// Drops a session and its plumbing entirely. The terminal view, process
@@ -913,6 +952,7 @@ final class SessionStore {
             selectedSessionID = sessions.first?.id
         }
         persistRestorationSnapshot()
+        writeSessionsSnapshot()
     }
 
     func handleProcessTerminated(sessionID: UUID, startExitShell: Bool = true) {
@@ -958,6 +998,8 @@ final class SessionStore {
             "CONSOLE_TERM_BRIDGE_SOCKET": socketPath,
             "CONSOLE_TERM_BRIDGE_SESSION_ID": sessionID.uuidString,
             "CONSOLE_TERM_BRIDGE_TOKEN": token,
+            "CONSOLE_SESSIONS_SNAPSHOT": sessionsSnapshotPath() ?? "",
+            "CONSOLE_MCP_RESULTS_DIR": mcpResultsDirectoryURL()?.path ?? "",
         ])
         do {
             return try SessionExitShellBootstrap.environment(
@@ -1142,9 +1184,116 @@ final class SessionStore {
         case .cwd:
             guard let directory = envelope.cwdDirectory else { return }
             event = .cwdChanged(directory)
+        case .createSession:
+            handleCreateSessionRequest(from: sessionID, envelope: envelope)
+            return
+        case .closeSession:
+            handleCloseSessionRequest(from: sessionID, envelope: envelope)
+            return
+        case .promptSession:
+            handlePromptSessionRequest(from: sessionID, envelope: envelope)
+            return
         }
 
         applyEvent(event, to: sessionID)
+        writeSessionsSnapshot()
+    }
+
+    /// Console MCP create: only the orchestrator may request new sessions.
+    private func handleCreateSessionRequest(from requesterID: UUID, envelope: BridgeEnvelope) {
+        let requestID = envelope.requestID
+        guard let requester = session(withID: requesterID),
+              requester.purpose == .orchestrator,
+              requester.activity != .exited else {
+            writeMCPResult(requestID: requestID, ok: false, error: "only the orchestrator may create sessions")
+            return
+        }
+        guard let purposeRaw = envelope.createPurpose,
+              let purpose = SessionPurpose(rawValue: purposeRaw),
+              purpose != .orchestrator,
+              SessionPurpose.userSelectableCases.contains(purpose) else {
+            writeMCPResult(requestID: requestID, ok: false, error: "invalid or disallowed purpose")
+            return
+        }
+        let name = envelope.createName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = (name?.isEmpty == false) ? name! : purpose.defaultName(source: nil)
+        // Agent is opt-in only. Do not invent `agent-review` for purpose=review —
+        // that agent is often absent and would fail the launch.
+        let agent = envelope.createAgent
+        do {
+            let createdID = try createSession(request: SessionCreationRequest(
+                purpose: purpose,
+                name: displayName,
+                workingDirectory: requester.workingDirectory,
+                agent: agent,
+                revealsSession: true
+            ))
+            if let created = session(withID: createdID) {
+                queueSlashCommand("/rename \(created.name)", for: createdID)
+            }
+            if let prompt = envelope.createInitialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !prompt.isEmpty {
+                queuePrompt(prompt, for: createdID)
+            }
+            writeSessionsSnapshot()
+            writeMCPResult(requestID: requestID, ok: true, sessionID: createdID)
+        } catch {
+            writeMCPResult(requestID: requestID, ok: false, error: error.localizedDescription)
+        }
+    }
+
+    /// Console MCP close: only the orchestrator may close peers; never itself.
+    private func handleCloseSessionRequest(from requesterID: UUID, envelope: BridgeEnvelope) {
+        let requestID = envelope.requestID
+        guard let requester = session(withID: requesterID),
+              requester.purpose == .orchestrator else {
+            writeMCPResult(requestID: requestID, ok: false, error: "only the orchestrator may close sessions")
+            return
+        }
+        guard let targetRaw = envelope.targetSessionID,
+              let targetID = UUID(uuidString: targetRaw),
+              let target = session(withID: targetID) else {
+            writeMCPResult(requestID: requestID, ok: false, error: "session not found")
+            return
+        }
+        guard target.purpose != .orchestrator else {
+            writeMCPResult(requestID: requestID, ok: false, error: "refused: cannot close the orchestrator session")
+            return
+        }
+        terminateSession(id: targetID)
+        writeSessionsSnapshot()
+        writeMCPResult(requestID: requestID, ok: true, sessionID: targetID)
+    }
+
+    /// Console MCP prompt: queue a directive into another visible session.
+    private func handlePromptSessionRequest(from requesterID: UUID, envelope: BridgeEnvelope) {
+        let requestID = envelope.requestID
+        guard let requester = session(withID: requesterID),
+              requester.purpose == .orchestrator else {
+            writeMCPResult(requestID: requestID, ok: false, error: "only the orchestrator may prompt sessions")
+            return
+        }
+        guard let targetRaw = envelope.targetSessionID,
+              let targetID = UUID(uuidString: targetRaw),
+              let target = session(withID: targetID) else {
+            writeMCPResult(requestID: requestID, ok: false, error: "session not found")
+            return
+        }
+        guard target.purpose != .orchestrator else {
+            writeMCPResult(requestID: requestID, ok: false, error: "refused: cannot prompt the orchestrator session")
+            return
+        }
+        guard target.activity != .exited else {
+            writeMCPResult(requestID: requestID, ok: false, error: "session has exited")
+            return
+        }
+        guard let prompt = envelope.promptText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !prompt.isEmpty else {
+            writeMCPResult(requestID: requestID, ok: false, error: "prompt is required")
+            return
+        }
+        queuePrompt(prompt, for: targetID)
+        writeMCPResult(requestID: requestID, ok: true, sessionID: targetID)
     }
 
     /// Returns true when this envelope is the session's first validated one.
@@ -1571,10 +1720,82 @@ final class SessionStore {
         let restored = sessions.filter { restoredIDs.contains($0.claudeSessionID) }
         sessions = sessions.filter { !restoredIDs.contains($0.claudeSessionID) }
             + restorationOrder.compactMap { id in restored.first { $0.claudeSessionID == id } }
+        pinOrchestratorToTop()
+        writeSessionsSnapshot()
         if let selected = sessions.first(where: { $0.claudeSessionID == selection }) {
             selectedSessionID = selected.id
         }
         if !failures.isEmpty { restorationMessage = failures.joined(separator: "\n") }
+    }
+
+    /// Path of the sessions snapshot beside the bridge socket, if available.
+    private func sessionsSnapshotPath() -> String? {
+        guard let socketPath else { return nil }
+        let directory = (socketPath as NSString).deletingLastPathComponent
+        return URL(fileURLWithPath: directory).appendingPathComponent("sessions.json").path
+    }
+
+    private static let snapshotSummaryLimit = 200
+    private static let snapshotArtifactLimit = 5
+
+    /// JSON snapshot of live Console sessions for the Console MCP
+    /// `list_console_sessions` tool. Written beside the bridge socket.
+    private func writeSessionsSnapshot() {
+        guard let path = sessionsSnapshotPath() else { return }
+        let payload: [[String: Any]] = sessions.map { session in
+            var row: [String: Any] = [
+                "id": session.id.uuidString,
+                "name": session.name,
+                "activity": session.activity.rawValue,
+                "attention": session.attention.rawValue,
+                "bridge_status": session.bridgeStatus.rawValue,
+            ]
+            if let purpose = session.purpose {
+                row["purpose"] = purpose.rawValue
+            }
+            if let summary = session.summary?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !summary.isEmpty {
+                row["summary"] = String(summary.prefix(Self.snapshotSummaryLimit))
+            }
+            let artifacts: [[String: Any]] = session.artifacts.prefix(Self.snapshotArtifactLimit).map { artifact in
+                var entry: [String: Any] = [
+                    "kind": artifact.kind.rawValue,
+                    "label": artifact.label,
+                ]
+                if let url = artifact.url {
+                    entry["url"] = url.absoluteString
+                }
+                return entry
+            }
+            row["artifacts"] = artifacts
+            return row
+        }
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+            return
+        }
+        try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    /// Directory for MCP tool result files (`mcp-results/<request_id>.json`).
+    private func mcpResultsDirectoryURL() -> URL? {
+        guard let socketPath else { return nil }
+        let directory = (socketPath as NSString).deletingLastPathComponent
+        let url = URL(fileURLWithPath: directory).appendingPathComponent("mcp-results", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func writeMCPResult(requestID: String?, ok: Bool, sessionID: UUID? = nil, error: String? = nil) {
+        guard let requestID, !requestID.isEmpty, let dir = mcpResultsDirectoryURL() else { return }
+        var payload: [String: Any] = ["ok": ok]
+        if let sessionID { payload["session_id"] = sessionID.uuidString }
+        if let error { payload["error"] = error }
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+            return
+        }
+        try? data.write(to: dir.appendingPathComponent("\(requestID).json"), options: .atomic)
     }
 
     private func persistRestorationSnapshot() {

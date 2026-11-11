@@ -102,4 +102,34 @@ final class ClaudeExecutableLocator {
             return nil
         }
     }
+
+    /// Best-effort Claude Code version string (e.g. `2.1.224`), or nil.
+    func resolvedClaudeVersion() -> String? {
+        guard let executable = locate() else { return nil }
+        return Self.parseVersion(from: Self.defaultShellRunner(command: "\"\(executable)\" --version") ?? "")
+    }
+
+    /// Extracts a dotted numeric version from Claude's `--version` output.
+    nonisolated static func parseVersion(from output: String) -> String? {
+        let pattern = #"(\d+\.\d+\.\d+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
+              let range = Range(match.range(at: 1), in: output) else {
+            return nil
+        }
+        return String(output[range])
+    }
+
+    /// True when `lhs` is strictly older than `rhs` using dotted numeric parts.
+    nonisolated static func isVersion(_ lhs: String, lessThan rhs: String) -> Bool {
+        let left = lhs.split(separator: ".").compactMap { Int($0) }
+        let right = rhs.split(separator: ".").compactMap { Int($0) }
+        let count = max(left.count, right.count)
+        for index in 0..<count {
+            let a = index < left.count ? left[index] : 0
+            let b = index < right.count ? right[index] : 0
+            if a != b { return a < b }
+        }
+        return false
+    }
 }

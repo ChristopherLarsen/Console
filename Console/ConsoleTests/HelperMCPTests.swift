@@ -10,23 +10,46 @@ final class HelperMCPTests: XCTestCase {
     private var server: SessionBridgeSocketServer!
     private var received: [String] = []
     private let receivedLock = NSLock()
+    private var resultsDirectory: URL!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
         received = []
 
+        guard let socketURL = SessionBridgeSocketServer.makeProtectedSocketURL() else {
+            throw XCTSkip("no usable socket location")
+        }
+        let resultsDir = URL(fileURLWithPath: socketURL.path)
+            .deletingLastPathComponent()
+            .appendingPathComponent("mcp-results", isDirectory: true)
+        try FileManager.default.createDirectory(at: resultsDir, withIntermediateDirectories: true)
+        resultsDirectory = resultsDir
+
         // Production socket path: the helper must deliver valid tool calls to
-        // a real SessionBridgeSocketServer, not silently drop them.
+        // a real SessionBridgeSocketServer, not silently drop them. For tools
+        // that wait on result files, write a synthetic success result.
         let deliver: @Sendable (Data) -> Void = { [weak self] data in
             guard let self else { return }
             self.receivedLock.lock()
             self.received.append(String(data: data, encoding: .utf8) ?? "")
             self.receivedLock.unlock()
+            if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let requestID = object["request_id"] as? String,
+               !requestID.isEmpty {
+                let payload: [String: Any] = [
+                    "ok": true,
+                    "session_id": object["target_session_id"] as? String
+                        ?? "33333333-3333-3333-3333-333333333333",
+                ]
+                if let resultData = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) {
+                    try? resultData.write(
+                        to: resultsDir.appendingPathComponent("\(requestID).json"),
+                        options: .atomic
+                    )
+                }
+            }
         }
 
-        guard let socketURL = SessionBridgeSocketServer.makeProtectedSocketURL() else {
-            throw XCTSkip("no usable socket location")
-        }
         let bridgeServer = SessionBridgeSocketServer(socketPath: socketURL.path, deliver: deliver)
         XCTAssertTrue(bridgeServer.start(), "test listener must start")
         server = bridgeServer
@@ -52,10 +75,39 @@ final class HelperMCPTests: XCTestCase {
         let stderrPipe = Pipe()
         p.standardError = stderrPipe
 
+        let snapshotURL = URL(fileURLWithPath: socketURL.path)
+            .deletingLastPathComponent()
+            .appendingPathComponent("sessions.json")
+        let snapshot: [[String: Any]] = [
+            [
+                "id": "11111111-1111-1111-1111-111111111111",
+                "name": "Orchestrator",
+                "purpose": "orchestrator",
+                "activity": "idle",
+                "attention": "none",
+                "bridge_status": "active",
+                "artifacts": [],
+            ],
+            [
+                "id": "22222222-2222-2222-2222-222222222222",
+                "name": "Worker",
+                "purpose": "general",
+                "activity": "working",
+                "attention": "none",
+                "bridge_status": "active",
+                "summary": "Implementing login",
+                "artifacts": [["kind": "jira_issue", "label": "NMA-1"]],
+            ],
+        ]
+        let snapshotData = try JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys])
+        try snapshotData.write(to: snapshotURL, options: .atomic)
+
         p.environment = [
             "CONSOLE_TERM_BRIDGE_SOCKET": socketURL.path,
-            "CONSOLE_TERM_BRIDGE_SESSION_ID": UUID().uuidString,
+            "CONSOLE_TERM_BRIDGE_SESSION_ID": "11111111-1111-1111-1111-111111111111",
             "CONSOLE_TERM_BRIDGE_TOKEN": "test-token-0123456789",
+            "CONSOLE_SESSIONS_SNAPSHOT": snapshotURL.path,
+            "CONSOLE_MCP_RESULTS_DIR": resultsDir.path,
             // Coverage-instrumented builds print profraw errors to stderr when
             // the cwd is read-only; redirect coverage output to a temp file.
             "LLVM_PROFILE_FILE": NSTemporaryDirectory() + "mcp-\(UUID().uuidString).profraw",
@@ -160,12 +212,20 @@ final class HelperMCPTests: XCTestCase {
 
     // MARK: - Tool listing
 
-    func testToolsListExposesExactlyThreeConsoleTools() throws {
+    func testToolsListExposesConsoleTools() throws {
         let response = try send(["jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": [:]])
         let result = try XCTUnwrap(response["result"] as? [String: Any])
         let tools = try XCTUnwrap(result["tools"] as? [[String: Any]])
         let names = Set(tools.compactMap { $0["name"] as? String })
-        XCTAssertEqual(names, ["report_attention", "link_artifact", "report_completion"])
+        XCTAssertEqual(names, [
+            "report_attention",
+            "link_artifact",
+            "report_completion",
+            "list_console_sessions",
+            "create_console_session",
+            "close_console_session",
+            "prompt_console_session",
+        ])
 
         for tool in tools {
             XCTAssertNotNil(tool["inputSchema"], "\(tool) must declare an input schema")
@@ -231,6 +291,133 @@ final class HelperMCPTests: XCTestCase {
         XCTAssertEqual(envelope["artifact_kind"] as? String, "jira_issue")
         XCTAssertEqual(envelope["artifact_label"] as? String, "FAKE-1")
         XCTAssertEqual(envelope["artifact_url"] as? String, "https://example.test/browse/FAKE-1")
+    }
+
+    func testListConsoleSessionsReadsSnapshot() throws {
+        let response = try send([
+            "jsonrpc": "2.0",
+            "id": 20,
+            "method": "tools/call",
+            "params": [
+                "name": "list_console_sessions",
+                "arguments": [:],
+            ],
+        ])
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        XCTAssertEqual(result["isError"] as? Bool, false)
+        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+        let text = try XCTUnwrap(content.first?["text"] as? String)
+        XCTAssertTrue(text.contains("Orchestrator"))
+        XCTAssertTrue(text.contains("Worker"))
+        assertNothingDelivered()
+    }
+
+    func testCreateConsoleSessionDeliversEnvelope() throws {
+        let response = try send([
+            "jsonrpc": "2.0",
+            "id": 21,
+            "method": "tools/call",
+            "params": [
+                "name": "create_console_session",
+                "arguments": [
+                    "purpose": "general",
+                    "name": "Helper",
+                    "initial_prompt": "Start the helper task",
+                ],
+            ],
+        ])
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        XCTAssertEqual(result["isError"] as? Bool, false)
+        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+        let text = try XCTUnwrap(content.first?["text"] as? String)
+        XCTAssertTrue(text.contains("\"ok\":true") || text.contains("\"ok\" : true"))
+        let envelope = try XCTUnwrap(waitForDeliveredEnvelope(), "create must be delivered")
+        XCTAssertEqual(envelope["kind"] as? String, "create_session")
+        XCTAssertEqual(envelope["create_purpose"] as? String, "general")
+        XCTAssertEqual(envelope["create_name"] as? String, "Helper")
+        XCTAssertEqual(envelope["create_initial_prompt"] as? String, "Start the helper task")
+        XCTAssertNotNil(envelope["request_id"] as? String)
+    }
+
+    func testCloseConsoleSessionRefusesSelf() throws {
+        let response = try send([
+            "jsonrpc": "2.0",
+            "id": 22,
+            "method": "tools/call",
+            "params": [
+                "name": "close_console_session",
+                "arguments": ["session_id": "11111111-1111-1111-1111-111111111111"],
+            ],
+        ])
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        XCTAssertEqual(result["isError"] as? Bool, true)
+        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+        XCTAssertTrue((content.first?["text"] as? String)?.contains("refused") == true)
+        assertNothingDelivered()
+    }
+
+    func testCloseConsoleSessionDeliversEnvelope() throws {
+        let response = try send([
+            "jsonrpc": "2.0",
+            "id": 23,
+            "method": "tools/call",
+            "params": [
+                "name": "close_console_session",
+                "arguments": ["session_id": "22222222-2222-2222-2222-222222222222"],
+            ],
+        ])
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        XCTAssertEqual(result["isError"] as? Bool, false)
+        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+        let text = try XCTUnwrap(content.first?["text"] as? String)
+        XCTAssertTrue(text.contains("\"ok\":true") || text.contains("\"ok\" : true"))
+        let envelope = try XCTUnwrap(waitForDeliveredEnvelope(), "close must be delivered")
+        XCTAssertEqual(envelope["kind"] as? String, "close_session")
+        XCTAssertEqual(envelope["target_session_id"] as? String, "22222222-2222-2222-2222-222222222222")
+        XCTAssertNotNil(envelope["request_id"] as? String)
+    }
+
+    func testPromptConsoleSessionDeliversEnvelope() throws {
+        let response = try send([
+            "jsonrpc": "2.0",
+            "id": 24,
+            "method": "tools/call",
+            "params": [
+                "name": "prompt_console_session",
+                "arguments": [
+                    "session_id": "22222222-2222-2222-2222-222222222222",
+                    "prompt": "Continue the login work",
+                ],
+            ],
+        ])
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        XCTAssertEqual(result["isError"] as? Bool, false)
+        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+        let text = try XCTUnwrap(content.first?["text"] as? String)
+        XCTAssertTrue(text.contains("\"ok\":true") || text.contains("\"ok\" : true"))
+        let envelope = try XCTUnwrap(waitForDeliveredEnvelope(), "prompt must be delivered")
+        XCTAssertEqual(envelope["kind"] as? String, "prompt_session")
+        XCTAssertEqual(envelope["target_session_id"] as? String, "22222222-2222-2222-2222-222222222222")
+        XCTAssertEqual(envelope["prompt_text"] as? String, "Continue the login work")
+    }
+
+    func testListConsoleSessionsIncludesEnrichedFields() throws {
+        let response = try send([
+            "jsonrpc": "2.0",
+            "id": 25,
+            "method": "tools/call",
+            "params": [
+                "name": "list_console_sessions",
+                "arguments": [:],
+            ],
+        ])
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        XCTAssertEqual(result["isError"] as? Bool, false)
+        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+        let text = try XCTUnwrap(content.first?["text"] as? String)
+        XCTAssertTrue(text.contains("bridge_status"))
+        XCTAssertTrue(text.contains("Implementing login"))
+        XCTAssertTrue(text.contains("NMA-1"))
     }
 
     func testInvalidCategoryIsToolError() throws {

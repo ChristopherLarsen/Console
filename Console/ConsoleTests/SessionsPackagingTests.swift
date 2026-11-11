@@ -49,6 +49,9 @@ final class SessionsPackagingTests: XCTestCase {
             ConsoleClaudePluginAssembler.manifestResource,
             ConsoleClaudePluginAssembler.hooksResource,
             ConsoleClaudePluginAssembler.mcpResource,
+            ConsoleClaudePluginAssembler.orchestratorRunSkillResource,
+            ConsoleClaudePluginAssembler.orchestratorDiscoverSkillResource,
+            ConsoleClaudePluginAssembler.orchestratorRunCommandResource,
         ] {
             XCTAssertNotNil(
                 Bundle.main.url(forResource: resource, withExtension: nil),
@@ -64,7 +67,14 @@ final class SessionsPackagingTests: XCTestCase {
 
         let pluginRoot = try assembler.materialize(in: base)
 
-        for relative in [".claude-plugin/plugin.json", "hooks/hooks.json", ".mcp.json"] {
+        for relative in [
+            ".claude-plugin/plugin.json",
+            "hooks/hooks.json",
+            ".mcp.json",
+            "skills/orchestrator-run/SKILL.md",
+            "skills/orchestrator-discover/SKILL.md",
+            "commands/orchestrator-run.md",
+        ] {
             let path = pluginRoot.appendingPathComponent(relative).path
             XCTAssertTrue(FileManager.default.fileExists(atPath: path), "missing \(relative)")
         }
@@ -97,9 +107,13 @@ final class SessionsPackagingTests: XCTestCase {
                 "mcp__plugin_console-bridge_console__report_attention",
                 "mcp__plugin_console-bridge_console__link_artifact",
                 "mcp__plugin_console-bridge_console__report_completion",
+                "mcp__plugin_console-bridge_console__list_console_sessions",
+                "mcp__plugin_console-bridge_console__create_console_session",
+                "mcp__plugin_console-bridge_console__close_console_session",
+                "mcp__plugin_console-bridge_console__prompt_console_session",
             ]
         )
-        XCTAssertEqual(ConsoleClaudePluginAssembler.allowedToolNames.count, 3)
+        XCTAssertEqual(ConsoleClaudePluginAssembler.allowedToolNames.count, 7)
         XCTAssertFalse(
             ConsoleClaudePluginAssembler.allowedToolNames.contains(where: { $0.contains("*") }),
             "no wildcards"
@@ -121,6 +135,10 @@ final class SessionsPackagingTests: XCTestCase {
             "mcp__plugin_console-bridge_console__report_attention",
             "mcp__plugin_console-bridge_console__link_artifact",
             "mcp__plugin_console-bridge_console__report_completion",
+            "mcp__plugin_console-bridge_console__list_console_sessions",
+            "mcp__plugin_console-bridge_console__create_console_session",
+            "mcp__plugin_console-bridge_console__close_console_session",
+            "mcp__plugin_console-bridge_console__prompt_console_session",
         ]) { $0 == $1 })
         XCTAssertFalse(args.contains("--name"))
         XCTAssertFalse(args.contains("My Task"))
@@ -185,13 +203,24 @@ final class SessionsPackagingTests: XCTestCase {
     }
 
     @MainActor
-    func testReviewPurposeStillDefaultsToTheReviewAgent() {
+    func testReviewPurposeDoesNotInventAReviewAgent() {
         let request = SessionCreationRequest(
             purpose: .review,
             name: "NMA-1234 Review",
             workingDirectory: URL(fileURLWithPath: "/tmp")
         )
-        XCTAssertEqual(SessionStore.agent(for: request), SessionStore.reviewAgentName)
+        XCTAssertNil(
+            SessionStore.agent(for: request),
+            "review purpose alone must not pass --agent; callers opt in explicitly"
+        )
+
+        let explicit = SessionCreationRequest(
+            purpose: .review,
+            name: "agent-review",
+            workingDirectory: URL(fileURLWithPath: "/tmp"),
+            agent: SessionStore.reviewAgentName
+        )
+        XCTAssertEqual(SessionStore.agent(for: explicit), SessionStore.reviewAgentName)
 
         let plain = SessionCreationRequest(
             purpose: .general,

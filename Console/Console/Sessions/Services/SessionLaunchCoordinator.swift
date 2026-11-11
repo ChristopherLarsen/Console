@@ -81,6 +81,116 @@ final class SessionLaunchCoordinator {
         self.historyRoot = historyRoot
     }
 
+    // MARK: - Orchestrator
+
+    enum OrchestratorRunState: String, Equatable {
+        case idle
+        case running
+        case awaitingUser
+    }
+
+    /// Console-side orchestrator run phase for Big Blue debounce / Buddy status.
+    private(set) var orchestratorRunState: OrchestratorRunState = .idle
+
+    /// Optional one-line capability hint (e.g. Claude too old for SendMessage).
+    private(set) var orchestratorCapabilityHint: String?
+
+    /// Creates or recreates the singleton Orchestrator session in the Session
+    /// Folder. Exited orchestrator rows are replaced. Idempotent when a live
+    /// orchestrator already exists.
+    @discardableResult
+    func ensureOrchestratorSession() throws -> UUID {
+        if let existing = store.orchestratorSession(), existing.activity != .exited {
+            refreshOrchestratorCapabilityHint(for: existing)
+            return existing.id
+        }
+        if let exited = store.orchestratorSession(), exited.activity == .exited {
+            store.removeSession(id: exited.id, force: true)
+        }
+        let folder = try validatedSessionFolder(purpose: .orchestrator)
+        let sessionID = try store.createSession(request: SessionCreationRequest(
+            purpose: .orchestrator,
+            name: SessionPurpose.orchestrator.defaultName(source: nil),
+            workingDirectory: folder.directoryURL,
+            revealsSession: false
+        ))
+        if let created = store.session(withID: sessionID) {
+            refreshOrchestratorCapabilityHint(for: created)
+        }
+        return sessionID
+    }
+
+    /// Big Blue entry: ensure orchestrator, show Sessions, select it, and
+    /// queue a single brief+skill prompt unless a run is already active.
+    func runOrchestrator() {
+        do {
+            let sessionID = try ensureOrchestratorSession()
+            lastFailure = nil
+            ConsoleNavigation.showSessions()
+            store.select(sessionID: sessionID)
+            store.focusSelectedTerminal()
+            guard let session = store.session(withID: sessionID) else { return }
+            if session.bridgeStatus == .unavailable {
+                lastFailure = SessionLaunchFailure(
+                    message: session.instrumentationWarning
+                        ?? "Orchestrator bridge is unavailable. Recommendations may work, but Console MCP session control will not.",
+                    offersSettingsRoute: false
+                )
+            }
+            switch orchestratorRunState {
+            case .running, .awaitingUser:
+                return
+            case .idle:
+                break
+            }
+            guard session.activity != .working else { return }
+            let home = HomeBoardModel.gatherSnapshot(
+                jiraController: JiraWebSession.shared.panelController,
+                reviewsController: MRReviewScanController.shared
+            )
+            let brief = OrchestratorScanBrief.build(sessions: store.sessions, homeSnapshot: home)
+            orchestratorRunState = .running
+            store.queuePrompt(brief, for: sessionID, collapsingNewlines: false)
+        } catch {
+            lastFailure = SessionLaunchFailure(error: error)
+        }
+    }
+
+    /// Lifecycle updates for the orchestrator row drive run-state transitions.
+    func handleOrchestratorLifecycle(sessionID: UUID, event: SessionLifecycleEvent) {
+        guard store.session(withID: sessionID)?.purpose == .orchestrator else { return }
+        switch event {
+        case .turnCompleted, .turnFailed:
+            if orchestratorRunState == .running {
+                orchestratorRunState = .awaitingUser
+            }
+        case .userInputObserved:
+            orchestratorRunState = .idle
+        case .sessionEnded, .processTerminated:
+            orchestratorRunState = .idle
+        default:
+            break
+        }
+    }
+
+    /// Minimum Claude Code version that documents cross-session messaging.
+    static let crossSessionMessagingMinimumVersion = "2.1.224"
+
+    private func refreshOrchestratorCapabilityHint(for session: ConsoleSession) {
+        if session.bridgeStatus == .unavailable {
+            orchestratorCapabilityHint = session.instrumentationWarning
+                ?? "Console bridge unavailable for this session."
+            return
+        }
+        if let version = store.claudeVersionHint(),
+           ClaudeExecutableLocator.isVersion(version, lessThan: Self.crossSessionMessagingMinimumVersion) {
+            orchestratorCapabilityHint =
+                "Claude Code \(version) may lack cross-session SendMessage (needs \(Self.crossSessionMessagingMinimumVersion)+). Console MCP prompting still works."
+            return
+        }
+        orchestratorCapabilityHint = nil
+    }
+
     // MARK: - Drafts
 
     func draft(purpose: SessionPurpose, source: SessionLaunchSource?) -> SessionDraft {

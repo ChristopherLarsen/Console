@@ -8,6 +8,13 @@ enum SessionPurpose: String, Codable, CaseIterable {
     case existingTicket
     case review
     case general
+    /// Persistent coordinator session. Not offered in the Sessions `+` picker.
+    case orchestrator
+
+    /// Purposes the user can start from the Sessions intent picker.
+    static var userSelectableCases: [SessionPurpose] {
+        allCases.filter { $0 != .orchestrator }
+    }
 
     var displayName: String {
         switch self {
@@ -16,6 +23,7 @@ enum SessionPurpose: String, Codable, CaseIterable {
         case .review: return "Review an MR"
         case .general: return "Agent NHL"
         case .blank: return "New Terminal Session"
+        case .orchestrator: return "Orchestrator"
         }
     }
 
@@ -31,6 +39,8 @@ enum SessionPurpose: String, Codable, CaseIterable {
             return "Clean, idle Claude session for anything else."
         case .blank:
             return "Plain command-line terminal in the Session Folder. No Claude Code."
+        case .orchestrator:
+            return "Persistent coordinator session that proposes next steps for other sessions."
         }
     }
 
@@ -41,6 +51,7 @@ enum SessionPurpose: String, Codable, CaseIterable {
         case .review: return "eye"
         case .general: return "terminal"
         case .blank: return "apple.terminal"
+        case .orchestrator: return "point.3.filled.connected.trianglepath.dotted"
         }
     }
 
@@ -50,6 +61,7 @@ enum SessionPurpose: String, Codable, CaseIterable {
         case .newTicket: return "New Ticket"
         case .general: return "General"
         case .blank: return "Blank"
+        case .orchestrator: return "Orchestrator"
         case .existingTicket:
             if case let .jira(key, _, _) = source { return key }
             return "Existing Ticket"

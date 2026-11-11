@@ -76,7 +76,7 @@ final class SessionWorkspaceStore {
         switch purpose {
         case .review:
             return isGitRepository(atPath: workspace.directoryPath)
-        case .newTicket, .existingTicket, .general, .blank:
+        case .newTicket, .existingTicket, .general, .blank, .orchestrator:
             return true
         }
     }

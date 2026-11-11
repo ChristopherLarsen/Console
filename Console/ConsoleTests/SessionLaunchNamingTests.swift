@@ -110,6 +110,8 @@ final class SessionLaunchNamingTests: XCTestCase {
         XCTAssertFalse(SessionPurpose.existingTicket.generatesStarterPrompt)
         XCTAssertFalse(SessionPurpose.review.generatesStarterPrompt)
         XCTAssertFalse(SessionPurpose.general.generatesStarterPrompt)
+        XCTAssertFalse(SessionPurpose.orchestrator.generatesStarterPrompt)
+        XCTAssertFalse(SessionPurpose.userSelectableCases.contains(.orchestrator))
     }
 
     func testSourceMetadataIsNeverInterpolatedIntoAPrompt() {
