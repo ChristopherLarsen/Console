@@ -171,9 +171,17 @@ final class ConsoleTerminalView: LocalProcessTerminalView {
     /// Window we are awaiting a key transition from, so the observer is
     /// registered once and torn down cleanly.
     private weak var pendingKeyWindow: NSWindow?
+    /// When the child last wrote to the screen. Console waits for this to go
+    /// quiet after Claude starts before typing queued startup commands.
+    private(set) var lastOutputAt: Date?
 
     init() {
         super.init(frame: .zero)
+    }
+
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        lastOutputAt = Date()
+        super.dataReceived(slice: slice)
     }
 
     override func viewDidMoveToWindow() {

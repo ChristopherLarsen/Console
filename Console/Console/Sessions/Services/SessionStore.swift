@@ -1159,7 +1159,7 @@ final class SessionStore {
         let becameActive = markActive(sessionID: sessionID)
         // Queued input goes out after this envelope's event is applied, so a
         // queued prompt's Working state is not overwritten by SessionStart.
-        defer { if becameActive { flushPendingSlashCommands(sessionID: sessionID) } }
+        defer { if becameActive { flushPendingWhenSettled(sessionID: sessionID) } }
 
         let event: SessionLifecycleEvent
         switch envelope.kind {
@@ -1436,6 +1436,7 @@ final class SessionStore {
     private func deliverHeldDirectives(for targetID: UUID) -> Bool {
         guard directivesInFlight[targetID] == nil,
               awaitingAcceptance[targetID] == nil,
+              !settlingSessions.contains(targetID),
               let session = session(withID: targetID),
               Self.canTakeDirective(session),
               !userMayBeTyping(in: targetID),
@@ -1594,7 +1595,7 @@ final class SessionStore {
     /// already-live session sends immediately; exited sessions drop it.
     func queueSlashCommand(_ command: String, for sessionID: UUID) {
         guard let session = session(withID: sessionID), session.activity != .exited else { return }
-        if session.bridgeStatus == .active {
+        if session.bridgeStatus == .active, !settlingSessions.contains(sessionID) {
             sendSlashCommand(command, to: sessionID)
             return
         }
@@ -1619,11 +1620,52 @@ final class SessionStore {
             : normalized)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !line.isEmpty, let session = session(withID: sessionID), session.activity != .exited else { return }
-        if session.bridgeStatus == .active {
+        if session.bridgeStatus == .active, !settlingSessions.contains(sessionID) {
             submitQueuedCommands([.prompt(line, onSubmitted: onSubmitted)], index: 0, sessionID: sessionID)
             return
         }
         pendingSlashCommands[sessionID, default: []].append(.prompt(line, onSubmitted: onSubmitted))
+    }
+
+    /// Sessions whose Claude reported SessionStart but whose screen is still
+    /// drawing. SessionStart fires before the input box accepts keystrokes,
+    /// so input typed then is lost; queued input waits until output settles.
+    private var settlingSessions: Set<UUID> = []
+    static let startupQuietSeconds: TimeInterval = 0.8
+    static let startupSettleLimitSeconds: TimeInterval = 8
+    private static let startupPollSeconds: TimeInterval = 0.2
+
+    private func flushPendingWhenSettled(sessionID: UUID) {
+        // Without a running child (tests, fake launchers) nothing draws, so
+        // there is nothing to wait for.
+        guard queuedCommandSpacing > 0,
+              let terminal = session(withID: sessionID)?.terminalView,
+              terminal.process?.running == true else {
+            flushPendingSlashCommands(sessionID: sessionID)
+            return
+        }
+        settlingSessions.insert(sessionID)
+        pollStartupSettled(sessionID: sessionID, activatedAt: Date())
+    }
+
+    private func pollStartupSettled(sessionID: UUID, activatedAt: Date) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.startupPollSeconds) { [weak self] in
+            guard let self, let session = self.session(withID: sessionID), session.activity != .exited else {
+                self?.settlingSessions.remove(sessionID)
+                return
+            }
+            let now = Date()
+            let lastOutput = (session.terminalView as? ConsoleTerminalView)?.lastOutputAt ?? activatedAt
+            let quiet = now.timeIntervalSince(max(lastOutput, activatedAt)) >= Self.startupQuietSeconds
+            let expired = now.timeIntervalSince(activatedAt) >= Self.startupSettleLimitSeconds
+            guard quiet || expired else {
+                self.pollStartupSettled(sessionID: sessionID, activatedAt: activatedAt)
+                return
+            }
+            self.settlingSessions.remove(sessionID)
+            self.flushPendingSlashCommands(sessionID: sessionID)
+            self.deliverHeldDirectives(for: sessionID)
+        }
     }
 
     private func flushPendingSlashCommands(sessionID: UUID) {
