@@ -35,7 +35,7 @@ struct CapsuleActionButton: View {
                     .lineLimit(1)
             }
             .padding(.horizontal, 6)
-            .padding(.vertical, 2)
+            .padding(.vertical, 4)
             .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
             .overlay(Capsule().stroke(Color(nsColor: .separatorColor), lineWidth: 0.5))
             .contentShape(Capsule())

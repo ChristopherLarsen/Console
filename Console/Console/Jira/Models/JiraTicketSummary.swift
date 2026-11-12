@@ -11,8 +11,8 @@ nonisolated struct JiraTicketSummary: Identifiable, Equatable, Sendable {
     /// Host-rendered issue type ("Bug", "Feature", "Story", …); nil when the
     /// board does not expose a type column or icon.
     let issueType: String?
-    /// Host-rendered fix version ("V17.1", "24.10"); nil when the board does
-    /// not expose a fix-version column.
+    /// Host-rendered fix / release version ("17.3", "V17.1"); nil when the
+    /// board does not expose one, or the cell is empty.
     let fixVersion: String?
 
     var id: String { key }

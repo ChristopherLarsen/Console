@@ -101,6 +101,24 @@ final class JiraWebExtractionIntegrationTests: XCTestCase {
         XCTAssertFalse(tickets.contains { $0.key == "SCRUM-999" })
     }
 
+    func testReleaseColumnSuppliesVersionWhenFixVersionsIsBlank() async throws {
+        let page = try await loadFixture(JiraSyntheticFixtures.releaseVersionHTML())
+        _ = await waitForRows(page)
+
+        let extraction = await JiraListExtractor.extract(from: page)
+
+        guard case let .tickets(tickets) = extraction else {
+            return XCTFail("expected tickets, got \(extraction)")
+        }
+        let nextUp = tickets.first { $0.key == "NMA-17" }
+        let inProgress = tickets.first { $0.key == "NMA-18" }
+        let labelled = tickets.first { $0.key == "NMA-19" }
+        XCTAssertEqual(nextUp?.status, "Next Up")
+        XCTAssertEqual(nextUp?.fixVersion, "17.3", "a blank Fix versions cell must not hide Release version")
+        XCTAssertEqual(inProgress?.fixVersion, "17.3", "a real fix version stays ahead of a later release column")
+        XCTAssertEqual(labelled?.fixVersion, "17.3", "a lozenge label is the version when the cell text is empty")
+    }
+
     func testReorderedColumnsStillMapStatusPriorityAndUpdated() async throws {
         let reordered: [String] = ["", "Work", "Status", "Updated", "Priority", "Created"]
         let page = try await loadFixture(JiraSyntheticFixtures.listHTML(columns: reordered))

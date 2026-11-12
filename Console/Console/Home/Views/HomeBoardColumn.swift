@@ -247,6 +247,8 @@ struct HomeBoardTicketCard: View {
                         .font(HomeCardMetrics.identityFont)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .layoutPriority(1)
                 }
             }
 

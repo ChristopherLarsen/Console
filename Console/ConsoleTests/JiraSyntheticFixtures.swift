@@ -81,6 +81,56 @@ enum JiraSyntheticFixtures {
         }
     }
 
+    /// Next Up stories often leave Fix versions as "None" and carry the
+    /// release on a renamed "Release version" column. A date column that
+    /// also says "release" must not win, and an empty cell can still name
+    /// the version on its lozenge label.
+    static func releaseVersionHTML() -> String {
+        func head(_ label: String) -> String {
+            "<th scope=\"col\"><span>\(label)</span><button>\(label) • Sort</button></th>"
+        }
+        func row(key: String, status: String, summary: String, fix: String, release: String) -> String {
+            """
+            <tr data-testid="native-issue-table.ui.issue-row" role="row">
+              <td></td>
+              <th scope="row">
+                <a data-testid="native-issue-table.common.ui.issue-cells.issue-key.issue-key-cell" href="https://jira.example.com/browse/\(key)">\(key)</a>
+                <span data-testid="native-issue-table.common.ui.issue-cells.issue-summary.issue-summary-cell">\(summary)</span>
+              </th>
+              <td><span data-testid="issue.fields.status.common.ui.status-lozenge.3--text">\(status)</span></td>
+              <td>\(fix)</td>
+              <td>Nov 10, 2026</td>
+              <td>\(release)</td>
+            </tr>
+            """
+        }
+        return """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Work item search - Jira</title></head>
+        <body>
+          <main data-testid="issue-navigator-container">
+            <table>
+              <thead><tr>
+                <th scope="col"></th>
+                \(head("Work"))
+                \(head("Status"))
+                \(head("Fix versions"))
+                \(head("Release date"))
+                \(head("Release version"))
+              </tr></thead>
+              <tbody>
+                \(row(key: "NMA-17", status: "Next Up", summary: "Parked story", fix: "None", release: "17.3"))
+                \(row(key: "NMA-18", status: "In Progress", summary: "Active story", fix: "17.3", release: "17.4"))
+                \(row(key: "NMA-19", status: "Next Up", summary: "Labelled story", fix: "<span aria-label=\"17.3\"></span>", release: "None"))
+              </tbody>
+            </table>
+          </main>
+        </body>
+        </html>
+        """
+    }
+
     static func listHTML(columns: [String] = standardColumns, duplicateKeyAnchor: Bool = false) -> String {
         let headCells = columns.map(headerCell).joined()
         let bodyRows = fixtures.map { fixture -> String in

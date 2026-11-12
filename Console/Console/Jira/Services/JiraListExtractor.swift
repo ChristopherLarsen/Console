@@ -177,12 +177,22 @@ extension JiraListExtractor {
       }
       return JSON.stringify({ kind: 'unsupported' });
     }
+    function hasWord(text, word) {
+      return (' ' + text + ' ').indexOf(' ' + word + ' ') >= 0;
+    }
+    // "Release version" is the same host field as fix version on boards that
+    // renamed the column. "Release date" is a different column and must not
+    // be read as the version.
+    function isReleaseHeader(text) {
+      if (text.indexOf('date') >= 0 || text.indexOf('note') >= 0) { return false; }
+      return hasWord(text, 'release') || hasWord(text, 'releases');
+    }
     function semanticFor(headerText) {
       const t = headerText.toLowerCase();
       if (t.indexOf('priority') >= 0) { return 'priority'; }
       if (t.indexOf('status') >= 0) { return 'status'; }
       if (t.indexOf('updated') >= 0) { return 'updated'; }
-      if (t.indexOf('fix') >= 0) { return 'fixVersion'; }
+      if (t.indexOf('fix') >= 0 || isReleaseHeader(t)) { return 'fixVersion'; }
       if (t.indexOf('type') >= 0) { return 'type'; }
       return null;
     }
@@ -196,6 +206,27 @@ extension JiraListExtractor {
           if (semantic) { columnByIndex[i] = semantic; }
         }
       }
+    }
+    function blankVersion(value) {
+      if (!value) { return true; }
+      const t = value.toLowerCase();
+      return t === 'none' || t === 'n/a' || t === '-';
+    }
+    function versionText(cell) {
+      if (!cell) { return null; }
+      const direct = norm(cell.textContent);
+      if (!blankVersion(direct)) { return direct; }
+      // A blank or "None" read view still carries the version on the lozenge
+      // label. Skip edit/sort affordances ("Edit Fix versions").
+      const nodes = cell.querySelectorAll('[aria-label], [title]');
+      for (const node of nodes) {
+        const label = norm(node.getAttribute('aria-label') || node.getAttribute('title'));
+        if (blankVersion(label)) { continue; }
+        const lower = label.toLowerCase();
+        if (lower.indexOf('edit ') === 0 || lower.indexOf('sort') >= 0) { continue; }
+        return label;
+      }
+      return null;
     }
     function cellValue(cell, semantic) {
       if (!cell) { return null; }
@@ -211,6 +242,7 @@ extension JiraListExtractor {
         const img = cell.querySelector('img[alt]');
         if (img) { return norm(img.getAttribute('alt')); }
       }
+      if (semantic === 'fixVersion') { return versionText(cell); }
       const direct = norm(cell.textContent);
       return direct.length > 0 ? direct : null;
     }
