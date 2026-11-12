@@ -111,9 +111,12 @@ final class SessionsPackagingTests: XCTestCase {
                 "mcp__plugin_console-bridge_console__create_console_session",
                 "mcp__plugin_console-bridge_console__close_console_session",
                 "mcp__plugin_console-bridge_console__prompt_console_session",
+                "mcp__plugin_console-bridge_console__read_console_session_output",
+                "mcp__plugin_console-bridge_console__cancel_console_directive",
+                "mcp__plugin_console-bridge_console__get_home_board",
             ]
         )
-        XCTAssertEqual(ConsoleClaudePluginAssembler.allowedToolNames.count, 7)
+        XCTAssertEqual(ConsoleClaudePluginAssembler.allowedToolNames.count, 10)
         XCTAssertFalse(
             ConsoleClaudePluginAssembler.allowedToolNames.contains(where: { $0.contains("*") }),
             "no wildcards"
@@ -139,6 +142,9 @@ final class SessionsPackagingTests: XCTestCase {
             "mcp__plugin_console-bridge_console__create_console_session",
             "mcp__plugin_console-bridge_console__close_console_session",
             "mcp__plugin_console-bridge_console__prompt_console_session",
+            "mcp__plugin_console-bridge_console__read_console_session_output",
+            "mcp__plugin_console-bridge_console__cancel_console_directive",
+            "mcp__plugin_console-bridge_console__get_home_board",
         ]) { $0 == $1 })
         XCTAssertFalse(args.contains("--name"))
         XCTAssertFalse(args.contains("My Task"))

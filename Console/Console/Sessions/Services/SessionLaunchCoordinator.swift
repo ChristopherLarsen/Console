@@ -79,6 +79,21 @@ final class SessionLaunchCoordinator {
         self.store = store
         self.workspaceStore = workspaceStore
         self.historyRoot = historyRoot
+        if store.homeBoardBriefProvider == nil {
+            store.homeBoardBriefProvider = { [weak store] in
+                Self.currentScanBrief(sessions: store?.sessions ?? [])
+            }
+        }
+    }
+
+    /// The scan brief from live sessions and the current Home data, without
+    /// a network fetch.
+    static func currentScanBrief(sessions: [ConsoleSession]) -> String {
+        let home = HomeBoardModel.gatherSnapshot(
+            jiraController: JiraWebSession.shared.panelController,
+            reviewsController: MRReviewScanController.shared
+        )
+        return OrchestratorScanBrief.build(sessions: sessions, homeSnapshot: home)
     }
 
     // MARK: - Orchestrator
@@ -137,20 +152,20 @@ final class SessionLaunchCoordinator {
                     offersSettingsRoute: false
                 )
             }
-            switch orchestratorRunState {
-            case .running, .awaitingUser:
-                return
-            case .idle:
-                break
-            }
+            // A proposal awaiting the user may be rescanned; a run in flight
+            // is only focused.
+            guard orchestratorRunState != .running else { return }
             guard session.activity != .working else { return }
-            let home = HomeBoardModel.gatherSnapshot(
-                jiraController: JiraWebSession.shared.panelController,
-                reviewsController: MRReviewScanController.shared
-            )
-            let brief = OrchestratorScanBrief.build(sessions: store.sessions, homeSnapshot: home)
+            let brief = Self.currentScanBrief(sessions: store.sessions)
             orchestratorRunState = .running
-            store.queuePrompt(brief, for: sessionID, collapsingNewlines: false)
+            if let briefURL = store.writeOrchestratorBrief(brief) {
+                // Same guarded path as directives, so a rescan never wipes a
+                // reply the user is typing.
+                store.deliverDirective(OrchestratorScanBrief.runPrompt(briefPath: briefURL.path),
+                                       to: sessionID, relayTo: nil)
+            } else {
+                store.queuePrompt(brief, for: sessionID, collapsingNewlines: false)
+            }
         } catch {
             lastFailure = SessionLaunchFailure(error: error)
         }
@@ -164,8 +179,14 @@ final class SessionLaunchCoordinator {
             if orchestratorRunState == .running {
                 orchestratorRunState = .awaitingUser
             }
+        case .promptSubmitted:
+            // Relay notes and user replies start turns too; show them as running.
+            orchestratorRunState = .running
         case .userInputObserved:
-            orchestratorRunState = .idle
+            // Typing mid-turn must not hide a run in flight.
+            if orchestratorRunState == .awaitingUser {
+                orchestratorRunState = .idle
+            }
         case .sessionEnded, .processTerminated:
             orchestratorRunState = .idle
         default:

@@ -19,6 +19,8 @@ nonisolated enum BridgeProtocol {
         case createSession = "create_session"
         case closeSession = "close_session"
         case promptSession = "prompt_session"
+        case cancelDirective = "cancel_directive"
+        case homeBoard = "home_board"
     }
 
     static let maxPromptLength = 1500
@@ -251,6 +253,21 @@ extension BridgeEnvelope {
             }
             try validateIdentifier(target, field: "targetSessionID")
             envelope.targetSessionID = target
+            if let requestID = raw.requestID {
+                try validateIdentifier(requestID, field: "requestID")
+                envelope.requestID = requestID
+            }
+        case .cancelDirective:
+            guard let target = raw.targetSessionID else {
+                throw BridgeEnvelopeError.missingField("targetSessionID")
+            }
+            try validateIdentifier(target, field: "targetSessionID")
+            envelope.targetSessionID = target
+            if let requestID = raw.requestID {
+                try validateIdentifier(requestID, field: "requestID")
+                envelope.requestID = requestID
+            }
+        case .homeBoard:
             if let requestID = raw.requestID {
                 try validateIdentifier(requestID, field: "requestID")
                 envelope.requestID = requestID

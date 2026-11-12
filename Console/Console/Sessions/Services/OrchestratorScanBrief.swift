@@ -4,6 +4,12 @@ import Foundation
 enum OrchestratorScanBrief {
     static let maxCharacters = 6_000
 
+    /// One typed line that starts a run from a brief written to disk.
+    static func runPrompt(briefPath: String) -> String {
+        "Run the orchestrator-run skill: read the Console scan brief at \(briefPath), "
+            + "propose 1-3 ranked next steps, and wait for my approval."
+    }
+
     /// Assembles a brief from live sessions and an optional Home board snapshot.
     static func build(
         sessions: [ConsoleSession],
@@ -62,6 +68,9 @@ enum OrchestratorScanBrief {
         ]
         if let summary = session.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
             parts.append("summary=\(String(summary.prefix(120)))")
+        }
+        if let ask = session.attentionMessage {
+            parts.append("needs_user=\(String(ask.prefix(160)))")
         }
         let artifacts = session.artifacts.prefix(3).map { artifact in
             if let url = artifact.url {

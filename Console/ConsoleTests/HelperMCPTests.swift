@@ -225,6 +225,9 @@ final class HelperMCPTests: XCTestCase {
             "create_console_session",
             "close_console_session",
             "prompt_console_session",
+            "read_console_session_output",
+            "cancel_console_directive",
+            "get_home_board",
         ])
 
         for tool in tools {

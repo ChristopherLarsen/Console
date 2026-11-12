@@ -58,6 +58,9 @@ struct ConsoleSession: Identifiable, Equatable {
     var activity: SessionActivity
     var attention: SessionAttention
     var summary: String?
+    /// What a permission/question/blocked prompt is asking; nil when the
+    /// session needs nothing from the user.
+    var attentionMessage: String?
     var artifacts: [SessionArtifact]
     var bridgeStatus: BridgeStatus
     /// Why the session exists; nil for sessions created before intents.

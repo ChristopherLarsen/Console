@@ -329,29 +329,47 @@ struct SessionsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// The Orchestrator row stays pinned above the scrolling list, so it is
+    /// always first and always visible.
     private var sessionList: some View {
-        ScrollView {
-            LazyVStack(spacing: 2) {
-                ForEach(store.sessions) { session in
-                    SessionListRow(
-                        session: session,
-                        isSelected: session.id == store.selectedSessionID,
-                        onSelect: { store.select(sessionID: session.id) },
-                        onTerminate: { requestTerminate(session) },
-                        onCompact: { store.compactSession(id: session.id) },
-                        onRemove: { store.removeSession(id: session.id) },
-                        onRename: {
-                            renameText = session.name
-                            pendingRenameID = session.id
-                        },
-                        onAttachGitLab: { attachGitLab(session) },
-                        onAttachJira: { attachJira(session) }
-                    )
-                }
+        let orchestrator = store.sessions.first { $0.purpose == .orchestrator }
+        let others = store.sessions.filter { $0.id != orchestrator?.id }
+        return VStack(spacing: 0) {
+            if let orchestrator {
+                sessionRow(orchestrator)
+                    .padding(.horizontal, 6)
+                    .padding(.top, 4)
+                    .padding(.bottom, 2)
+                    .accessibilityIdentifier("Sessions.PinnedOrchestrator")
+                Divider()
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(others) { session in
+                        sessionRow(session)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+            }
         }
+    }
+
+    private func sessionRow(_ session: ConsoleSession) -> some View {
+        SessionListRow(
+            session: session,
+            isSelected: session.id == store.selectedSessionID,
+            onSelect: { store.select(sessionID: session.id) },
+            onTerminate: { requestTerminate(session) },
+            onCompact: { store.compactSession(id: session.id) },
+            onRemove: { store.removeSession(id: session.id) },
+            onRename: {
+                renameText = session.name
+                pendingRenameID = session.id
+            },
+            onAttachGitLab: { attachGitLab(session) },
+            onAttachJira: { attachJira(session) }
+        )
     }
 
     @ViewBuilder

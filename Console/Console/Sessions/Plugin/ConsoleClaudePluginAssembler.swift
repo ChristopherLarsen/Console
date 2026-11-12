@@ -34,6 +34,9 @@ struct ConsoleClaudePluginAssembler: ConsoleClaudePluginAssembling {
             "\(prefix)create_console_session",
             "\(prefix)close_console_session",
             "\(prefix)prompt_console_session",
+            "\(prefix)read_console_session_output",
+            "\(prefix)cancel_console_directive",
+            "\(prefix)get_home_board",
         ]
     }
 

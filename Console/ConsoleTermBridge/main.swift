@@ -85,24 +85,25 @@ struct BridgeEnvelope {
 }
 
 /// Sends one envelope line to Console. All failures are silent.
-private func sendEnvelope(_ envelope: BridgeEnvelope) {
+@discardableResult
+private func sendEnvelope(_ envelope: BridgeEnvelope) -> Bool {
     guard let path = socketPath,
           let token = bridgeToken,
           let sessionID = consoleSessionID,
           !token.isEmpty,
           !sessionID.isEmpty,
           let data = envelope.encodedLine() else {
-        return
+        return false
     }
 
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-    guard fd >= 0 else { return }
+    guard fd >= 0 else { return false }
     defer { close(fd) }
 
     var addr = sockaddr_un()
     addr.sun_family = sa_family_t(AF_UNIX)
     let pathBytes = Array(path.utf8CString)
-    guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else { return }
+    guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else { return false }
     let connected: Bool = pathBytes.withUnsafeBufferPointer { bytes in
         withUnsafeMutableBytes(of: &addr.sun_path) { destination in
             let destinationPointer = destination.baseAddress!.assumingMemoryBound(to: CChar.self)
@@ -114,17 +115,21 @@ private func sendEnvelope(_ envelope: BridgeEnvelope) {
             }
         }
     }
-    guard connected else { return }
+    guard connected else { return false }
 
-    data.withUnsafeBytes { raw in
+    return data.withUnsafeBytes { raw -> Bool in
         var offset = 0
         while offset < raw.count {
             let written = write(fd, raw.baseAddress!.advanced(by: offset), raw.count - offset)
-            if written <= 0 { return }
+            if written <= 0 { return false }
             offset += written
         }
+        return true
     }
 }
+
+private let bridgeUnreachableMessage =
+    "Console bridge unreachable: the request was not sent. Console may have quit or this session is not instrumented."
 
 // MARK: - Hook Mode
 
@@ -286,6 +291,40 @@ private let consoleTools: [MCPServerTool] = [
             "additionalProperties": false,
         ]
     ),
+    MCPServerTool(
+        name: "read_console_session_output",
+        description: "Read-only: the last assistant replies of another Console session, from its Claude transcript. Use to see what a session actually did or is asking before proposing a step.",
+        schema: [
+            "type": "object",
+            "properties": [
+                "session_id": ["type": "string", "minLength": 1, "maxLength": 64],
+                "messages": ["type": "integer", "minimum": 1, "maximum": 5],
+            ],
+            "required": ["session_id"],
+            "additionalProperties": false,
+        ]
+    ),
+    MCPServerTool(
+        name: "cancel_console_directive",
+        description: "Cancel directives you sent that are still held for a session (not yet typed). Use when the user changes direction after approving.",
+        schema: [
+            "type": "object",
+            "properties": [
+                "session_id": ["type": "string", "minLength": 1, "maxLength": 64],
+            ],
+            "required": ["session_id"],
+            "additionalProperties": false,
+        ]
+    ),
+    MCPServerTool(
+        name: "get_home_board",
+        description: "Read-only: a fresh Console scan brief (sessions plus Home board Next up, In progress, Review queue) from Console's current data.",
+        schema: [
+            "type": "object",
+            "properties": [:],
+            "additionalProperties": false,
+        ]
+    ),
 ]
 
 private func runMCPMode() {
@@ -390,6 +429,12 @@ private func handleToolsCall(request: [String: Any], stdout: FileHandle) {
         outcome = handleCloseConsoleSession(args)
     case "prompt_console_session":
         outcome = handlePromptConsoleSession(args)
+    case "read_console_session_output":
+        outcome = handleReadConsoleSessionOutput(args)
+    case "cancel_console_directive":
+        outcome = handleCancelConsoleDirective(args)
+    case "get_home_board":
+        outcome = handleGetHomeBoard()
     default:
         outcome = .failure(ToolFailure(message: "Unknown tool: \(toolName)"))
     }
@@ -557,8 +602,8 @@ private var mcpResultsDirectory: String? { environmentValue("CONSOLE_MCP_RESULTS
 
 /// Close/prompt only write a result file; create also materializes a plugin and
 /// launches Claude on the main queue, so it needs a longer bound.
-private let mcpResultTimeoutSeconds: TimeInterval = 2.0
-private let mcpCreateResultTimeoutSeconds: TimeInterval = 8.0
+private let mcpResultTimeoutSeconds: TimeInterval = 5.0
+private let mcpCreateResultTimeoutSeconds: TimeInterval = 20.0
 
 private func waitForMCPResult(
     requestID: String,
@@ -578,7 +623,8 @@ private func waitForMCPResult(
         }
         Thread.sleep(forTimeInterval: 0.05)
     }
-    return #"{"ok":false,"error":"timeout waiting for Console"}"#
+    // The envelope was delivered, so Console may still have applied it.
+    return #"{"ok":null,"status":"unconfirmed","error":"Console did not confirm in time. The request may still have been applied: call list_console_sessions to check before retrying."}"#
 }
 
 private func handleListConsoleSessions() -> Result<String, ToolFailure> {
@@ -638,14 +684,14 @@ private func handleCreateConsoleSession(_ args: [String: Any]) -> Result<String,
         agent = trimmed
     }
     let requestID = UUID().uuidString
-    sendEnvelope(BridgeEnvelope(
+    guard sendEnvelope(BridgeEnvelope(
         kind: "create_session",
         createPurpose: purpose,
         createName: name,
         createInitialPrompt: initialPrompt,
         createAgent: agent,
         requestID: requestID
-    ))
+    )) else { return .failure(ToolFailure(message: bridgeUnreachableMessage)) }
     return .success(waitForMCPResult(requestID: requestID, timeout: mcpCreateResultTimeoutSeconds))
 }
 
@@ -664,11 +710,11 @@ private func handleCloseConsoleSession(_ args: [String: Any]) -> Result<String, 
         return .failure(ToolFailure(message: "refused: cannot close the orchestrator session"))
     }
     let requestID = UUID().uuidString
-    sendEnvelope(BridgeEnvelope(
+    guard sendEnvelope(BridgeEnvelope(
         kind: "close_session",
         targetSessionID: sessionID,
         requestID: requestID
-    ))
+    )) else { return .failure(ToolFailure(message: bridgeUnreachableMessage)) }
     return .success(waitForMCPResult(requestID: requestID))
 }
 
@@ -697,13 +743,130 @@ private func handlePromptConsoleSession(_ args: [String: Any]) -> Result<String,
         return .failure(ToolFailure(message: "prompt must be at most 1500 characters"))
     }
     let requestID = UUID().uuidString
-    sendEnvelope(BridgeEnvelope(
+    guard sendEnvelope(BridgeEnvelope(
         kind: "prompt_session",
         targetSessionID: sessionID,
         promptText: prompt,
         requestID: requestID
-    ))
+    )) else { return .failure(ToolFailure(message: bridgeUnreachableMessage)) }
     return .success(waitForMCPResult(requestID: requestID))
+}
+
+private func validatedSessionIDArgument(_ args: [String: Any]) -> Result<String, ToolFailure> {
+    guard let rawID = args["session_id"] as? String else {
+        return .failure(ToolFailure(message: "session_id is required"))
+    }
+    let sessionID = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !sessionID.isEmpty, sessionID.count <= 64 else {
+        return .failure(ToolFailure(message: "session_id must be 1-64 characters"))
+    }
+    return .success(sessionID)
+}
+
+private func handleCancelConsoleDirective(_ args: [String: Any]) -> Result<String, ToolFailure> {
+    let sessionID: String
+    switch validatedSessionIDArgument(args) {
+    case .success(let id): sessionID = id
+    case .failure(let failure): return .failure(failure)
+    }
+    let requestID = UUID().uuidString
+    guard sendEnvelope(BridgeEnvelope(
+        kind: "cancel_directive",
+        targetSessionID: sessionID,
+        requestID: requestID
+    )) else { return .failure(ToolFailure(message: bridgeUnreachableMessage)) }
+    return .success(waitForMCPResult(requestID: requestID))
+}
+
+private func handleGetHomeBoard() -> Result<String, ToolFailure> {
+    let requestID = UUID().uuidString
+    guard sendEnvelope(BridgeEnvelope(kind: "home_board", requestID: requestID)) else {
+        return .failure(ToolFailure(message: bridgeUnreachableMessage))
+    }
+    let result = waitForMCPResult(requestID: requestID)
+    // Return the brief as plain text when Console supplied it.
+    if let data = result.data(using: .utf8),
+       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       let output = object["output"] as? String {
+        return .success(output)
+    }
+    return .success(result)
+}
+
+/// Reads the target's transcript directly: the sessions snapshot gives its
+/// Claude session id, and transcripts live under ~/.claude/projects.
+private func handleReadConsoleSessionOutput(_ args: [String: Any]) -> Result<String, ToolFailure> {
+    let sessionID: String
+    switch validatedSessionIDArgument(args) {
+    case .success(let id): sessionID = id
+    case .failure(let failure): return .failure(failure)
+    }
+    let count = min(max((args["messages"] as? Int) ?? 1, 1), 5)
+    guard let path = sessionsSnapshotPath, !path.isEmpty,
+          let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+          let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+        return .failure(ToolFailure(message: "sessions snapshot unavailable"))
+    }
+    guard let row = rows.first(where: {
+        ($0["id"] as? String)?.caseInsensitiveCompare(sessionID) == .orderedSame
+    }) else {
+        return .failure(ToolFailure(message: "session not found"))
+    }
+    guard let claudeID = row["claude_session_id"] as? String,
+          let transcript = findTranscript(claudeSessionID: claudeID) else {
+        return .success("(no transcript yet for this session)")
+    }
+    let replies = lastAssistantReplies(inTranscriptAt: transcript, count: count)
+    guard !replies.isEmpty else { return .success("(no assistant replies yet)") }
+    return .success(replies.map { String($0.prefix(4000)) }.joined(separator: "\n\n---\n\n"))
+}
+
+private func findTranscript(claudeSessionID: String) -> URL? {
+    let root = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".claude/projects", isDirectory: true)
+    guard let projects = try? FileManager.default.contentsOfDirectory(
+        at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+    ) else { return nil }
+    for project in projects {
+        for name in [claudeSessionID, claudeSessionID.lowercased(), claudeSessionID.uppercased()] {
+            let candidate = project.appendingPathComponent("\(name).jsonl")
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+        }
+    }
+    return nil
+}
+
+/// Same parsing as Console's `TranscriptTail`: last assistant text replies,
+/// reading only the file's final 512 KB.
+private func lastAssistantReplies(inTranscriptAt url: URL, count: Int) -> [String] {
+    guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
+    defer { try? handle.close() }
+    let tailBytes: UInt64 = 512 * 1024
+    let size = (try? handle.seekToEnd()) ?? 0
+    let start = size > tailBytes ? size - tailBytes : 0
+    try? handle.seek(toOffset: start)
+    guard let data = try? handle.readToEnd() else { return [] }
+    var text = String(decoding: data, as: UTF8.self)
+    if start > 0, let newline = text.firstIndex(of: "\n") {
+        text = String(text[text.index(after: newline)...])
+    }
+    var replies: [String] = []
+    for line in text.split(separator: "\n").reversed() {
+        guard let lineData = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+              object["type"] as? String == "assistant",
+              let message = object["message"] as? [String: Any],
+              let blocks = message["content"] as? [[String: Any]] else { continue }
+        let reply = blocks
+            .filter { $0["type"] as? String == "text" }
+            .compactMap { $0["text"] as? String }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reply.isEmpty else { continue }
+        replies.append(reply)
+        if replies.count == count { break }
+    }
+    return replies.reversed()
 }
 
 // MARK: - Stdio helpers

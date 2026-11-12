@@ -942,6 +942,7 @@ final class SessionStore {
         sessions.removeAll(where: { $0.id == id })
         sessionTokens.removeValue(forKey: id)
         pendingSlashCommands.removeValue(forKey: id)
+        dropDirectives(for: id, reason: "was closed before finishing")
         router.forget(sessionID: id)
         closeOnExitIDs.remove(id)
         startingRestorations.removeValue(forKey: id)
@@ -955,6 +956,7 @@ final class SessionStore {
     func handleProcessTerminated(sessionID: UUID, startExitShell: Bool = true) {
         stopTargets.removeValue(forKey: sessionID)
         pendingSlashCommands.removeValue(forKey: sessionID)
+        dropDirectives(for: sessionID, reason: "ended before finishing")
         if !isTerminating, let record = startingRestorations.removeValue(forKey: sessionID) {
             if !pendingRestorations.contains(where: { $0.id == record.id }) {
                 pendingRestorations.append(record)
@@ -1148,7 +1150,9 @@ final class SessionStore {
     /// permission/question attention without waiting for hook round-trips.
     func noteUserInput(sessionID: UUID) {
         guard session(withID: sessionID) != nil else { return }
+        lastUserInputAt[sessionID] = Date()
         applyEvent(.userInputObserved, to: sessionID)
+        if heldDirectives[sessionID] != nil { scheduleDirectiveRecheck() }
     }
 
     fileprivate func handleValidatedEnvelope(sessionID: UUID, envelope: BridgeEnvelope) {
@@ -1190,9 +1194,16 @@ final class SessionStore {
         case .promptSession:
             handlePromptSessionRequest(from: sessionID, envelope: envelope)
             return
+        case .cancelDirective:
+            handleCancelDirectiveRequest(from: sessionID, envelope: envelope)
+            return
+        case .homeBoard:
+            handleHomeBoardRequest(from: sessionID, envelope: envelope)
+            return
         }
 
         applyEvent(event, to: sessionID)
+        handleDirectiveLifecycle(sessionID: sessionID, event: event)
         writeSessionsSnapshot()
     }
 
@@ -1262,6 +1273,45 @@ final class SessionStore {
         writeMCPResult(requestID: requestID, ok: true, sessionID: targetID)
     }
 
+    /// Console MCP cancel: drop directives still waiting for a session.
+    private func handleCancelDirectiveRequest(from requesterID: UUID, envelope: BridgeEnvelope) {
+        let requestID = envelope.requestID
+        guard session(withID: requesterID)?.purpose == .orchestrator else {
+            writeMCPResult(requestID: requestID, ok: false, error: "only the orchestrator may cancel directives")
+            return
+        }
+        guard let targetRaw = envelope.targetSessionID,
+              let targetID = UUID(uuidString: targetRaw),
+              session(withID: targetID) != nil else {
+            writeMCPResult(requestID: requestID, ok: false, error: "session not found")
+            return
+        }
+        let cancelled = cancelHeldDirectives(for: targetID, from: requesterID)
+        writeSessionsSnapshot()
+        writeMCPResult(requestID: requestID, ok: true, sessionID: targetID,
+                       status: cancelled == 0
+                           ? "nothing held: directives already typed cannot be cancelled"
+                           : "cancelled \(cancelled) held directive(s)")
+    }
+
+    /// Supplies the current Home board text; set by the launch coordinator,
+    /// which owns the Home data sources.
+    @ObservationIgnored var homeBoardBriefProvider: (@MainActor () -> String)?
+
+    /// Console MCP home board: the scan brief rebuilt from current data.
+    private func handleHomeBoardRequest(from requesterID: UUID, envelope: BridgeEnvelope) {
+        let requestID = envelope.requestID
+        guard session(withID: requesterID)?.purpose == .orchestrator else {
+            writeMCPResult(requestID: requestID, ok: false, error: "only the orchestrator may read the Home board")
+            return
+        }
+        guard let brief = homeBoardBriefProvider?() else {
+            writeMCPResult(requestID: requestID, ok: false, error: "Home board unavailable")
+            return
+        }
+        writeMCPResult(requestID: requestID, ok: true, output: brief)
+    }
+
     /// Console MCP prompt: queue a directive into another visible session.
     private func handlePromptSessionRequest(from requesterID: UUID, envelope: BridgeEnvelope) {
         let requestID = envelope.requestID
@@ -1289,8 +1339,9 @@ final class SessionStore {
             writeMCPResult(requestID: requestID, ok: false, error: "prompt is required")
             return
         }
-        queuePrompt(prompt, for: targetID)
-        writeMCPResult(requestID: requestID, ok: true, sessionID: targetID)
+        let delivery = deliverDirective(prompt, to: targetID, relayTo: requesterID)
+        writeSessionsSnapshot()
+        writeMCPResult(requestID: requestID, ok: true, sessionID: targetID, status: delivery.resultStatus)
     }
 
     /// Returns true when this envelope is the session's first validated one.
@@ -1299,6 +1350,213 @@ final class SessionStore {
               sessions[index].bridgeStatus != .active else { return false }
         sessions[index].bridgeStatus = .active
         return true
+    }
+
+    // MARK: - Orchestrator directives
+
+    /// Directives (and relay notes) held until the target can take input
+    /// without answering a permission/question dialog, interrupting a turn,
+    /// or wiping a draft the user is typing.
+    private var heldDirectives: [UUID: [HeldDirective]] = [:]
+    /// Text being typed into a target right now; blocks a double send while
+    /// the spaced clear/text/Return writes are in flight.
+    private var directivesInFlight: [UUID: String] = [:]
+    /// Target → orchestrator waiting to hear that target's outcome.
+    private var directiveOrigins: [UUID: UUID] = [:]
+    /// Targets whose directive was typed but whose Claude has not yet
+    /// reported the prompt as submitted.
+    private var awaitingAcceptance: [UUID: Date] = [:]
+    /// Last keystroke the user typed into each terminal.
+    private var lastUserInputAt: [UUID: Date] = [:]
+    private var directiveRecheckScheduled = false
+
+    /// Typing within this window (longer while the terminal has focus) means
+    /// the user may have a draft that a delivery would erase.
+    static let typingQuietSeconds: TimeInterval = 5
+    static let focusedTypingQuietSeconds: TimeInterval = 15
+    /// A typed directive Claude never reports as submitted is abandoned.
+    static let acceptanceTimeoutSeconds: TimeInterval = 20
+    static let directiveRecheckSeconds: TimeInterval = 2
+    /// Lets a completion report that trails the turn-end event land first.
+    static let relaySettleSeconds: TimeInterval = 1
+
+    enum DirectiveDelivery: Equatable {
+        case sent, held, duplicate
+
+        var resultStatus: String {
+            switch self {
+            case .sent: return "sent"
+            case .held: return "held until the target is idle"
+            case .duplicate: return "duplicate: the same directive is already pending for this session"
+            }
+        }
+    }
+
+    private struct HeldDirective {
+        let text: String
+        let relayTo: UUID?
+    }
+
+    /// True when typed input lands in Claude's prompt as a new user turn.
+    static func canTakeDirective(_ session: ConsoleSession) -> Bool {
+        session.bridgeStatus == .active
+            && session.activity == .idle
+            && (session.attention == .none || session.attention == .unreadCompletion)
+    }
+
+    /// True while the user may be composing in that terminal.
+    func userMayBeTyping(in sessionID: UUID, now: Date = Date()) -> Bool {
+        guard let last = lastUserInputAt[sessionID] else { return false }
+        let window = viewingFocusDetector(sessionID) ? Self.focusedTypingQuietSeconds : Self.typingQuietSeconds
+        return now.timeIntervalSince(last) < window
+    }
+
+    /// Number of directives waiting for, or being typed into, a session.
+    func pendingDirectiveCount(for sessionID: UUID) -> Int {
+        (heldDirectives[sessionID]?.count ?? 0) + (directivesInFlight[sessionID] == nil ? 0 : 1)
+    }
+
+    /// Queues `text` for `targetID`, sending at once when it is safe. When
+    /// `relayTo` is set, that session hears the target's outcome when its
+    /// directed turn ends. Identical pending text for the same target is
+    /// dropped so a retried tool call cannot send twice.
+    @discardableResult
+    func deliverDirective(_ text: String, to targetID: UUID, relayTo: UUID?) -> DirectiveDelivery {
+        if directivesInFlight[targetID] == text
+            || heldDirectives[targetID]?.contains(where: { $0.text == text }) == true {
+            return .duplicate
+        }
+        heldDirectives[targetID, default: []].append(HeldDirective(text: text, relayTo: relayTo))
+        if deliverHeldDirectives(for: targetID) { return .sent }
+        scheduleDirectiveRecheck()
+        return .held
+    }
+
+    @discardableResult
+    private func deliverHeldDirectives(for targetID: UUID) -> Bool {
+        guard directivesInFlight[targetID] == nil,
+              awaitingAcceptance[targetID] == nil,
+              let session = session(withID: targetID),
+              Self.canTakeDirective(session),
+              !userMayBeTyping(in: targetID),
+              var held = heldDirectives[targetID], !held.isEmpty else { return false }
+        let next = held.removeFirst()
+        heldDirectives[targetID] = held.isEmpty ? nil : held
+        if let origin = next.relayTo {
+            directiveOrigins[targetID] = origin
+        }
+        directivesInFlight[targetID] = next.text
+        let expectsRelay = next.relayTo != nil
+        queuePrompt(next.text, for: targetID) { [weak self] in
+            guard let self else { return }
+            self.directivesInFlight.removeValue(forKey: targetID)
+            if expectsRelay {
+                self.awaitingAcceptance[targetID] = Date()
+                self.scheduleDirectiveRecheck()
+            }
+            self.writeSessionsSnapshot()
+        }
+        return true
+    }
+
+    /// Re-checks held directives and acceptance deadlines on a short timer,
+    /// so deliveries also resume after state changes that send no bridge
+    /// event (a dismissed card, a pause in typing).
+    private func scheduleDirectiveRecheck() {
+        guard !directiveRecheckScheduled else { return }
+        directiveRecheckScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.directiveRecheckSeconds) { [weak self] in
+            guard let self else { return }
+            self.directiveRecheckScheduled = false
+            self.recheckDirectives()
+        }
+    }
+
+    func recheckDirectives(now: Date = Date()) {
+        for (targetID, typedAt) in awaitingAcceptance
+        where now.timeIntervalSince(typedAt) >= Self.acceptanceTimeoutSeconds {
+            awaitingAcceptance.removeValue(forKey: targetID)
+            if let origin = directiveOrigins.removeValue(forKey: targetID),
+               let target = session(withID: targetID) {
+                relay(Self.relayNote(target: target, outcome: "did not accept"), to: origin)
+            }
+        }
+        for targetID in Array(heldDirectives.keys) {
+            deliverHeldDirectives(for: targetID)
+        }
+        if !heldDirectives.isEmpty || !awaitingAcceptance.isEmpty {
+            scheduleDirectiveRecheck()
+        }
+    }
+
+    /// Bridge-reported lifecycle: acceptance, outcome relay, then delivery.
+    private func handleDirectiveLifecycle(sessionID: UUID, event: SessionLifecycleEvent) {
+        switch event {
+        case .promptSubmitted:
+            awaitingAcceptance.removeValue(forKey: sessionID)
+        case .turnCompleted, .turnFailed:
+            awaitingAcceptance.removeValue(forKey: sessionID)
+            if let origin = directiveOrigins.removeValue(forKey: sessionID) {
+                let outcome: String
+                if case .turnFailed = event { outcome = "failed" } else { outcome = "finished" }
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.relaySettleSeconds) { [weak self] in
+                    guard let self, let target = self.session(withID: sessionID) else { return }
+                    let reply = TranscriptTail.lastAssistantMessages(
+                        claudeSessionID: target.claudeSessionID, count: 1
+                    ).last
+                    self.relay(Self.relayNote(target: target, outcome: outcome, lastReply: reply), to: origin)
+                }
+            }
+        default:
+            break
+        }
+        deliverHeldDirectives(for: sessionID)
+    }
+
+    /// Removes held directives for `targetID` that `requesterID` sent.
+    /// Relay notes held for the orchestrator itself are not touched.
+    @discardableResult
+    func cancelHeldDirectives(for targetID: UUID, from requesterID: UUID) -> Int {
+        guard let held = heldDirectives[targetID] else { return 0 }
+        let kept = held.filter { $0.relayTo != requesterID }
+        heldDirectives[targetID] = kept.isEmpty ? nil : kept
+        return held.count - kept.count
+    }
+
+    private func dropDirectives(for sessionID: UUID, reason: String) {
+        heldDirectives.removeValue(forKey: sessionID)
+        directivesInFlight.removeValue(forKey: sessionID)
+        awaitingAcceptance.removeValue(forKey: sessionID)
+        lastUserInputAt.removeValue(forKey: sessionID)
+        directiveOrigins = directiveOrigins.filter { $0.value != sessionID }
+        guard let origin = directiveOrigins.removeValue(forKey: sessionID),
+              let target = session(withID: sessionID) else { return }
+        relay(Self.relayNote(target: target, outcome: reason), to: origin)
+    }
+
+    private func relay(_ note: String, to orchestratorID: UUID) {
+        guard let orchestrator = session(withID: orchestratorID),
+              orchestrator.activity != .exited else { return }
+        deliverDirective(note, to: orchestratorID, relayTo: nil)
+    }
+
+    static func relayNote(target: ConsoleSession, outcome: String, lastReply: String? = nil) -> String {
+        func oneLine(_ text: String, limit: Int) -> String {
+            String(text.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(limit))
+        }
+        var note = "Console relay: session \"\(target.name)\" (id=\(target.id.uuidString)) \(outcome) your directive."
+        if let reply = lastReply?.trimmingCharacters(in: .whitespacesAndNewlines), !reply.isEmpty {
+            note += " Last reply: \(oneLine(reply, limit: 600))"
+        } else if let summary = target.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
+            note += " Summary: \(oneLine(summary, limit: 400))"
+        }
+        if target.attention != .none && target.attention != .unreadCompletion {
+            note += " It now needs the user: \(target.attention.rawValue)"
+            if let ask = target.attentionMessage { note += " (\(oneLine(ask, limit: 200)))" }
+            note += "."
+        }
+        note += " Update your plan; propose the next step and wait for approval."
+        return note
     }
 
     // MARK: - Queued slash commands
@@ -1451,6 +1709,12 @@ final class SessionStore {
         sessions[index].activity = state.activity
         sessions[index].attention = state.attention
         sessions[index].summary = state.summary
+        if case .attentionReported(_, let message) = event {
+            let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
+            sessions[index].attentionMessage = (trimmed?.isEmpty == false) ? trimmed : nil
+        } else if state.attention == .none || state.attention == .unreadCompletion {
+            sessions[index].attentionMessage = nil
+        }
         if let path = state.workingDirectoryPath {
             sessions[index].workingDirectory = URL(fileURLWithPath: path)
         }
@@ -1750,6 +2014,10 @@ final class SessionStore {
             if let purpose = session.purpose {
                 row["purpose"] = purpose.rawValue
             }
+            row["claude_session_id"] = session.claudeSessionID.uuidString
+            if let ask = session.attentionMessage {
+                row["attention_message"] = String(ask.prefix(Self.snapshotSummaryLimit))
+            }
             if let summary = session.summary?.trimmingCharacters(in: .whitespacesAndNewlines),
                !summary.isEmpty {
                 row["summary"] = String(summary.prefix(Self.snapshotSummaryLimit))
@@ -1765,6 +2033,9 @@ final class SessionStore {
                 return entry
             }
             row["artifacts"] = artifacts
+            let pending = pendingDirectiveCount(for: session.id)
+            if pending > 0 { row["pending_directives"] = pending }
+            if directiveOrigins[session.id] != nil { row["awaiting_directive_outcome"] = true }
             return row
         }
         guard JSONSerialization.isValidJSONObject(payload),
@@ -1772,6 +2043,21 @@ final class SessionStore {
             return
         }
         try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    /// Writes the orchestrator scan brief beside the bridge socket so the run
+    /// prompt can be one typed line that points at it. A multi-line prompt
+    /// reaches Claude as pasted content, which it treats as untrusted data.
+    func writeOrchestratorBrief(_ brief: String) -> URL? {
+        guard let socketPath else { return nil }
+        let directory = (socketPath as NSString).deletingLastPathComponent
+        let url = URL(fileURLWithPath: directory).appendingPathComponent("orchestrator-brief.md")
+        do {
+            try brief.write(to: url, atomically: true, encoding: .utf8)
+            return url
+        } catch {
+            return nil
+        }
     }
 
     /// Directory for MCP tool result files (`mcp-results/<request_id>.json`).
@@ -1783,9 +2069,12 @@ final class SessionStore {
         return url
     }
 
-    private func writeMCPResult(requestID: String?, ok: Bool, sessionID: UUID? = nil, error: String? = nil) {
+    private func writeMCPResult(requestID: String?, ok: Bool, sessionID: UUID? = nil, error: String? = nil,
+                                status: String? = nil, output: String? = nil) {
         guard let requestID, !requestID.isEmpty, let dir = mcpResultsDirectoryURL() else { return }
         var payload: [String: Any] = ["ok": ok]
+        if let output { payload["output"] = output }
+        if let status { payload["status"] = status }
         if let sessionID { payload["session_id"] = sessionID.uuidString }
         if let error { payload["error"] = error }
         guard JSONSerialization.isValidJSONObject(payload),

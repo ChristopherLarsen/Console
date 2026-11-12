@@ -100,6 +100,19 @@ struct SessionListRow: View {
     /// The card surface shared by the select button and the selected card's
     /// options menu. Highlight shows the selection; tapping an already
     /// selected card opens `contextMenuItems` via the wrapping Menu.
+    private static let verticalPadding: CGFloat = 6
+    /// The Orchestrator card is 20% taller than a regular card with the
+    /// same content; the extra height is split above and below.
+    static let orchestratorHeightScale: CGFloat = 1.2
+
+    @State private var contentHeight: CGFloat = 0
+
+    private var orchestratorExtraPadding: CGFloat {
+        guard liveSession.purpose == .orchestrator else { return 0 }
+        let natural = contentHeight + Self.verticalPadding * 2
+        return natural * (Self.orchestratorHeightScale - 1) / 2
+    }
+
     private var rowContent: some View {
         HStack(spacing: 8) {
             stateDot
@@ -140,8 +153,9 @@ struct SessionListRow: View {
 
             Spacer(minLength: 0)
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.vertical, Self.verticalPadding + orchestratorExtraPadding)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
