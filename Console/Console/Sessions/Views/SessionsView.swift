@@ -106,23 +106,35 @@ struct SessionsView: View {
                 Text("The graceful termination timed out. Force Stop kills the process immediately; the session then closes.")
             }
         )
-        .alert("Rename Session", isPresented: Binding(
+        .sheet(isPresented: Binding(
             get: { pendingRenameID != nil },
             set: { if !$0 { pendingRenameID = nil } }
         )) {
-            TextField("Session name", text: $renameText)
-                .background(TextFieldAutofocus(selectAll: true))
-                .accessibilityIdentifier("Sessions.RenameField")
-            Button("Rename") {
-                if let id = pendingRenameID {
-                    store.renameSession(id: id, name: renameText)
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Rename Session")
+                    .font(.headline)
+                TextField("Session name", text: $renameText)
+                    .textFieldStyle(.roundedBorder)
+                    .background(TextFieldAutofocus(selectAll: true))
+                    .accessibilityIdentifier("Sessions.RenameField")
+                HStack {
+                    Spacer()
+                    Button("Cancel", role: .cancel) {
+                        pendingRenameID = nil
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    Button("Rename") {
+                        if let id = pendingRenameID {
+                            store.renameSession(id: id, name: renameText)
+                        }
+                        pendingRenameID = nil
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                pendingRenameID = nil
             }
-            .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button("Cancel", role: .cancel) {
-                pendingRenameID = nil
-            }
+            .padding(20)
+            .frame(width: 360)
         }
         .sheet(isPresented: Binding(
             get: { connectingGitLabID != nil },

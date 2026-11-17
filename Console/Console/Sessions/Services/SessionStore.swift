@@ -337,6 +337,12 @@ final class SessionStore {
     }
 
     private func createSession(request: SessionCreationRequest, resuming record: SessionRestorationRecord?) throws -> UUID {
+        if request.purpose == .orchestrator,
+           let existing = orchestratorSession(), existing.activity != .exited,
+           record == nil || record?.id == existing.claudeSessionID {
+            if request.revealsSession { select(sessionID: existing.id) }
+            return existing.id
+        }
         if request.purpose == .blank {
             return try createBlankSession(request: request, resuming: record)
         }
@@ -348,7 +354,9 @@ final class SessionStore {
 
         let consoleID = UUID()
         let claudeID = record?.claudeSessionID ?? UUID()
-        let displayName = Self.uniquedName(request.name.trimmingCharacters(in: .whitespacesAndNewlines), existingNames: activeNames)
+        let displayName = request.purpose == .orchestrator
+            ? SessionPurpose.orchestrator.defaultName(source: nil)
+            : Self.uniquedName(request.name.trimmingCharacters(in: .whitespacesAndNewlines), existingNames: activeNames)
 
         let terminalView = launcher.makeTerminalView()
 
@@ -446,7 +454,15 @@ final class SessionStore {
             sessionTokens.removeValue(forKey: consoleID)
             startingRestorations.removeValue(forKey: consoleID)
             selectedSessionID = previousSelection
+            writeSessionsSnapshot()
             throw error
+        }
+        // Commit the replacement only after launch succeeds. Closing also stops
+        // the previous process and removes its bridge and queued directives.
+        if request.purpose == .orchestrator {
+            for previous in sessions.filter({ $0.purpose == .orchestrator && $0.id != consoleID }) {
+                closeSession(id: previous.id)
+            }
         }
         if let record { pendingRestorations.removeAll { $0.id == record.id } }
         rememberAssociation(for: session)

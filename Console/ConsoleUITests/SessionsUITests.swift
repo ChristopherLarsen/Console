@@ -203,6 +203,32 @@ final class SessionsUITests: XCTestCase {
 
     // MARK: - Previewed rows (two concurrent sessions, switching, retention)
 
+    func testRenameImmediatelyReplacesSelectedNameAndRefocusesWhenReopened() throws {
+        app.launchArguments += ["-uiTestInMemoryStore", "-listenOnStartup", "NO"]
+        launchSessions(preview: true)
+
+        for attempt in 0..<2 {
+            let row = sessionRow(named: "Preview Alpha")
+            XCTAssertTrue(row.waitForExistence(timeout: 5))
+            row.rightClick()
+            app.menuItems["Rename"].click()
+            let field = app.textFields["Sessions.RenameField"]
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            XCTAssertEqual(field.value as? String, "Preview Alpha")
+
+            // No field click or select-all shortcut: opening the dialog must
+            // make typing replace the entire existing name.
+            app.typeText("Renamed Session")
+            XCTAssertEqual(field.value as? String, "Renamed Session")
+            if attempt == 0 {
+                app.typeKey(.escape, modifierFlags: [])
+            } else {
+                app.typeKey(.return, modifierFlags: [])
+                XCTAssertTrue(sessionRow(named: "Renamed Session").waitForExistence(timeout: 5))
+            }
+        }
+    }
+
     func testTwoConcurrentSessionsListSwitchingAndExitedRetention() throws {
         launchSessions(preview: true)
 

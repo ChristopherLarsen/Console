@@ -386,6 +386,104 @@ final class SessionStoreTests: XCTestCase {
         restored.terminateAll()
     }
 
+    func testRestoreReplacesStartupOrchestratorAndPreservesWorkersAndSelection() async throws {
+        let directory = tmpDirectory("restore-orchestrator")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let orchestrator = SessionRestorationRecord(claudeSessionID: UUID(), name: "Orchestrator 2",
+            workingDirectory: directory, purpose: .orchestrator)
+        let worker = SessionRestorationRecord(claudeSessionID: UUID(), name: "Worker",
+            workingDirectory: directory, purpose: .general)
+        try disk.save(.init(sessions: [worker, orchestrator], selectedClaudeSessionID: worker.id))
+        let (store, launcher) = makeStore(restorationStore: disk, processInspector: FakeProcessInspector())
+        defer { store.terminateAll() }
+        let startupID = try store.createSession(request: .init(purpose: .orchestrator,
+            name: "Orchestrator", workingDirectory: directory, revealsSession: false))
+
+        await store.restoreSessions()
+
+        XCTAssertNil(store.session(withID: startupID))
+        XCTAssertEqual(store.sessions.map(\.claudeSessionID), [orchestrator.id, worker.id])
+        XCTAssertEqual(store.sessions.map(\.name), ["Orchestrator", "Worker"])
+        XCTAssertEqual(store.selectedSession?.claudeSessionID, worker.id)
+        XCTAssertEqual(launcher.lastArguments?.prefix(2), ["--resume", orchestrator.id.uuidString])
+        XCTAssertEqual(try disk.load().sessions.filter { $0.purpose == .orchestrator }.map(\.id), [orchestrator.id])
+        XCTAssertEqual(try disk.load().sessions.first { $0.purpose == .orchestrator }?.name, "Orchestrator")
+        await store.restoreSessions()
+        XCTAssertEqual(launcher.launchCount, 3)
+    }
+
+    func testFailedOrchestratorRestoreKeepsExistingSessionUntilRetrySucceeds() async throws {
+        let directory = tmpDirectory("restore-orchestrator-failure")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Orchestrator",
+            workingDirectory: directory, purpose: .orchestrator)
+        try disk.save(.init(sessions: [record], selectedClaudeSessionID: record.id))
+        let (store, launcher) = makeStore(restorationStore: disk, processInspector: FakeProcessInspector())
+        defer { store.terminateAll() }
+        let startupID = try store.createSession(request: .init(purpose: .orchestrator,
+            name: "Orchestrator", workingDirectory: directory, revealsSession: false))
+        store.select(sessionID: startupID)
+        launcher.failingClaudeID = record.id
+
+        await store.restoreSessions()
+
+        XCTAssertEqual(store.sessions.map(\.id), [startupID])
+        XCTAssertEqual(store.selectedSessionID, startupID)
+        XCTAssertEqual(store.pendingRestorations.map(\.id), [record.id])
+        XCTAssertNotNil(store.restorationMessage)
+        launcher.failingClaudeID = nil
+        await store.restoreSessions()
+        XCTAssertEqual(store.sessions.map(\.claudeSessionID), [record.id])
+        XCTAssertEqual(store.selectedSession?.name, "Orchestrator")
+        XCTAssertFalse(store.canRestoreSessions)
+    }
+
+    func testHistoryResumeReplacesOrchestratorAndRepeatedCreationReusesIt() throws {
+        let directory = tmpDirectory("resume-orchestrator")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let (store, launcher) = makeStore()
+        defer { store.terminateAll() }
+        let request = SessionCreationRequest(purpose: .orchestrator, name: "Orchestrator",
+            workingDirectory: directory, revealsSession: false)
+        let startupID = try store.createSession(request: request)
+        XCTAssertEqual(try store.createSession(request: request), startupID)
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Orchestrator 3",
+            workingDirectory: directory, purpose: .orchestrator)
+
+        let resumedID = try store.resumeSession(from: record)
+
+        XCTAssertNil(store.session(withID: startupID))
+        XCTAssertEqual(store.sessions.map(\.id), [resumedID])
+        XCTAssertEqual(store.selectedSession?.claudeSessionID, record.id)
+        XCTAssertEqual(store.selectedSession?.name, "Orchestrator")
+        XCTAssertEqual(try store.resumeSession(from: record), resumedID)
+        XCTAssertEqual(try store.createSession(request: request), resumedID)
+        XCTAssertEqual(launcher.launchCount, 2)
+    }
+
+    func testRestorePreviouslyDuplicatedOrchestratorsLeavesOnlyOne() async throws {
+        let directory = tmpDirectory("duplicate-orchestrators")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let records = ["Orchestrator", "Orchestrator 2"].map {
+            SessionRestorationRecord(claudeSessionID: UUID(), name: $0,
+                workingDirectory: directory, purpose: .orchestrator)
+        }
+        try disk.save(.init(sessions: records))
+        let (store, _) = makeStore(restorationStore: disk, processInspector: FakeProcessInspector())
+        defer { store.terminateAll() }
+
+        await store.restoreSessions()
+
+        XCTAssertEqual(store.sessions.count, 1)
+        XCTAssertEqual(store.orchestratorSession()?.name, "Orchestrator")
+        XCTAssertTrue(store.pendingRestorations.isEmpty)
+        XCTAssertEqual(try disk.load().sessions.count, 1)
+        XCTAssertEqual(try disk.load().sessions.first?.name, "Orchestrator")
+    }
+
     func testExitedAndExplicitlyTerminatedSessionsAreExcluded() throws {
         let directory = tmpDirectory("eligibility")
         defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
