@@ -98,8 +98,6 @@ final class CodeHostWebSessionStore {
         if dataStore === WKWebsiteDataStore.default() {
             return WebAuthenticationStore.makePage()
         }
-        var configuration = WebPage.Configuration()
-        configuration.websiteDataStore = dataStore
-        return WebPage(configuration: configuration)
+        return WebPage(configuration: WebAuthenticationStore.makeConfiguration(dataStore: dataStore))
     }
 }

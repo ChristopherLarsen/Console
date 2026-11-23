@@ -8,6 +8,9 @@ import OSLog
 @MainActor
 final class WebAuthenticationStore: NSObject, WKHTTPCookieStoreObserver {
     static let shared = WebAuthenticationStore()
+    // The pinned Version value may drift. The Safari token enables GitLab's Safari-compatible diff loading.
+    private static let safariUserAgentApplicationName = "Version/27.2 Safari/605.1.15"
+
     let dataStore = WKWebsiteDataStore.default()
     private var restoration: Task<Void, Never>?
     private var saving = false
@@ -74,10 +77,16 @@ final class WebAuthenticationStore: NSObject, WKHTTPCookieStoreObserver {
         } while needsSave
     }
 
-    static func makePage() -> WebPage {
+    static func makeConfiguration(dataStore: WKWebsiteDataStore) -> WebPage.Configuration {
         var configuration = WebPage.Configuration()
-        configuration.websiteDataStore = shared.dataStore
-        return WebPage(configuration: configuration, navigationDecider: SessionNavigationDecider())
+        configuration.websiteDataStore = dataStore
+        configuration.applicationNameForUserAgent = safariUserAgentApplicationName
+        return configuration
+    }
+
+    static func makePage() -> WebPage {
+        WebPage(configuration: makeConfiguration(dataStore: shared.dataStore),
+                navigationDecider: SessionNavigationDecider())
     }
 
     private struct SessionNavigationDecider: WebPage.NavigationDeciding {
