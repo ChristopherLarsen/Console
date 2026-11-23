@@ -468,6 +468,52 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(try disk.load().sessions, [record])
     }
 
+    func testRestoreRetryWaitsForOpenChildSlotAndKeepsPendingRecord() async throws {
+        let directory = tmpDirectory("restore-child-limit")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let leadRecord = SessionRestorationRecord(
+            claudeSessionID: UUID(), name: "Orchestrator", workingDirectory: directory, purpose: .orchestrator
+        )
+        let children = (1...SessionStore.maxOrchestratorChildren).map { number in
+            SessionRestorationRecord(claudeSessionID: UUID(), name: "Child \(number)",
+                workingDirectory: directory, purpose: .general, parentClaudeSessionID: leadRecord.id)
+        }
+        let deferred = try XCTUnwrap(children.last)
+        try disk.save(.init(sessions: [leadRecord] + children))
+        let (store, launcher) = makeStore(restorationStore: disk, processInspector: FakeProcessInspector())
+        defer { store.terminateAll() }
+        launcher.failingClaudeID = deferred.id
+        await store.restoreSessions()
+        XCTAssertEqual(store.pendingRestorations, [deferred])
+
+        let lead = try XCTUnwrap(store.orchestratorSession())
+        store.debugReceiveEnvelope(BridgeEnvelope(
+            sessionID: lead.id.uuidString, token: try XCTUnwrap(store.debugSessionToken(lead.id)),
+            eventID: UUID().uuidString, kind: .createSession,
+            createPurpose: SessionPurpose.general.rawValue, createName: "Replacement Child"
+        ))
+        let replacement = try XCTUnwrap(store.children(of: lead).first { $0.name == "Replacement Child" })
+        XCTAssertEqual(store.children(of: lead).count, SessionStore.maxOrchestratorChildren)
+        let launchesAtCapacity = launcher.launchCount
+        launcher.failingClaudeID = nil
+
+        await store.restoreSessions()
+
+        XCTAssertEqual(launcher.launchCount, launchesAtCapacity)
+        XCTAssertEqual(store.pendingRestorations, [deferred])
+        XCTAssertTrue(try disk.load().sessions.contains(deferred))
+        XCTAssertEqual(store.restorationMessage, "\(deferred.name): child limit reached (4)")
+
+        store.handleProcessTerminated(sessionID: replacement.id, startExitShell: false)
+        await store.restoreSessions()
+
+        let liveChildren = store.children(of: lead).filter { $0.activity != .exited }
+        XCTAssertEqual(Set(liveChildren.map(\.claudeSessionID)), Set(children.map(\.id)))
+        XCTAssertTrue(store.pendingRestorations.isEmpty)
+        XCTAssertNil(store.restorationMessage)
+    }
+
     func testFailedOrchestratorRestoreKeepsExistingSessionUntilRetrySucceeds() async throws {
         let directory = tmpDirectory("restore-orchestrator-failure")
         defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }

@@ -6,6 +6,7 @@ enum SessionCreationError: LocalizedError, Equatable {
     case claudeNotFound
     case pluginAssemblyFailed
     case sessionLaunchFailed
+    case orchestratorChildLimitReached(limit: Int)
 
     var errorDescription: String? {
         switch self {
@@ -15,6 +16,8 @@ enum SessionCreationError: LocalizedError, Equatable {
             return "Console could not prepare the local bridge for this session. The terminal will still work, but session status is unavailable."
         case .sessionLaunchFailed:
             return "Console could not start Claude for this session. Check the executable path in Settings → Claude Executable."
+        case .orchestratorChildLimitReached(let limit):
+            return "child limit reached (\(limit))"
         }
     }
 }
@@ -344,8 +347,10 @@ final class SessionStore {
             if request.revealsSession { select(sessionID: existing.id) }
             return existing.id
         }
+        let parentClaudeSessionID = record?.parentClaudeSessionID ?? request.parentClaudeSessionID
+        try checkChildCapacity(parentClaudeSessionID: parentClaudeSessionID)
         if request.purpose == .blank {
-            return try createBlankSession(request: request, resuming: record)
+            return try createBlankSession(request: request, resuming: record, parentClaudeSessionID: parentClaudeSessionID)
         }
         guard let claudePath = locator.locate() else {
             throw SessionCreationError.claudeNotFound
@@ -432,7 +437,7 @@ final class SessionStore {
             bridgeStatus: bridgeStatus,
             purpose: request.purpose,
             instrumentationWarning: instrumentationWarning,
-            parentClaudeSessionID: record?.parentClaudeSessionID ?? request.parentClaudeSessionID
+            parentClaudeSessionID: parentClaudeSessionID
         )
 
         let previousSelection = selectedSessionID
@@ -476,7 +481,8 @@ final class SessionStore {
     /// executable, plugin, or bridge instrumentation. The saved restoration
     /// identity is kept so a restored Blank row reopens as a fresh shell in
     /// the same folder.
-    private func createBlankSession(request: SessionCreationRequest, resuming record: SessionRestorationRecord?) throws -> UUID {
+    private func createBlankSession(request: SessionCreationRequest, resuming record: SessionRestorationRecord?,
+                                    parentClaudeSessionID: UUID?) throws -> UUID {
         let consoleID = UUID()
         let claudeID = record?.claudeSessionID ?? UUID()
         let displayName = Self.uniquedName(request.name.trimmingCharacters(in: .whitespacesAndNewlines), existingNames: activeNames)
@@ -500,7 +506,7 @@ final class SessionStore {
             bridgeStatus: .unavailable,
             purpose: request.purpose,
             instrumentationWarning: nil,
-            parentClaudeSessionID: record?.parentClaudeSessionID ?? request.parentClaudeSessionID
+            parentClaudeSessionID: parentClaudeSessionID
         )
 
         let previousSelection = selectedSessionID
@@ -831,7 +837,20 @@ final class SessionStore {
     }
 
     func children(of parent: ConsoleSession) -> [ConsoleSession] {
-        sessions.filter { $0.parentClaudeSessionID == parent.claudeSessionID }
+        children(of: parent.claudeSessionID)
+    }
+
+    private func children(of parentClaudeSessionID: UUID) -> [ConsoleSession] {
+        sessions.filter { $0.parentClaudeSessionID == parentClaudeSessionID }
+    }
+
+    private func checkChildCapacity(parentClaudeSessionID: UUID?) throws {
+        guard let parentClaudeSessionID else { return }
+        // Restoration can launch children before their parent row appears.
+        let liveChildren = children(of: parentClaudeSessionID).filter { $0.activity != .exited }
+        guard liveChildren.count < Self.maxOrchestratorChildren else {
+            throw SessionCreationError.orchestratorChildLimitReached(limit: Self.maxOrchestratorChildren)
+        }
     }
 
     /// Best-effort Claude Code version for capability hints.
@@ -1264,10 +1283,6 @@ final class SessionStore {
         let prompt = envelope.createInitialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard purpose != .blank || prompt.isEmpty else {
             writeMCPResult(requestID: requestID, ok: false, error: "blank sessions cannot take an initial_prompt")
-            return
-        }
-        guard children(of: requester).filter({ $0.activity != .exited }).count < Self.maxOrchestratorChildren else {
-            writeMCPResult(requestID: requestID, ok: false, error: "child limit reached (\(Self.maxOrchestratorChildren))")
             return
         }
         let name = envelope.createName?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1994,6 +2009,7 @@ final class SessionStore {
                 return
             }
             if reattach {
+                try checkChildCapacity(parentClaudeSessionID: headless.record.parentClaudeSessionID)
                 guard locator.locate() != nil else { throw SessionCreationError.claudeNotFound }
                 var isDirectory: ObjCBool = false
                 guard FileManager.default.fileExists(atPath: headless.record.workingDirectory.path, isDirectory: &isDirectory),

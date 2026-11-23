@@ -643,7 +643,7 @@ extension SessionLaunchFailure {
             switch creation {
             case .claudeNotFound:
                 self.init(message: creation.localizedDescription, offersSettingsRoute: true)
-            case .pluginAssemblyFailed:
+            case .pluginAssemblyFailed, .orchestratorChildLimitReached:
                 self.init(message: creation.localizedDescription, offersSettingsRoute: false)
             case .sessionLaunchFailed:
                 self.init(message: creation.localizedDescription, offersSettingsRoute: true)
