@@ -22,6 +22,8 @@ struct SessionsView: View {
     @State private var jiraConnectError: String?
     @State private var listResizeStartWidth: CGFloat = SessionWorkspaceLayout.listIdealWidth
     @State private var isResizingList = false
+    @State private var pinnedChildrenHeight: CGFloat?
+    private static let pinnedChildrenMaxHeight: CGFloat = 200
 
     var body: some View {
         GeometryReader { geometry in
@@ -344,8 +346,10 @@ struct SessionsView: View {
     /// The Orchestrator row stays pinned above the scrolling list, so it is
     /// always first and always visible.
     private var sessionList: some View {
-        let orchestrator = store.sessions.first { $0.purpose == .orchestrator }
-        let others = store.sessions.filter { $0.id != orchestrator?.id }
+        let orchestrator = store.orchestratorSession()
+        let children = orchestrator.map { store.children(of: $0) } ?? []
+        let childIDs = Set(children.map(\.id))
+        let others = store.sessions.filter { $0.id != orchestrator?.id && !childIDs.contains($0.id) }
         return VStack(spacing: 0) {
             if let orchestrator {
                 sessionRow(orchestrator)
@@ -353,6 +357,9 @@ struct SessionsView: View {
                     .padding(.top, 4)
                     .padding(.bottom, 2)
                     .accessibilityIdentifier("Sessions.PinnedOrchestrator")
+                if !children.isEmpty {
+                    pinnedChildren(children)
+                }
                 Divider()
             }
             ScrollView {
@@ -365,6 +372,28 @@ struct SessionsView: View {
                 .padding(.vertical, 4)
             }
         }
+    }
+
+    private func pinnedChildren(_ children: [ConsoleSession]) -> some View {
+        ScrollView {
+            VStack(spacing: 2) {
+                ForEach(children) { child in
+                    sessionRow(child)
+                        .padding(.leading, 16)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("Sessions.OrchestratorChild")
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 4)
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            min(geometry.contentSize.height, Self.pinnedChildrenMaxHeight)
+        } action: { _, height in
+            pinnedChildrenHeight = height
+        }
+        .frame(height: pinnedChildrenHeight ?? Self.pinnedChildrenMaxHeight)
+        .layoutPriority(1)
     }
 
     private func sessionRow(_ session: ConsoleSession) -> some View {

@@ -68,6 +68,7 @@ struct ConsoleSession: Identifiable, Equatable {
     /// Set when the session launched without a usable plugin/bridge.
     /// Display-only; never implies the Claude process failed to start.
     var instrumentationWarning: String?
+    var parentClaudeSessionID: UUID?
 
     init(
         id: UUID,
@@ -81,7 +82,8 @@ struct ConsoleSession: Identifiable, Equatable {
         artifacts: [SessionArtifact],
         bridgeStatus: BridgeStatus,
         purpose: SessionPurpose? = nil,
-        instrumentationWarning: String? = nil
+        instrumentationWarning: String? = nil,
+        parentClaudeSessionID: UUID? = nil
     ) {
         self.id = id
         self.claudeSessionID = claudeSessionID
@@ -95,6 +97,7 @@ struct ConsoleSession: Identifiable, Equatable {
         self.bridgeStatus = bridgeStatus
         self.purpose = purpose
         self.instrumentationWarning = instrumentationWarning
+        self.parentClaudeSessionID = parentClaudeSessionID
     }
 }
 

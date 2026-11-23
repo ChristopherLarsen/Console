@@ -78,6 +78,9 @@ final class SessionsPackagingTests: XCTestCase {
             let path = pluginRoot.appendingPathComponent(relative).path
             XCTAssertTrue(FileManager.default.fileExists(atPath: path), "missing \(relative)")
         }
+        let skill = try String(contentsOf: pluginRoot.appendingPathComponent("skills/orchestrator-run/SKILL.md"), encoding: .utf8)
+        XCTAssertFalse(skill.contains("Approve every step"))
+        XCTAssertTrue(skill.contains("A single clear approval covers all listed steps"))
 
         // Manifest names the plugin consistently with preapproved tool names.
         let manifestData = try Data(contentsOf: pluginRoot.appendingPathComponent(".claude-plugin/plugin.json"))

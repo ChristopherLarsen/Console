@@ -234,6 +234,11 @@ final class HelperMCPTests: XCTestCase {
             XCTAssertNotNil(tool["inputSchema"], "\(tool) must declare an input schema")
             XCTAssertNotNil(tool["description"])
         }
+        let create = try XCTUnwrap(tools.first { $0["name"] as? String == "create_console_session" }?["description"] as? String)
+        XCTAssertFalse(create.contains("Prefer after user approval"))
+        XCTAssertTrue(create.contains("outcome is relayed"))
+        let list = try XCTUnwrap(tools.first { $0["name"] as? String == "list_console_sessions" }?["description"] as? String)
+        XCTAssertTrue(list.contains("parent_id"))
     }
 
     // MARK: - Tool calls (socket-backed: valid calls must reach the test

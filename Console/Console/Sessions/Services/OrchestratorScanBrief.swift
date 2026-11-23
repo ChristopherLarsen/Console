@@ -6,8 +6,8 @@ enum OrchestratorScanBrief {
 
     /// One typed line that starts a run from a brief written to disk.
     static func runPrompt(briefPath: String) -> String {
-        "Run the orchestrator-run skill: read the Console scan brief at \(briefPath), "
-            + "propose 1-3 ranked next steps, and wait for my approval."
+        "Run the orchestrator-run skill. Read the Console scan brief at \(briefPath), "
+            + "then ask me to approve the goal and plan."
     }
 
     /// Assembles a brief from live sessions and an optional Home board snapshot.
@@ -17,7 +17,7 @@ enum OrchestratorScanBrief {
     ) -> String {
         var lines: [String] = []
         lines.append("Run the orchestrator-run skill using this Console scan brief.")
-        lines.append("Prefer prompt_console_session for directives after approval; use SendMessage only for FYI.")
+        lines.append("Use prompt_console_session for approved directives to existing sessions and create_console_session with initial_prompt for approved new children.")
         lines.append("")
         lines.append("## Sessions")
         let peers = sessions.filter { $0.purpose != .orchestrator }
@@ -51,7 +51,7 @@ enum OrchestratorScanBrief {
         }
 
         lines.append("")
-        lines.append("Propose 1–3 ranked next steps and ask for approval before acting.")
+        lines.append("Ask the user to approve the goal and plan before carrying out its steps.")
         let text = lines.joined(separator: "\n")
         if text.count <= maxCharacters { return text }
         return String(text.prefix(maxCharacters))

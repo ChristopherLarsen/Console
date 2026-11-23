@@ -129,6 +129,7 @@ struct SessionCreationRequest: Equatable {
     /// False for background launches: the new session is not selected, does
     /// not claim keyboard focus, and does not retire the Restore Sessions offer.
     let revealsSession: Bool
+    let parentClaudeSessionID: UUID?
 
     init(
         purpose: SessionPurpose,
@@ -137,7 +138,8 @@ struct SessionCreationRequest: Equatable {
         source: SessionLaunchSource? = nil,
         agent: String? = nil,
         toolProfile: SessionToolProfile = .standard,
-        revealsSession: Bool = true
+        revealsSession: Bool = true,
+        parentClaudeSessionID: UUID? = nil
     ) {
         self.purpose = purpose
         self.name = name
@@ -146,6 +148,7 @@ struct SessionCreationRequest: Equatable {
         self.agent = agent
         self.toolProfile = toolProfile
         self.revealsSession = revealsSession
+        self.parentClaudeSessionID = parentClaudeSessionID
     }
 }
 

@@ -393,7 +393,7 @@ final class SessionStoreTests: XCTestCase {
         let orchestrator = SessionRestorationRecord(claudeSessionID: UUID(), name: "Orchestrator 2",
             workingDirectory: directory, purpose: .orchestrator)
         let worker = SessionRestorationRecord(claudeSessionID: UUID(), name: "Worker",
-            workingDirectory: directory, purpose: .general)
+            workingDirectory: directory, purpose: .general, parentClaudeSessionID: orchestrator.id)
         try disk.save(.init(sessions: [worker, orchestrator], selectedClaudeSessionID: worker.id))
         let (store, launcher) = makeStore(restorationStore: disk, processInspector: FakeProcessInspector())
         defer { store.terminateAll() }
@@ -405,12 +405,67 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertNil(store.session(withID: startupID))
         XCTAssertEqual(store.sessions.map(\.claudeSessionID), [orchestrator.id, worker.id])
         XCTAssertEqual(store.sessions.map(\.name), ["Orchestrator", "Worker"])
+        let restoredLead = try XCTUnwrap(store.orchestratorSession())
+        XCTAssertEqual(store.children(of: restoredLead).map(\.claudeSessionID), [worker.id])
         XCTAssertEqual(store.selectedSession?.claudeSessionID, worker.id)
         XCTAssertEqual(launcher.lastArguments?.prefix(2), ["--resume", orchestrator.id.uuidString])
         XCTAssertEqual(try disk.load().sessions.filter { $0.purpose == .orchestrator }.map(\.id), [orchestrator.id])
         XCTAssertEqual(try disk.load().sessions.first { $0.purpose == .orchestrator }?.name, "Orchestrator")
         await store.restoreSessions()
         XCTAssertEqual(launcher.launchCount, 3)
+    }
+
+    func testChildParentageSurvivesQuitAndOnlyNestsUnderTheRestoredConversation() async throws {
+        let directory = tmpDirectory("restore-parent")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let (original, _) = makeStore(restorationStore: disk, processInspector: FakeProcessInspector())
+        let leadID = try original.createSession(request: .init(
+            purpose: .orchestrator, name: "Orchestrator", workingDirectory: directory
+        ))
+        let parentClaudeID = try XCTUnwrap(original.session(withID: leadID)?.claudeSessionID)
+        let childID = try original.createSession(request: .init(
+            purpose: .blank, name: "Child", workingDirectory: directory,
+            parentClaudeSessionID: parentClaudeID
+        ))
+        let childClaudeID = try XCTUnwrap(original.session(withID: childID)?.claudeSessionID)
+        original.terminateAll()
+
+        let saved = try disk.load()
+        let (restored, _) = makeStore(restorationStore: disk, processInspector: FakeProcessInspector())
+        await restored.restoreSessions()
+        let lead = try XCTUnwrap(restored.orchestratorSession())
+        let child = try XCTUnwrap(restored.children(of: lead).first)
+        XCTAssertNotEqual(lead.id, leadID)
+        XCTAssertEqual(lead.claudeSessionID, parentClaudeID)
+        XCTAssertEqual(child.parentClaudeSessionID, lead.claudeSessionID)
+        XCTAssertEqual(child.claudeSessionID, childClaudeID)
+        restored.terminateAll()
+
+        let childRecord = try XCTUnwrap(saved.sessions.first { $0.id == childClaudeID })
+        try disk.save(.init(sessions: [childRecord]))
+        let (childOnly, _) = makeStore(restorationStore: disk, processInspector: FakeProcessInspector())
+        defer { childOnly.terminateAll() }
+        _ = try childOnly.createSession(request: .init(
+            purpose: .orchestrator, name: "Orchestrator", workingDirectory: directory, revealsSession: false
+        ))
+        await childOnly.restoreSessions()
+        let startupLead = try XCTUnwrap(childOnly.orchestratorSession())
+        XCTAssertTrue(childOnly.children(of: startupLead).isEmpty)
+        XCTAssertEqual(childOnly.sessions.first { $0.claudeSessionID == childClaudeID }?.parentClaudeSessionID,
+                       parentClaudeID)
+    }
+
+    func testRestorationSnapshotWithoutParentFieldStillLoads() throws {
+        let directory = tmpDirectory("legacy-restoration")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let disk = SessionRestorationStore(url: directory.appendingPathComponent("sessions.json"))
+        let record = SessionRestorationRecord(claudeSessionID: UUID(), name: "Legacy",
+            workingDirectory: directory, purpose: .general)
+        try disk.save(.init(sessions: [record]))
+        let data = try Data(contentsOf: disk.url)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("parentClaudeSessionID"))
+        XCTAssertEqual(try disk.load().sessions, [record])
     }
 
     func testFailedOrchestratorRestoreKeepsExistingSessionUntilRetrySucceeds() async throws {

@@ -108,6 +108,7 @@ final class SessionStore {
     @ObservationIgnored var viewingFocusDetector: @MainActor (UUID) -> Bool = { _ in false }
 
     static let gracefulStopGraceSeconds: UInt64 = 3
+    static let maxOrchestratorChildren = 4
 
     init(
         launcher: any SessionProcessLaunching,
@@ -430,7 +431,8 @@ final class SessionStore {
                     ? [.init(kind: .jiraIssue, label: request.name)] : []),
             bridgeStatus: bridgeStatus,
             purpose: request.purpose,
-            instrumentationWarning: instrumentationWarning
+            instrumentationWarning: instrumentationWarning,
+            parentClaudeSessionID: record?.parentClaudeSessionID ?? request.parentClaudeSessionID
         )
 
         let previousSelection = selectedSessionID
@@ -497,7 +499,8 @@ final class SessionStore {
             artifacts: [],
             bridgeStatus: .unavailable,
             purpose: request.purpose,
-            instrumentationWarning: nil
+            instrumentationWarning: nil,
+            parentClaudeSessionID: record?.parentClaudeSessionID ?? request.parentClaudeSessionID
         )
 
         let previousSelection = selectedSessionID
@@ -515,6 +518,7 @@ final class SessionStore {
             sessions.removeAll { $0.id == consoleID }
             startingRestorations.removeValue(forKey: consoleID)
             selectedSessionID = previousSelection
+            writeSessionsSnapshot()
             throw error
         }
         if let record { pendingRestorations.removeAll { $0.id == record.id } }
@@ -826,6 +830,10 @@ final class SessionStore {
         sessions.first(where: { $0.purpose == .orchestrator })
     }
 
+    func children(of parent: ConsoleSession) -> [ConsoleSession] {
+        sessions.filter { $0.parentClaudeSessionID == parent.claudeSessionID }
+    }
+
     /// Best-effort Claude Code version for capability hints.
     func claudeVersionHint() -> String? {
         locator.resolvedClaudeVersion()
@@ -845,7 +853,7 @@ final class SessionStore {
 #if DEBUG
     /// UI-test support: injects inert fake sessions (no processes) so tests can
     /// exercise list, switching, stop confirmation, and exited retention.
-    func injectUITestPreviewSessions() {
+    func injectUITestPreviewSessions(withOrchestrator: Bool = false) {
         guard sessions.isEmpty else { return }
 
         func makeView() -> LocalProcessTerminalView {
@@ -886,6 +894,16 @@ final class SessionStore {
         )
         beta.activity = .exited
 
+        if withOrchestrator {
+            let orchestrator = ConsoleSession(
+                id: UUID(), claudeSessionID: UUID(), name: "Preview Orchestrator",
+                workingDirectory: alpha.workingDirectory, terminalView: makeView(),
+                activity: .exited, attention: .none, summary: nil, artifacts: [],
+                bridgeStatus: .unknown, purpose: .orchestrator
+            )
+            sessions.append(orchestrator)
+            beta.parentClaudeSessionID = orchestrator.claudeSessionID
+        }
         sessions.append(contentsOf: [alpha, beta])
         selectedSessionID = alpha.id
     }
@@ -955,10 +973,11 @@ final class SessionStore {
         }
         terminateOwnedProcesses(for: id)
         stopTargets.removeValue(forKey: id)
+        dropDirectives(for: id, reason: "was closed before finishing")
         sessions.removeAll(where: { $0.id == id })
         sessionTokens.removeValue(forKey: id)
         pendingSlashCommands.removeValue(forKey: id)
-        dropDirectives(for: id, reason: "was closed before finishing")
+        settlingSessions.remove(id)
         router.forget(sessionID: id)
         closeOnExitIDs.remove(id)
         startingRestorations.removeValue(forKey: id)
@@ -972,6 +991,7 @@ final class SessionStore {
     func handleProcessTerminated(sessionID: UUID, startExitShell: Bool = true) {
         stopTargets.removeValue(forKey: sessionID)
         pendingSlashCommands.removeValue(forKey: sessionID)
+        settlingSessions.remove(sessionID)
         dropDirectives(for: sessionID, reason: "ended before finishing")
         if !isTerminating, let record = startingRestorations.removeValue(forKey: sessionID) {
             if !pendingRestorations.contains(where: { $0.id == record.id }) {
@@ -985,6 +1005,7 @@ final class SessionStore {
             return
         }
         applyEvent(.processTerminated, to: sessionID)
+        writeSessionsSnapshot()
         // A retained pane must never sit as a dead terminal: when the Claude
         // child exits, hand the same terminal view to a login shell so the
         // user gets a command-line prompt. Scrollback is preserved by
@@ -1175,6 +1196,7 @@ final class SessionStore {
         let becameActive = markActive(sessionID: sessionID)
         // Queued input goes out after this envelope's event is applied, so a
         // queued prompt's Working state is not overwritten by SessionStart.
+        if becameActive { settlingSessions.insert(sessionID) }
         defer { if becameActive { flushPendingWhenSettled(sessionID: sessionID) } }
 
         let event: SessionLifecycleEvent
@@ -1239,6 +1261,15 @@ final class SessionStore {
             writeMCPResult(requestID: requestID, ok: false, error: "invalid or disallowed purpose")
             return
         }
+        let prompt = envelope.createInitialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard purpose != .blank || prompt.isEmpty else {
+            writeMCPResult(requestID: requestID, ok: false, error: "blank sessions cannot take an initial_prompt")
+            return
+        }
+        guard children(of: requester).filter({ $0.activity != .exited }).count < Self.maxOrchestratorChildren else {
+            writeMCPResult(requestID: requestID, ok: false, error: "child limit reached (\(Self.maxOrchestratorChildren))")
+            return
+        }
         let name = envelope.createName?.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayName = (name?.isEmpty == false) ? name! : purpose.defaultName(source: nil)
         // Agent is opt-in only. Do not invent `agent-review` for purpose=review —
@@ -1250,14 +1281,20 @@ final class SessionStore {
                 name: displayName,
                 workingDirectory: requester.workingDirectory,
                 agent: agent,
-                revealsSession: true
+                revealsSession: false,
+                parentClaudeSessionID: requester.claudeSessionID
             ))
-            if let created = session(withID: createdID) {
+            if purpose != .blank, let created = session(withID: createdID) {
                 queueSlashCommand("/rename \(created.name)", for: createdID)
             }
-            if let prompt = envelope.createInitialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !prompt.isEmpty {
-                queuePrompt(prompt, for: createdID)
+            if !prompt.isEmpty {
+                queuePrompt(prompt, for: createdID) { [weak self] in
+                    guard let self else { return }
+                    self.directiveOrigins[createdID] = requesterID
+                    self.awaitingAcceptance[createdID] = Date()
+                    self.scheduleDirectiveRecheck()
+                    self.writeSessionsSnapshot()
+                }
             }
             writeSessionsSnapshot()
             writeMCPResult(requestID: requestID, ok: true, sessionID: createdID)
@@ -1344,6 +1381,10 @@ final class SessionStore {
         }
         guard target.purpose != .orchestrator else {
             writeMCPResult(requestID: requestID, ok: false, error: "refused: cannot prompt the orchestrator session")
+            return
+        }
+        guard target.purpose != .blank else {
+            writeMCPResult(requestID: requestID, ok: false, error: "blank sessions cannot be prompted")
             return
         }
         guard target.activity != .exited else {
@@ -1513,17 +1554,23 @@ final class SessionStore {
             awaitingAcceptance.removeValue(forKey: sessionID)
         case .turnCompleted, .turnFailed:
             awaitingAcceptance.removeValue(forKey: sessionID)
-            if let origin = directiveOrigins.removeValue(forKey: sessionID) {
+            if let origin = directiveOrigins.removeValue(forKey: sessionID),
+               let finishedSession = session(withID: sessionID) {
                 let outcome: String
                 if case .turnFailed = event { outcome = "failed" } else { outcome = "finished" }
                 DispatchQueue.main.asyncAfter(deadline: .now() + Self.relaySettleSeconds) { [weak self] in
-                    guard let self, let target = self.session(withID: sessionID) else { return }
+                    guard let self else { return }
+                    let target = self.session(withID: sessionID) ?? finishedSession
                     let reply = TranscriptTail.lastAssistantMessages(
                         claudeSessionID: target.claudeSessionID, count: 1
                     ).last
                     self.relay(Self.relayNote(target: target, outcome: outcome, lastReply: reply), to: origin)
                 }
             }
+        case .sessionEnded:
+            pendingSlashCommands.removeValue(forKey: sessionID)
+            settlingSessions.remove(sessionID)
+            dropDirectives(for: sessionID, reason: "ended before finishing")
         default:
             break
         }
@@ -1572,7 +1619,7 @@ final class SessionStore {
             if let ask = target.attentionMessage { note += " (\(oneLine(ask, limit: 200)))" }
             note += "."
         }
-        note += " Update your plan; propose the next step and wait for approval."
+        note += " Update your plan. Continue approved steps; ask before anything off-plan."
         return note
     }
 
@@ -1643,9 +1690,8 @@ final class SessionStore {
         pendingSlashCommands[sessionID, default: []].append(.prompt(line, onSubmitted: onSubmitted))
     }
 
-    /// Sessions whose Claude reported SessionStart but whose screen is still
-    /// drawing. SessionStart fires before the input box accepts keystrokes,
-    /// so input typed then is lost; queued input waits until output settles.
+    /// Blocks directives while the terminal draws its startup screen and while
+    /// queued startup input is being submitted.
     private var settlingSessions: Set<UUID> = []
     static let startupQuietSeconds: TimeInterval = 0.8
     static let startupSettleLimitSeconds: TimeInterval = 8
@@ -1660,7 +1706,6 @@ final class SessionStore {
             flushPendingSlashCommands(sessionID: sessionID)
             return
         }
-        settlingSessions.insert(sessionID)
         pollStartupSettled(sessionID: sessionID, activatedAt: Date())
     }
 
@@ -1678,25 +1723,33 @@ final class SessionStore {
                 self.pollStartupSettled(sessionID: sessionID, activatedAt: activatedAt)
                 return
             }
-            self.settlingSessions.remove(sessionID)
             self.flushPendingSlashCommands(sessionID: sessionID)
-            self.deliverHeldDirectives(for: sessionID)
         }
     }
 
     private func flushPendingSlashCommands(sessionID: UUID) {
-        guard let commands = pendingSlashCommands.removeValue(forKey: sessionID), !commands.isEmpty else { return }
-        submitQueuedCommands(commands, index: 0, sessionID: sessionID)
+        guard let commands = pendingSlashCommands.removeValue(forKey: sessionID), !commands.isEmpty else {
+            settlingSessions.remove(sessionID)
+            deliverHeldDirectives(for: sessionID)
+            return
+        }
+        submitQueuedCommands(commands, index: 0, sessionID: sessionID) { [weak self] in
+            self?.flushPendingSlashCommands(sessionID: sessionID)
+        }
     }
 
     /// Submits queued commands one at a time. Clear-line controls, pasted text,
     /// and each command's carriage return are separate writes, spaced apart,
     /// so Claude Code submits each command individually instead of reading
     /// them as one pasted line.
-    private func submitQueuedCommands(_ commands: [QueuedInput], index: Int, sessionID: UUID) {
-        guard index < commands.count,
-              let session = session(withID: sessionID),
+    private func submitQueuedCommands(_ commands: [QueuedInput], index: Int, sessionID: UUID,
+                                      onFinished: (() -> Void)? = nil) {
+        guard let session = session(withID: sessionID),
               session.activity != .exited else { return }
+        guard index < commands.count else {
+            onFinished?()
+            return
+        }
         sendReplacementCommand(commands[index].text, to: sessionID) { [weak self] in
             guard let self else { return }
             if case .prompt(_, let onSubmitted) = commands[index] {
@@ -1704,7 +1757,7 @@ final class SessionStore {
                 onSubmitted?()
             }
             self.afterQueuedCommandSpacing { [weak self] in
-                self?.submitQueuedCommands(commands, index: index + 1, sessionID: sessionID)
+                self?.submitQueuedCommands(commands, index: index + 1, sessionID: sessionID, onFinished: onFinished)
             }
         }
     }
@@ -2061,6 +2114,8 @@ final class SessionStore {
     /// `list_console_sessions` tool. Written beside the bridge socket.
     private func writeSessionsSnapshot() {
         guard let path = sessionsSnapshotPath() else { return }
+        let orchestrator = orchestratorSession()
+        let childIDs = Set(orchestrator.map { children(of: $0).map(\.id) } ?? [])
         let payload: [[String: Any]] = sessions.map { session in
             var row: [String: Any] = [
                 "id": session.id.uuidString,
@@ -2073,6 +2128,9 @@ final class SessionStore {
                 row["purpose"] = purpose.rawValue
             }
             row["claude_session_id"] = session.claudeSessionID.uuidString
+            if let orchestrator, childIDs.contains(session.id) {
+                row["parent_id"] = orchestrator.id.uuidString
+            }
             if let ask = session.attentionMessage {
                 row["attention_message"] = String(ask.prefix(Self.snapshotSummaryLimit))
             }
@@ -2152,7 +2210,8 @@ final class SessionStore {
             rememberAssociation(for: session)
             let record = SessionRestorationRecord(claudeSessionID: session.claudeSessionID,
                 name: session.name, workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general,
-                processIdentity: HeadlessSessionProcesses.identity(for: session.terminalView.process?.shellPid ?? 0))
+                processIdentity: HeadlessSessionProcesses.identity(for: session.terminalView.process?.shellPid ?? 0),
+                parentClaudeSessionID: session.parentClaudeSessionID)
             records.removeAll { $0.id == record.id }
             records.append(record)
         }

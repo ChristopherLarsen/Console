@@ -363,7 +363,9 @@ struct ConsoleApp: App {
             UserDefaults.standard.set(CommandsHubTab.triggers.rawValue, forKey: ConsoleNavigation.commandsHubTabKey)
         }
         if ProcessInfo.processInfo.arguments.contains("-uiTestSessionsPreview") {
-            sessionStore.injectUITestPreviewSessions()
+            sessionStore.injectUITestPreviewSessions(
+                withOrchestrator: ProcessInfo.processInfo.arguments.contains("-uiTestOrchestratorPreview")
+            )
         }
         if ProcessInfo.processInfo.arguments.contains("-uiTestHeadlessSessionsPreview") {
             sessionStore.injectUITestHeadlessPreview()
@@ -717,6 +719,10 @@ struct ConsoleApp: App {
     private func runAppBootstrapIfNeeded() {
         guard !didRunAppBootstrap else { return }
         didRunAppBootstrap = true
+
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-uiTestOrchestratorPreview") { return }
+        #endif
 
         GlobalHotkeyManager.shared.install()
         #if DEBUG

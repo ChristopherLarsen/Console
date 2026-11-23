@@ -203,6 +203,29 @@ final class SessionsUITests: XCTestCase {
 
     // MARK: - Previewed rows (two concurrent sessions, switching, retention)
 
+    func testOrchestratorChildIsIndentedWhileParentIsListed() throws {
+        app.launchArguments += ["-uiTestInMemoryStore", "-uiTestOrchestratorPreview", "-listenOnStartup", "NO"]
+        launchSessions(preview: true)
+
+        let lead = element("Sessions.PinnedOrchestrator")
+        let child = element("Sessions.OrchestratorChild")
+        let manual = sessionRow(named: "Preview Alpha")
+        XCTAssertTrue(lead.waitForExistence(timeout: 5))
+        XCTAssertTrue(child.exists)
+        XCTAssertTrue(manual.exists)
+        XCTAssertGreaterThanOrEqual(child.frame.minX, lead.frame.minX + 12)
+        XCTAssertGreaterThan(child.frame.minY, lead.frame.minY)
+        XCTAssertGreaterThan(manual.frame.minY, child.frame.minY)
+        XCTAssertLessThan(manual.frame.minY - lead.frame.maxY, 150, "A single child should only take up its row height")
+
+        let removeLead = app.buttons.matching(NSPredicate(format: "label == %@", "Remove Preview Orchestrator")).firstMatch
+        XCTAssertTrue(removeLead.exists)
+        removeLead.click()
+        XCTAssertTrue(sessionRow(named: "Preview Beta").waitForExistence(timeout: 5))
+        XCTAssertFalse(child.exists)
+        XCTAssertFalse(lead.exists)
+    }
+
     func testRenameImmediatelyReplacesSelectedNameAndRefocusesWhenReopened() throws {
         app.launchArguments += ["-uiTestInMemoryStore", "-listenOnStartup", "NO"]
         launchSessions(preview: true)

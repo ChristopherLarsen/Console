@@ -241,7 +241,7 @@ private let consoleTools: [MCPServerTool] = [
     ),
     MCPServerTool(
         name: "list_console_sessions",
-        description: "List Console's open sessions (id, name, purpose, activity, attention, summary, bridge_status, artifacts) from the local sessions snapshot.",
+        description: "List Console's open sessions (id, parent_id when the parent is listed, name, purpose, activity, attention, summary, bridge_status, artifacts) from the local sessions snapshot.",
         schema: [
             "type": "object",
             "properties": [:],
@@ -250,7 +250,7 @@ private let consoleTools: [MCPServerTool] = [
     ),
     MCPServerTool(
         name: "create_console_session",
-        description: "Ask Console to create a visible session in the Sessions list. Prefer after user approval. Purpose must be a user-selectable Console purpose (not orchestrator). Optional initial_prompt is queued after create.",
+        description: "Create a child session for an approved plan step. Choose a user-selectable Console purpose. Optional initial_prompt is the child's first task and its outcome is relayed to you. Blank sessions take no initial_prompt. At most four live children are allowed.",
         schema: [
             "type": "object",
             "properties": [
@@ -268,7 +268,7 @@ private let consoleTools: [MCPServerTool] = [
     ),
     MCPServerTool(
         name: "close_console_session",
-        description: "Ask Console to terminate and remove another visible session by Console session id. Refuses the orchestrator. Prefer after user approval.",
+        description: "Terminate and remove a session by Console session id with explicit user approval. Refuses the orchestrator.",
         schema: [
             "type": "object",
             "properties": [
@@ -280,7 +280,7 @@ private let consoleTools: [MCPServerTool] = [
     ),
     MCPServerTool(
         name: "prompt_console_session",
-        description: "Queue a directive prompt into another Console session after user approval. Prefer this over SendMessage for actionable direction. Refuses the orchestrator.",
+        description: "Send an approved plan directive to an existing session by Console session id. Console relays the outcome. Refuses the orchestrator and blank sessions.",
         schema: [
             "type": "object",
             "properties": [
