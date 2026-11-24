@@ -738,8 +738,6 @@ final class SessionStore {
         guard let index = sessions.firstIndex(where: { $0.id == sessionID }),
               sessions[index].attention == .unreadCompletion else { return }
         sessions[index].attention = .none
-        sessions[index].stateSince = Date()
-        if watchedSessions[sessionID] != nil { scheduleRelay(for: sessionID, outcome: .attention) }
         writeSessionsSnapshot()
     }
 
@@ -1254,6 +1252,12 @@ final class SessionStore {
             case .promptSubmitted: event = .promptSubmitted
             case .turnCompleted: event = .turnCompleted
             case .turnFailed: event = .turnFailed
+            case .idleObserved:
+                // Stop does not fire after a user interrupt. An idle prompt
+                // while still Working is that missed turn end; otherwise the
+                // turn already ended and this must not relay a second time.
+                guard session(withID: sessionID)?.activity == .working else { return }
+                event = .turnCompleted
             case .sessionEnded: event = .sessionEnded
             case .none: return
             }
@@ -1440,7 +1444,7 @@ final class SessionStore {
                 let childBrief = context.appendingPathComponent("brief.md")
                 try FileManager.default.moveItem(at: brief, to: childBrief)
                 briefDirectory = context
-                prompt = "Read the task brief at \(childBrief.path) and carry out its instructions."
+                prompt = "Read the task brief at \"\(childBrief.path)\" and carry out its instructions."
             } catch {
                 try? FileManager.default.removeItem(at: context)
                 writeMCPResult(requestID: requestID, ok: false, error: "could not prepare child brief")
@@ -2172,9 +2176,14 @@ final class SessionStore {
             sessions[index].workingDirectory = URL(fileURLWithPath: path)
         }
 
-        let attentionChanged = previous.attention != sessions[index].attention
+        // An unread completion is a display state, not a request for anyone.
+        func request(_ attention: SessionAttention) -> SessionAttention {
+            attention == .unreadCompletion ? .none : attention
+        }
+        let attentionChanged = request(previous.attention) != request(sessions[index].attention)
             || previous.attentionMessage != sessions[index].attentionMessage
-        if previous.activity != sessions[index].activity || previous.attention != sessions[index].attention {
+        if previous.activity != sessions[index].activity
+            || request(previous.attention) != request(sessions[index].attention) {
             sessions[index].stateSince = now
         }
         if attentionChanged, watchedSessions[sessionID] != nil,

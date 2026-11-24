@@ -38,6 +38,7 @@ nonisolated enum BridgeProtocol {
         case promptSubmitted = "prompt_submitted"
         case turnCompleted = "turn_completed"
         case turnFailed = "turn_failed"
+        case idleObserved = "idle_observed"
         case sessionEnded = "session_ended"
     }
 }

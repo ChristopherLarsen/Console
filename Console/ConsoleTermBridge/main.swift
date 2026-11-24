@@ -170,6 +170,8 @@ func runHookMode(eventName: String) {
         let reply = decoded?.last_assistant_message?.trimmingCharacters(in: .whitespacesAndNewlines)
         let outcome = reply?.hasPrefix("API Error") == true ? "turn_failed" : "turn_completed"
         sendEnvelope(BridgeEnvelope(kind: "lifecycle", lifecycleEvent: outcome))
+    case "NotificationIdlePrompt":
+        sendEnvelope(BridgeEnvelope(kind: "lifecycle", lifecycleEvent: "idle_observed"))
     case "StopFailure":
         sendEnvelope(BridgeEnvelope(kind: "lifecycle", lifecycleEvent: "turn_failed"))
     case "SessionEnd":
@@ -286,7 +288,7 @@ private let consoleTools: [MCPServerTool] = [
     ),
     MCPServerTool(
         name: "close_console_session",
-        description: "Close a session by Console id. A child with a recorded result can be closed automatically. Refuses the orchestrator.",
+        description: "Close a session by Console id. A child with a recorded result can be closed automatically; any other close needs user approval. Refuses the orchestrator.",
         schema: [
             "type": "object",
             "properties": [

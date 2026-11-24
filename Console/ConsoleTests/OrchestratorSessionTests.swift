@@ -375,6 +375,29 @@ final class OrchestratorSessionTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(OrchestratorPlan.self, from: Data(output.utf8)).decisions, plan.decisions)
     }
 
+    func testIdlePromptEndsAnInterruptedTurnOnceAndIgnoresViewing() async throws {
+        let store = makeStore()
+        store.queuedCommandSpacing = 0
+        store.transcriptReply = { _, _ in nil }
+        let root = tmpDirectory("interrupt")
+        let lead = try startOrchestrator(in: store, directory: root)
+        let worker = try store.createSession(name: "Interrupted", workingDirectory: root)
+        try receive(.sessionStarted, from: lead.id, in: store)
+        try receive(.sessionStarted, from: worker, in: store)
+        try send(.watchSession, from: lead.id, in: store) { $0.targetSessionID = worker.uuidString }
+        try receive(.promptSubmitted, from: worker, in: store)
+        // Stop never fires after an interrupt; the idle prompt is the only signal.
+        try receive(.idleObserved, from: worker, in: store)
+        XCTAssertEqual(store.session(withID: worker)?.activity, .idle)
+        try receive(.idleObserved, from: worker, in: store)
+        store.acknowledgeCompletion(sessionID: worker)
+        try await Task.sleep(for: .seconds(SessionStore.relaySettleSeconds + 0.15))
+        let notes = relayNotes(for: lead.id, in: store)
+        XCTAssertEqual(notes.count, 1)
+        XCTAssertTrue(notes.first?.contains("ended its turn") == true)
+        XCTAssertFalse(notes.contains { $0.contains("changed attention") })
+    }
+
     func testWatchedSessionRelaysFailureWithoutDirective() async throws {
         let store = makeStore()
         store.queuedCommandSpacing = 0
