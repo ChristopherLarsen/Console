@@ -648,10 +648,20 @@ struct HomeView: View {
     /// launched from GitLab, otherwise the review list's triage match by Jira
     /// key wins. Nil when no merge request is known for the story.
     private func mergeRequestURL(for ticket: JiraTicketSummary) -> URL? {
+        func isForTicket(_ key: String?, _ title: String) -> Bool {
+            key?.caseInsensitiveCompare(ticket.key) == .orderedSame
+                || JiraSourceContext.issueKey(in: title)?.caseInsensitiveCompare(ticket.key) == .orderedSame
+        }
+        // The user's own open merge requests: an In Progress story's MR is
+        // one they authored, which the review queue never lists.
+        let authored = MRReviewScanController.shared.authoredItems
+            .filter { isForTicket($0.jiraIssueKey, $0.title) }.map(\.url)
+
+        var linked: [URL] = []
         if let catalog = sessionStore?.associations {
-            let urls = Set(catalog.relatedArtifacts(to: ticket.issueURL, kind: .jiraIssue, workKind: .implementation)
-                .filter { $0.kind == .gitlabMergeRequest }.compactMap(\.url))
-            if !urls.isEmpty { return urls.count == 1 ? urls.first : nil }
+            linked = Array(Set(catalog.relatedArtifacts(to: ticket.issueURL, kind: .jiraIssue, workKind: .implementation)
+                .filter { $0.kind == .gitlabMergeRequest }.compactMap(\.url)))
+            if linked.count == 1 { return linked[0] }
         }
         if let id = HomeStorySessionMatcher.sessionID(for: ticket, in: sessionStore?.sessions ?? [], associations: sessionStore?.associations),
            let session = sessionStore?.sessions.first(where: { $0.id == id }),
@@ -659,11 +669,13 @@ struct HomeView: View {
            let url = artifact.url {
             return url
         }
-        let item = model.snapshot().reviewItems.first { item in
-            item.jiraIssueKey?.caseInsensitiveCompare(ticket.key) == .orderedSame
-                || JiraSourceContext.issueKey(in: item.title)?.caseInsensitiveCompare(ticket.key) == .orderedSame
+        if let url = authored.first(where: linked.contains) ?? authored.first { return url }
+        if let item = model.snapshot().reviewItems.first(where: { isForTicket($0.jiraIssueKey, $0.title) }) {
+            return item.mergeRequestURL
         }
-        return item?.mergeRequestURL
+        // Several merge requests are linked and none is known to be open:
+        // the newest is the best guess, and beats landing on GitLab's root.
+        return linked.max { (Int($0.lastPathComponent) ?? 0) < (Int($1.lastPathComponent) ?? 0) }
     }
 
     /// Quiet count only — the column title already names the source.
