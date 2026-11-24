@@ -135,7 +135,8 @@ struct HomeView: View {
                     .accessibilityIdentifier("HomeDecisions")
                 }
             } else {
-                Text("The Orchestrator is not waiting on you.")
+                Text(launchCoordinator.isRefreshingHomeCards
+                     ? "Checking with the Orchestrator…" : "Nothing to do right now.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -143,6 +144,15 @@ struct HomeView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.97)))
+        .overlay(alignment: .topTrailing) {
+            if launchCoordinator.isRefreshingHomeCards {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(6)
+                    .help("The Orchestrator is updating these cards")
+                    .accessibilityLabel("Updating Orchestrator cards")
+            }
+        }
         .accessibilityIdentifier("HomeOrchestratorSection")
     }
 

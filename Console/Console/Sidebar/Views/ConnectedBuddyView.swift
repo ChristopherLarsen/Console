@@ -62,13 +62,17 @@ struct ConnectedBuddyView: View {
         case .awaitingUser:
             return "Focuses the Orchestrator session; answer its questions to continue"
         case .idle, .none:
-            return "Opens Sessions and runs the orchestrator"
+            return "Runs the orchestrator. From Home it stays on Home; elsewhere it opens Sessions"
         }
     }
 
     var body: some View {
         Button {
-            launchCoordinator?.runOrchestrator()
+            // From Home the run starts in place; from anywhere else it opens
+            // Sessions on the Orchestrator.
+            let onHome = UserDefaults.standard.string(forKey: ConsoleNavigation.sidebarKey)
+                .map { $0 == SidebarSelection.home.rawValue } ?? true
+            launchCoordinator?.runOrchestrator(stayingOnHome: onHome)
         } label: {
             panel
         }

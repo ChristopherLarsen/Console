@@ -150,6 +150,9 @@ final class SessionLaunchCoordinator {
     /// Console-side orchestrator run phase for Big Blue debounce / Buddy status.
     private(set) var orchestratorRunState: OrchestratorRunState = .idle
 
+    /// True from a run started on Home until the Orchestrator's turn ends.
+    private(set) var isRefreshingHomeCards = false
+
     /// Optional one-line capability hint (e.g. Claude too old for SendMessage).
     private(set) var orchestratorCapabilityHint: String?
 
@@ -180,13 +183,21 @@ final class SessionLaunchCoordinator {
 
     /// Big Blue entry: ensure orchestrator, show Sessions, select it, and
     /// queue a single brief+skill prompt unless a run is already active.
-    func runOrchestrator() {
+    ///
+    /// `stayingOnHome` is for a click made while Home is showing: the run
+    /// starts without leaving Home, which shows a spinner in its Orchestrator
+    /// section until the run's turn ends and its cards are current.
+    func runOrchestrator(stayingOnHome: Bool = false) {
         do {
             let sessionID = try ensureOrchestratorSession()
             lastFailure = nil
-            ConsoleNavigation.showSessions()
-            store.select(sessionID: sessionID)
-            store.focusSelectedTerminal()
+            if stayingOnHome {
+                isRefreshingHomeCards = true
+            } else {
+                ConsoleNavigation.showSessions()
+                store.select(sessionID: sessionID)
+                store.focusSelectedTerminal()
+            }
             guard let session = store.session(withID: sessionID) else { return }
             if session.bridgeStatus == .unavailable {
                 lastFailure = SessionLaunchFailure(
@@ -210,6 +221,7 @@ final class SessionLaunchCoordinator {
                 store.queuePrompt(brief, for: sessionID, collapsingNewlines: false)
             }
         } catch {
+            isRefreshingHomeCards = false
             lastFailure = SessionLaunchFailure(error: error)
         }
     }
@@ -219,6 +231,7 @@ final class SessionLaunchCoordinator {
         guard store.session(withID: sessionID)?.purpose == .orchestrator else { return }
         switch event {
         case .turnCompleted, .turnFailed:
+            isRefreshingHomeCards = false
             if orchestratorRunState == .running {
                 orchestratorRunState = .awaitingUser
             }
@@ -231,6 +244,7 @@ final class SessionLaunchCoordinator {
                 orchestratorRunState = .idle
             }
         case .sessionEnded, .processTerminated:
+            isRefreshingHomeCards = false
             orchestratorRunState = .idle
         default:
             break
