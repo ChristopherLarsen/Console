@@ -124,6 +124,7 @@ struct SessionCreationRequest: Equatable {
     let source: SessionLaunchSource?
     /// Explicit Claude Code agent; nil falls back to the purpose's default.
     let agent: String?
+    let model: String?
     /// Tool access the Claude process is launched with.
     let toolProfile: SessionToolProfile
     /// False for background launches: the new session is not selected, does
@@ -137,6 +138,7 @@ struct SessionCreationRequest: Equatable {
         workingDirectory: URL,
         source: SessionLaunchSource? = nil,
         agent: String? = nil,
+        model: String? = nil,
         toolProfile: SessionToolProfile = .standard,
         revealsSession: Bool = true,
         parentClaudeSessionID: UUID? = nil
@@ -146,14 +148,15 @@ struct SessionCreationRequest: Equatable {
         self.workingDirectory = workingDirectory
         self.source = source
         self.agent = agent
+        self.model = model
         self.toolProfile = toolProfile
         self.revealsSession = revealsSession
         self.parentClaudeSessionID = parentClaudeSessionID
     }
 }
 
-/// Tool access for one Claude launch. Applies to that process only; a later
-/// resume of the same conversation launches with `.standard`.
+/// Tool access for one Claude process. Console restoration records retain
+/// whether the session must be read-only.
 enum SessionToolProfile: Equatable {
     /// Bypassed permission prompts and every tool, as the user configured.
     case standard

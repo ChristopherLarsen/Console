@@ -69,6 +69,13 @@ struct ConsoleSession: Identifiable, Equatable {
     /// Display-only; never implies the Claude process failed to start.
     var instrumentationWarning: String?
     var parentClaudeSessionID: UUID?
+    var toolProfile: SessionToolProfile = .standard
+    var model: String?
+    var stateSince = Date()
+    var lastTurnStarted: Date?
+    var lastTurnEnd: Date?
+    var lastTurnFailed = false
+    var completionOutcome: BridgeCompletionOutcome?
 
     init(
         id: UUID,

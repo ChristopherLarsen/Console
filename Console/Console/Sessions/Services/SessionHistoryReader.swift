@@ -25,7 +25,8 @@ final class SessionHistoryReader {
         let record: SessionHistoryRecord
     }
 
-    private var cache: [String: CachedMetadata] = [:]
+    private var recentCache: [String: CachedMetadata] = [:]
+    private var fullCache: [String: CachedMetadata] = [:]
     private let ticketAssociations: SessionTicketAssociations
     private let root: URL
     private var workAssociations: SessionAssociationStore?
@@ -36,7 +37,9 @@ final class SessionHistoryReader {
     /// Drops a cached transcript so a later scan cannot revive a file that
     /// was just moved to the Trash.
     func forgetTranscript(at url: URL) {
-        cache.removeValue(forKey: url.resolvingSymlinksInPath().path)
+        let path = url.resolvingSymlinksInPath().path
+        recentCache.removeValue(forKey: path)
+        fullCache.removeValue(forKey: path)
     }
 
     init(ticketAssociations: SessionTicketAssociations = SessionTicketAssociations(), root: URL = SessionHistoryReader.claudeProjectsRoot) {
@@ -52,12 +55,23 @@ final class SessionHistoryReader {
         let associations = workAssociations?.ticketKeys() ?? ticketAssociations.allKeys()
         // Relationship edits can change classification without changing a
         // transcript's bytes or modification date.
-        if associations != lastAssociationKeys { cache = [:]; lastAssociationKeys = associations }
-        let cached = cache
-        let (records, updatedCache) = await Task.detached(priority: .userInitiated) {
+        if associations != lastAssociationKeys {
+            recentCache = [:]
+            fullCache = [:]
+            lastAssociationKeys = associations
+        }
+        let cached = limit == nil ? fullCache : recentCache
+        let scan = Task.detached(priority: .userInitiated) {
             Self.scan(root: root, associations: associations, cache: cached, limit: limit)
-        }.value
-        cache = updatedCache
+        }
+        let (records, updatedCache) = await withTaskCancellationHandler {
+            await scan.value
+        } onCancel: {
+            scan.cancel()
+        }
+        if !Task.isCancelled {
+            if limit == nil { fullCache = updatedCache } else { recentCache = updatedCache }
+        }
         return records
     }
 
@@ -80,6 +94,7 @@ final class SessionHistoryReader {
 
         var candidates: [(url: URL, byteCount: Int64, modified: Date)] = []
         for projectDir in projectDirs {
+            if Task.isCancelled { return ([], cache) }
             let files = (try? fileManager.contentsOfDirectory(
                 at: projectDir, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
                 options: [.skipsHiddenFiles]
@@ -93,12 +108,12 @@ final class SessionHistoryReader {
             }
         }
         candidates.sort { $0.modified > $1.modified }
-        let inspected: ArraySlice<(url: URL, byteCount: Int64, modified: Date)> =
-            limit.map { candidates.prefix($0) } ?? candidates[...]
+        let inspected = limit.map { candidates.prefix($0) } ?? candidates[...]
 
         var updatedCache = cache
         var records: [SessionHistoryRecord] = []
         for candidate in inspected {
+            if Task.isCancelled { return ([], cache) }
             // Canonical key so cache hits survive symlinked temp roots.
             let path = candidate.url.resolvingSymlinksInPath().path
             if let cached = cache[path], cached.byteCount == candidate.byteCount, cached.modified == candidate.modified {
@@ -106,8 +121,9 @@ final class SessionHistoryReader {
                 updatedCache[path] = cached
                 continue
             }
-            guard let metadata = transcriptMetadata(at: candidate.url),
-                  let sessionID = UUID(uuidString: candidate.url.deletingPathExtension().lastPathComponent) else {
+            guard let sessionID = UUID(uuidString: candidate.url.deletingPathExtension().lastPathComponent),
+                  let metadata = limit == nil ? transcriptMetadata(at: candidate.url)
+                      : historyPreview(at: candidate.url, byteCount: candidate.byteCount) else {
                 updatedCache.removeValue(forKey: path)
                 continue
             }
@@ -174,6 +190,35 @@ final class SessionHistoryReader {
         var hasMainConversation = false
     }
 
+    /// The history list needs titles and routing metadata. Sample the first
+    /// prompt and the latest records without streaming whole conversations.
+    nonisolated private static func historyPreview(at url: URL, byteCount: Int64) -> TranscriptMetadata? {
+        let headBytes = 24 * 1024
+        let tailBytes = 96 * 1024
+        if byteCount <= headBytes + tailBytes { return transcriptMetadata(at: url) }
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        var metadata = TranscriptMetadata()
+        func consume(_ data: Data, dropFirst: Bool, dropLast: Bool) {
+            var lines = data.split(separator: 0x0a, omittingEmptySubsequences: false)[...]
+            if dropFirst { lines = lines.dropFirst() }
+            if dropLast { lines = lines.dropLast() }
+            for line in lines where !line.isEmpty {
+                if let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] {
+                    apply(object, to: &metadata)
+                }
+            }
+        }
+        if let head = try? handle.read(upToCount: headBytes) {
+            consume(head, dropFirst: false, dropLast: true)
+        }
+        let offset = UInt64(byteCount - Int64(tailBytes))
+        if (try? handle.seek(toOffset: offset - 1)) != nil, let tail = try? handle.read(upToCount: tailBytes + 1) {
+            consume(tail, dropFirst: true, dropLast: false)
+        }
+        return metadata.hasMainConversation ? metadata : nil
+    }
+
     /// Streams the transcript line by line; malformed lines are skipped.
     /// Returns nil when the transcript holds no resumable conversation.
     nonisolated static func transcriptMetadata(at fileURL: URL) -> TranscriptMetadata? {
@@ -198,7 +243,7 @@ final class SessionHistoryReader {
             apply(object, to: &metadata)
         }
 
-        while true {
+        while !Task.isCancelled {
             let chunk: Data
             do { chunk = try fileHandle.read(upToCount: 1 << 20) ?? Data() } catch { break }
             if chunk.isEmpty { break }

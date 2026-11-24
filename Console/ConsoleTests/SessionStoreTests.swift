@@ -868,9 +868,9 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertFalse(args.contains("Alpha"))
         XCTAssertTrue(args.contains("--plugin-dir"))
         XCTAssertEqual(
-            args.filter { $0.hasPrefix("mcp__plugin_console-bridge_console__") }.count,
-            10,
-            "exactly the ten Console MCP tools are preapproved"
+            args.filter { $0.hasPrefix("mcp__plugin_console-bridge_console__") },
+            ConsoleClaudePluginAssembler.allowedToolNames,
+            "only the explicitly listed Console MCP tools are preapproved"
         )
         XCTAssertFalse(args.contains("*"), "no MCP wildcard is allowed")
     }

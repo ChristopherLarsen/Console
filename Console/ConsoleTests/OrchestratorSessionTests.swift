@@ -14,6 +14,8 @@ final class OrchestratorSessionTests: XCTestCase {
 
     private final class FakeLauncher: SessionProcessLaunching {
         var bridgeEnvironment: [String: String] = [:]
+        var arguments: [String] = []
+        var workingDirectory: String?
 
         func makeTerminalView() -> LocalProcessTerminalView {
             let view = ConsoleTerminalView()
@@ -29,6 +31,8 @@ final class OrchestratorSessionTests: XCTestCase {
             terminalView: LocalProcessTerminalView
         ) throws {
             bridgeEnvironment = environment
+            self.arguments = arguments
+            self.workingDirectory = workingDirectory
         }
 
         func startExitShell(
@@ -187,7 +191,7 @@ final class OrchestratorSessionTests: XCTestCase {
         XCTAssertFalse(store.debugTerminalSendBytes.contains { $0.sessionID == shell.id })
     }
 
-    func testChildInitialPromptFollowsRenameAndOnlyFirstTurnRelays() async throws {
+    func testChildInitialPromptFollowsRenameAndIdleWhileBuildingDoesNotFinishDirective() async throws {
         let store = makeStore()
         store.queuedCommandSpacing = 0
         let lead = try startOrchestrator(in: store, directory: tmpDirectory("child-relay"))
@@ -202,19 +206,230 @@ final class OrchestratorSessionTests: XCTestCase {
             "\u{15}\u{0B}", submittedText("/rename Worker"), "\r",
             "\u{15}\u{0B}", submittedText("First task"), "\r",
         ])
+        store.transcriptReply = { _, _ in "Build is resolving packages; waiting for it to finish." }
         try receive(.promptSubmitted, from: child.id, in: store)
         try receive(.turnCompleted, from: child.id, in: store)
-        try await Task.sleep(for: .seconds(SessionStore.relaySettleSeconds + 0.1))
-        XCTAssertEqual(store.pendingDirectiveCount(for: lead.id), 1)
-
-        try receive(.promptSubmitted, from: child.id, in: store)
-        try receive(.turnCompleted, from: child.id, in: store)
-        try await Task.sleep(for: .seconds(SessionStore.relaySettleSeconds + 0.1))
+        try await Task.sleep(for: .seconds(SessionStore.relaySettleSeconds + 0.15))
         XCTAssertEqual(store.pendingDirectiveCount(for: lead.id), 1)
         try receive(.turnCompleted, from: lead.id, in: store)
-        let notes = store.debugTerminalSendBytes.filter { $0.sessionID == lead.id && $0.utf8.contains("Console relay:") }
+        let notes = relayNotes(for: lead.id, in: store)
         XCTAssertEqual(notes.count, 1)
-        XCTAssertTrue(notes.first?.utf8.contains("finished your directive") == true)
+        XCTAssertTrue(notes[0].contains("ended its turn"))
+        XCTAssertTrue(notes[0].contains("Build is resolving packages"))
+        XCTAssertFalse(notes[0].contains("finished your directive"))
+
+        try receive(.promptSubmitted, from: lead.id, in: store)
+        try receive(.promptSubmitted, from: child.id, in: store)
+        try send(.completion, from: child.id, in: store) { envelope in
+            envelope.completionOutcome = .completed
+            envelope.completionSummary = "Build passed."
+        }
+        try receive(.turnCompleted, from: child.id, in: store)
+        try await Task.sleep(for: .seconds(SessionStore.relaySettleSeconds + 0.15))
+        try receive(.turnCompleted, from: lead.id, in: store)
+        XCTAssertTrue(relayNotes(for: lead.id, in: store).last?.contains("finished your directive") == true)
+        XCTAssertTrue(relayNotes(for: lead.id, in: store).last?.contains("Build passed.") == true)
+    }
+
+    private func relayNotes(for id: UUID, in store: SessionStore) -> [String] {
+        store.debugTerminalSendBytes.filter { $0.sessionID == id && $0.utf8.contains("Console relay:") }.map(\.utf8)
+    }
+
+    @discardableResult
+    private func send(_ kind: BridgeProtocol.MessageKind, from id: UUID, in store: SessionStore,
+                      configure: (inout BridgeEnvelope) -> Void = { _ in }) throws -> String {
+        let requestID = UUID().uuidString
+        var envelope = BridgeEnvelope(sessionID: id.uuidString, token: try XCTUnwrap(store.debugSessionToken(id)),
+                                      eventID: UUID().uuidString, kind: kind, requestID: requestID)
+        configure(&envelope)
+        store.debugReceiveEnvelope(envelope)
+        return requestID
+    }
+
+    func testAPIErrorAfterIdleRelaysFailureToOriginalOrchestrator() async throws {
+        let store = makeStore()
+        store.queuedCommandSpacing = 0
+        let lead = try startOrchestrator(in: store, directory: tmpDirectory("api-failure"))
+        try receive(.sessionStarted, from: lead.id, in: store)
+        try requestChild(in: store, from: lead.id, name: "Build", prompt: "Build app")
+        let child = try XCTUnwrap(store.children(of: lead).first)
+        try receive(.sessionStarted, from: child.id, in: store)
+        try receive(.promptSubmitted, from: child.id, in: store)
+        store.transcriptReply = { _, _ in "Still building." }
+        try receive(.turnCompleted, from: child.id, in: store)
+        try await Task.sleep(for: .seconds(SessionStore.relaySettleSeconds + 0.15))
+        XCTAssertTrue(relayNotes(for: lead.id, in: store).last?.contains("ended its turn") == true)
+
+        try receive(.promptSubmitted, from: child.id, in: store)
+        store.transcriptReply = { _, _ in "API Error: Connection lost mid-response" }
+        try receive(.turnCompleted, from: child.id, in: store)
+        try await Task.sleep(for: .seconds(SessionStore.relaySettleSeconds + 0.15))
+        XCTAssertEqual(store.session(withID: child.id)?.activity, .error)
+        try receive(.turnCompleted, from: lead.id, in: store)
+        let failure = try XCTUnwrap(relayNotes(for: lead.id, in: store).last)
+        XCTAssertTrue(failure.contains("failed your directive"))
+        XCTAssertTrue(failure.contains("Connection lost mid-response"))
+    }
+
+    func testHeldRelayReadsLateTranscriptFlushAtDelivery() async throws {
+        let store = makeStore()
+        store.queuedCommandSpacing = 0
+        let root = tmpDirectory("transcripts")
+        let project = root.appendingPathComponent("project")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+        store.transcriptReply = { id, since in
+            TranscriptTail.currentTurnReply(claudeSessionID: id, since: since, projectsRoot: root)
+        }
+        let lead = try startOrchestrator(in: store, directory: root)
+        try receive(.sessionStarted, from: lead.id, in: store)
+        try receive(.promptSubmitted, from: lead.id, in: store)
+        try requestChild(in: store, from: lead.id, name: "Worker", prompt: "First task")
+        let child = try XCTUnwrap(store.children(of: lead).first)
+        try receive(.sessionStarted, from: child.id, in: store)
+        try receive(.promptSubmitted, from: child.id, in: store)
+        let url = project.appendingPathComponent(child.claudeSessionID.uuidString.lowercased() + ".jsonl")
+        let old = #"{"type":"assistant","message":{"content":[{"type":"text","text":"Previous turn"}]}}"#
+        let prompt = #"{"type":"user","message":{"content":"First task"}}"#
+        let new = #"{"type":"assistant","message":{"content":[{"type":"text","text":"Latest result"}]}}"#
+        try [old, prompt].joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        try receive(.turnCompleted, from: child.id, in: store)
+        try await Task.sleep(for: .seconds(SessionStore.relaySettleSeconds + 0.15))
+        XCTAssertEqual(store.pendingDirectiveCount(for: lead.id), 1)
+        try [old, prompt, new].joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        try receive(.turnCompleted, from: lead.id, in: store)
+        let note = try XCTUnwrap(relayNotes(for: lead.id, in: store).last)
+        XCTAssertTrue(note.contains("Latest result"))
+        XCTAssertFalse(note.contains("Previous turn"))
+    }
+
+    func testReadOnlyChildLaunchesInWorkspaceWithModelAndLongBrief() throws {
+        let launcher = FakeLauncher()
+        let store = makeStore(launcher: launcher)
+        store.queuedCommandSpacing = 0
+        let workspace = tmpDirectory("workspace")
+        let checkout = workspace.appendingPathComponent("Console")
+        try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: false)
+        let git = checkout.appendingPathComponent(".git")
+        try FileManager.default.createDirectory(at: git, withIntermediateDirectories: false)
+        try "ref: refs/heads/review-fixture\n".write(to: git.appendingPathComponent("HEAD"), atomically: true, encoding: .utf8)
+        store.childWorkspaceRoots = { [workspace] }
+        let lead = try startOrchestrator(in: store, directory: workspace)
+        let root = URL(fileURLWithPath: try XCTUnwrap(launcher.bridgeEnvironment["CONSOLE_TERM_BRIDGE_SOCKET"])).deletingLastPathComponent()
+        let id = UUID().uuidString
+        let brief = String(repeating: "Review this code.\n", count: 400)
+        try brief.write(to: root.appendingPathComponent("child-brief-\(id).md"), atomically: true, encoding: .utf8)
+        try send(.createSession, from: lead.id, in: store) { envelope in
+            envelope.requestID = id
+            envelope.createPurpose = "general"
+            envelope.createName = "Fable review"
+            envelope.createModel = "fable"
+            envelope.createCWD = checkout.path
+            envelope.createToolProfile = "readOnlyPrep"
+            envelope.createBriefID = id
+        }
+        let child = try XCTUnwrap(store.children(of: lead).first)
+        XCTAssertEqual(launcher.workingDirectory, checkout.resolvingSymlinksInPath().path)
+        XCTAssertTrue(launcher.arguments.contains("fable"))
+        XCTAssertTrue(launcher.arguments.contains("--model"))
+        XCTAssertTrue(launcher.arguments.contains("dontAsk"))
+        XCTAssertFalse(launcher.arguments.contains("--dangerously-skip-permissions"))
+        let bundle = root.appendingPathComponent("child-context-\(id)/brief.md")
+        XCTAssertEqual(try String(contentsOf: bundle, encoding: .utf8), brief)
+        try receive(.sessionStarted, from: child.id, in: store)
+        XCTAssertTrue(store.debugTerminalSendBytes.contains { $0.sessionID == child.id && $0.utf8.contains(bundle.path) })
+        let path = try XCTUnwrap(launcher.bridgeEnvironment["CONSOLE_SESSIONS_SNAPSHOT"])
+        let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as? [[String: Any]])
+        let row = try XCTUnwrap(rows.first { $0["id"] as? String == child.id.uuidString })
+        XCTAssertEqual(row["tool_profile"] as? String, "readOnlyPrep")
+        XCTAssertEqual(row["model"] as? String, "fable")
+        XCTAssertEqual(row["git_branch"] as? String, "review-fixture")
+        XCTAssertNotNil(row["state_since"])
+    }
+
+    func testPlanUpdateChecksRevisionAndPersistsBesideScanBrief() throws {
+        let launcher = FakeLauncher()
+        let store = makeStore(launcher: launcher)
+        let lead = try startOrchestrator(in: store, directory: tmpDirectory("plan"))
+        let brief = try XCTUnwrap(store.writeOrchestratorBrief("Scan"))
+        let root = brief.deletingLastPathComponent()
+        let results = root.appendingPathComponent("mcp-results")
+        let requestID = UUID().uuidString
+        let plan = OrchestratorPlan(goal: "Finish review", approved: true, steps: [
+            .init(id: "review", ownerSession: nil, directive: "Review the current diff.", status: .pending),
+        ], decisions: [.init(id: 1, question: "Post the review?", options: ["yes", "hold"])])
+        func replacePlan(id: String) throws {
+            try plan.json().write(to: root.appendingPathComponent("plan-update-\(id).json"))
+            try send(.updatePlan, from: lead.id, in: store) { envelope in
+                envelope.requestID = id
+                envelope.planUpdateID = id
+            }
+        }
+        try replacePlan(id: requestID)
+        XCTAssertEqual(try store.loadOrchestratorPlan().revision, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("orchestrator-plan.json").path))
+        let staleID = UUID().uuidString
+        try replacePlan(id: staleID)
+        XCTAssertEqual(try readResult(staleID, directory: results)["ok"] as? Bool, false)
+        let get = try send(.getPlan, from: lead.id, in: store)
+        let output = try XCTUnwrap(readResult(get, directory: results)["output"] as? String)
+        XCTAssertEqual(try JSONDecoder().decode(OrchestratorPlan.self, from: Data(output.utf8)).decisions, plan.decisions)
+    }
+
+    func testWatchedSessionRelaysFailureWithoutDirective() async throws {
+        let store = makeStore()
+        store.queuedCommandSpacing = 0
+        let root = tmpDirectory("watch")
+        let lead = try startOrchestrator(in: store, directory: root)
+        let worker = try store.createSession(name: "Watched", workingDirectory: root)
+        try receive(.sessionStarted, from: lead.id, in: store)
+        try receive(.sessionStarted, from: worker, in: store)
+        try send(.watchSession, from: lead.id, in: store) { $0.targetSessionID = worker.uuidString }
+        try receive(.promptSubmitted, from: worker, in: store)
+        try receive(.turnFailed, from: worker, in: store)
+        try await Task.sleep(for: .seconds(SessionStore.relaySettleSeconds + 0.15))
+        XCTAssertTrue(relayNotes(for: lead.id, in: store).last?.contains("failed.") == true)
+    }
+
+    func testRecentlyClosedChildCanResumeWithItsReadOnlyProfile() throws {
+        let launcher = FakeLauncher()
+        let store = makeStore(launcher: launcher)
+        let directory = tmpDirectory("reopen")
+        let lead = try startOrchestrator(in: store, directory: directory)
+        try send(.createSession, from: lead.id, in: store) { envelope in
+            envelope.createPurpose = "review"
+            envelope.createName = "Review waiting on author"
+            envelope.createModel = "fable"
+            envelope.createToolProfile = "readOnlyPrep"
+        }
+        let original = try XCTUnwrap(store.children(of: lead).first)
+        try receive(.sessionStarted, from: original.id, in: store)
+        try receive(.promptSubmitted, from: original.id, in: store)
+        try receive(.turnCompleted, from: original.id, in: store)
+        store.terminateSession(id: original.id)
+        XCTAssertNil(store.session(withID: original.id))
+
+        let recent = try XCTUnwrap(store.recentlyClosedSessions.first)
+        XCTAssertEqual(recent.id, original.claudeSessionID)
+        XCTAssertEqual(recent.purpose, .review)
+        let reopened = try XCTUnwrap(store.session(withID: store.resumeSession(from: recent)))
+        XCTAssertEqual(reopened.claudeSessionID, original.claudeSessionID)
+        XCTAssertEqual(reopened.parentClaudeSessionID, lead.claudeSessionID)
+        XCTAssertEqual(reopened.model, "fable")
+        XCTAssertTrue(launcher.arguments.contains("--resume"))
+        XCTAssertTrue(launcher.arguments.contains("dontAsk"))
+    }
+
+    func testScheduledRecheckWakesIdleOrchestrator() async throws {
+        let store = makeStore()
+        store.queuedCommandSpacing = 0
+        let lead = try startOrchestrator(in: store, directory: tmpDirectory("recheck"))
+        try receive(.sessionStarted, from: lead.id, in: store)
+        try send(.recheckIn, from: lead.id, in: store) { $0.recheckMinutes = 0.1 }
+        let deadline = ContinuousClock.now + .seconds(8)
+        while relayNotes(for: lead.id, in: store).isEmpty && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertTrue(relayNotes(for: lead.id, in: store).last?.contains("scheduled recheck is due") == true)
     }
 
     func testFollowUpDirectiveWaitsForChildStartupQueueAndFirstTurn() async throws {
@@ -333,7 +548,7 @@ final class OrchestratorSessionTests: XCTestCase {
         XCTAssertTrue(brief.contains("prompt_console_session"))
         XCTAssertTrue(brief.contains("Worker"))
         XCTAssertTrue(brief.contains("Run the orchestrator-run skill"))
-        XCTAssertTrue(brief.contains("approve the goal and plan"))
+        XCTAssertTrue(brief.contains("approval for a new goal and plan"))
         XCTAssertFalse(brief.contains("Optional("))
     }
 
@@ -408,7 +623,7 @@ final class OrchestratorSessionTests: XCTestCase {
         XCTAssertTrue(note.hasPrefix("Console relay: session \"Worker\""))
         XCTAssertTrue(note.contains(workerID.uuidString))
         XCTAssertTrue(note.contains("finished your directive"))
-        XCTAssertTrue(note.hasSuffix("Update your plan. Continue approved steps; ask before anything off-plan."))
+        XCTAssertTrue(note.contains("Batch outward-facing decisions"))
         XCTAssertFalse(note.contains("\n"))
     }
 
@@ -452,7 +667,7 @@ final class OrchestratorSessionTests: XCTestCase {
         XCTAssertFalse(prompt.contains("\n"))
         XCTAssertTrue(prompt.contains("/tmp/x/orchestrator-brief.md"))
         XCTAssertTrue(prompt.contains("orchestrator-run"))
-        XCTAssertTrue(prompt.contains("approve the goal and plan"))
+        XCTAssertTrue(prompt.contains("approve any new goal and plan"))
     }
 
     func testVersionComparisonHelpers() {

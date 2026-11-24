@@ -80,7 +80,9 @@ final class SessionsPackagingTests: XCTestCase {
         }
         let skill = try String(contentsOf: pluginRoot.appendingPathComponent("skills/orchestrator-run/SKILL.md"), encoding: .utf8)
         XCTAssertFalse(skill.contains("Approve every step"))
-        XCTAssertTrue(skill.contains("A single clear approval covers all listed steps"))
+        XCTAssertTrue(skill.contains("closing children with recorded results are automatic"))
+        XCTAssertTrue(skill.contains("Outward-facing actions still need their own explicit decision"))
+        XCTAssertTrue(skill.contains("Never delegate through the in-process Agent or Task tool"))
 
         // Manifest names the plugin consistently with preapproved tool names.
         let manifestData = try Data(contentsOf: pluginRoot.appendingPathComponent(".claude-plugin/plugin.json"))
@@ -117,9 +119,13 @@ final class SessionsPackagingTests: XCTestCase {
                 "mcp__plugin_console-bridge_console__read_console_session_output",
                 "mcp__plugin_console-bridge_console__cancel_console_directive",
                 "mcp__plugin_console-bridge_console__get_home_board",
+                "mcp__plugin_console-bridge_console__recheck_in",
+                "mcp__plugin_console-bridge_console__watch_console_session",
+                "mcp__plugin_console-bridge_console__update_plan",
+                "mcp__plugin_console-bridge_console__get_plan",
             ]
         )
-        XCTAssertEqual(ConsoleClaudePluginAssembler.allowedToolNames.count, 10)
+        XCTAssertEqual(ConsoleClaudePluginAssembler.allowedToolNames.count, 14)
         XCTAssertFalse(
             ConsoleClaudePluginAssembler.allowedToolNames.contains(where: { $0.contains("*") }),
             "no wildcards"
@@ -148,6 +154,10 @@ final class SessionsPackagingTests: XCTestCase {
             "mcp__plugin_console-bridge_console__read_console_session_output",
             "mcp__plugin_console-bridge_console__cancel_console_directive",
             "mcp__plugin_console-bridge_console__get_home_board",
+            "mcp__plugin_console-bridge_console__recheck_in",
+            "mcp__plugin_console-bridge_console__watch_console_session",
+            "mcp__plugin_console-bridge_console__update_plan",
+            "mcp__plugin_console-bridge_console__get_plan",
         ]) { $0 == $1 })
         XCTAssertFalse(args.contains("--name"))
         XCTAssertFalse(args.contains("My Task"))

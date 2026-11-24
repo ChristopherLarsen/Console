@@ -9,12 +9,15 @@ struct SessionRestorationRecord: Codable, Equatable, Identifiable {
     let purpose: SessionPurpose
     var processIdentity: SessionProcessIdentity? = nil
     var parentClaudeSessionID: UUID? = nil
+    var model: String? = nil
+    var readOnly: Bool? = nil
 }
 
 struct SessionRestorationSnapshot: Codable, Equatable {
     var version = 1
     var sessions: [SessionRestorationRecord] = []
     var selectedClaudeSessionID: UUID?
+    var recentlyClosed: [SessionRestorationRecord]?
 }
 
 struct SessionRestorationStore {

@@ -596,17 +596,33 @@ enum OwnedProcessTree {
 
     static func descendantIDs(of root: pid_t) -> Set<pid_t> {
         guard root > 1 else { return [] }
-        let parentByPID = processParents()
+        return descendantIDs(of: root, childrenByParent: childrenByParent())
+    }
+
+    static func descendantIDs(of root: pid_t, childrenByParent: [pid_t: Set<pid_t>]) -> Set<pid_t> {
+        guard root > 1 else { return [] }
         var owned = Set<pid_t>()
         var stack = [root]
         while let current = stack.popLast() {
-            for (pid, ppid) in parentByPID where ppid == current && pid != current && pid > 1 {
-                if owned.insert(pid).inserted {
-                    stack.append(pid)
-                }
+            for pid in childrenByParent[current] ?? [] where pid != root {
+                if owned.insert(pid).inserted { stack.append(pid) }
             }
         }
         return owned
+    }
+
+    static func childrenByParent() -> [pid_t: Set<pid_t>] {
+        var children: [pid_t: Set<pid_t>] = [:]
+        for (pid, parent) in processParents() where pid > 1 && pid != parent {
+            children[parent, default: []].insert(pid)
+        }
+        return children
+    }
+
+    static func processName(_ pid: pid_t) -> String? {
+        var buffer = [UInt8](repeating: 0, count: 1024)
+        guard proc_name(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return String(decoding: buffer.prefix(while: { $0 != 0 }), as: UTF8.self)
     }
 
     private static func processParents() -> [pid_t: pid_t] {

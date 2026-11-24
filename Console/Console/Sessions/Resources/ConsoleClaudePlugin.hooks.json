@@ -11,18 +11,6 @@
         ]
       }
     ],
-    "Notification" : [
-      {
-        "matcher" : "idle_prompt",
-        "hooks" : [
-          {
-            "type" : "command",
-            "async" : true,
-            "command" : "\"$CONSOLE_TERM_BRIDGE_HELPER\" hook NotificationIdlePrompt"
-          }
-        ]
-      }
-    ],
     "PermissionRequest" : [
       {
         "hooks" : [

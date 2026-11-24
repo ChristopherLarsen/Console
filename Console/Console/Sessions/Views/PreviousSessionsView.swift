@@ -14,6 +14,7 @@ struct PreviousSessionsView: View {
     @State private var model = PreviousSessionsModel()
     @State private var searchText = ""
     @State private var onlyNMAOrMR = true
+    @State private var scanOlderSessions = false
     @State private var resumingSessionIDs: Set<UUID> = []
     @State private var errorMessage: String?
 
@@ -33,21 +34,16 @@ struct PreviousSessionsView: View {
             Divider()
             controls
             content
-            if showAllSessionsFooter && !noSessionFolder && model.loadErrorMessage == nil {
-                Divider()
-                allSessionsFooter
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
         .onExitCommand { dismiss() }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("PreviousSessions")
-        .task {
+        .task(id: scanOlderSessions) {
             model.useWorkAssociations(store.associations)
-            await model.load()
+            if scanOlderSessions { await model.loadAllSessions() }
+            else { await model.load() }
         }
     }
 
@@ -107,6 +103,12 @@ struct PreviousSessionsView: View {
                 .fixedSize()
                 .help("Show only sessions associated with an NMA story or merge request")
                 .accessibilityIdentifier("PreviousSessions.NMAOrMRFilter")
+            Toggle("Include older sessions", isOn: $scanOlderSessions)
+                .toggleStyle(.checkbox)
+                .fixedSize()
+                .help("Scan all transcripts instead of the 50 most recent")
+                .accessibilityIdentifier("PreviousSessions.IncludeOlderSessions")
+            if model.isLoading && !model.records.isEmpty { ProgressView().controlSize(.small) }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -179,40 +181,6 @@ struct PreviousSessionsView: View {
         workspaceStore.defaultFolder == nil
     }
 
-    /// The expansion footer appears while the default recent-50 list is
-    /// shown — including while a full load is in flight, when it renders
-    /// progress — and hides once everything is loaded or while searching
-    /// (expansion would not change a filtered-out list).
-    private var showAllSessionsFooter: Bool {
-        !model.isShowingAllSessions
-            && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !model.records.isEmpty
-    }
-
-    /// Indexes every available transcript, not just the most recent 50.
-    private var allSessionsFooter: some View {
-        HStack(spacing: 6) {
-            if model.isLoading {
-                ProgressView()
-                    .controlSize(.small)
-                Text("Loading all sessions…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Button {
-                    Task { await model.loadAllSessions() }
-                } label: {
-                    Label("All sessions", systemImage: "clock.arrow.circlepath")
-                        .font(.callout)
-                }
-                .buttonStyle(.borderless)
-                .help("Index every previous session instead of the 50 most recent")
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .accessibilityIdentifier("PreviousSessions.AllSessionsButton")
-    }
-
     private func messageView(_ text: String) -> some View {
         VStack(spacing: 6) {
             Text(text)
@@ -230,7 +198,10 @@ struct PreviousSessionsView: View {
         var records = model.records
         if let folder = workspaceStore.defaultFolder {
             let canonical = CheckoutPath.canonical(folder.directoryURL)
-            records = records.filter { CheckoutPath.canonical($0.workingDirectory) == canonical }
+            let root = URL(fileURLWithPath: canonical).pathComponents
+            records = records.filter {
+                URL(fileURLWithPath: CheckoutPath.canonical($0.workingDirectory)).pathComponents.starts(with: root)
+            }
         }
         if onlyNMAOrMR {
             records = records.filter { $0.isAssociatedWithNMAOrMR(artifacts: store.associations.artifacts(for: $0.id)) }
@@ -334,12 +305,18 @@ final class PreviousSessionsModel {
         await load(limit: nil, showingAll: true)
     }
 
+    private var loadGeneration = 0
+
     private func load(limit: Int?, showingAll: Bool) async {
-        guard !isLoading else { return }
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
         loadErrorMessage = nil
-        defer { isLoading = false }
-        records = await reader.loadRecords(limit: limit)
+        let loaded = await reader.loadRecords(limit: limit)
+        guard generation == loadGeneration else { return }
+        isLoading = false
+        guard !Task.isCancelled else { return }
+        records = loaded
         isShowingAllSessions = showingAll
     }
 }

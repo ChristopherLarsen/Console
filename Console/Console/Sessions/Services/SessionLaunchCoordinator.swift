@@ -79,21 +79,22 @@ final class SessionLaunchCoordinator {
         self.store = store
         self.workspaceStore = workspaceStore
         self.historyRoot = historyRoot
+        store.childWorkspaceRoots = { workspaceStore.availableWorkspaces.map(\.directoryURL) }
         if store.homeBoardBriefProvider == nil {
             store.homeBoardBriefProvider = { [weak store] in
-                Self.currentScanBrief(sessions: store?.sessions ?? [])
+                Self.currentScanBrief(sessions: store?.sessions ?? [], plan: try? store?.loadOrchestratorPlan())
             }
         }
     }
 
     /// The scan brief from live sessions and the current Home data, without
     /// a network fetch.
-    static func currentScanBrief(sessions: [ConsoleSession]) -> String {
+    static func currentScanBrief(sessions: [ConsoleSession], plan: OrchestratorPlan? = nil) -> String {
         let home = HomeBoardModel.gatherSnapshot(
             jiraController: JiraWebSession.shared.panelController,
             reviewsController: MRReviewScanController.shared
         )
-        return OrchestratorScanBrief.build(sessions: sessions, homeSnapshot: home)
+        return OrchestratorScanBrief.build(sessions: sessions, homeSnapshot: home, plan: plan)
     }
 
     // MARK: - Orchestrator
@@ -156,7 +157,7 @@ final class SessionLaunchCoordinator {
             // is only focused.
             guard orchestratorRunState != .running else { return }
             guard session.activity != .working else { return }
-            let brief = Self.currentScanBrief(sessions: store.sessions)
+            let brief = Self.currentScanBrief(sessions: store.sessions, plan: try? store.loadOrchestratorPlan())
             orchestratorRunState = .running
             if let briefURL = store.writeOrchestratorBrief(brief) {
                 // Same guarded path as directives, so a rescan never wipes a
@@ -416,8 +417,7 @@ final class SessionLaunchCoordinator {
         ), isDirectory.boolValue else {
             throw LaunchError.resumeFolderMissing
         }
-        let transcriptURL = historyRoot
-        guard directoryContainsTranscript(named: record.claudeSessionID.uuidString, under: transcriptURL) else {
+        guard TranscriptTail.transcriptURL(claudeSessionID: record.id, projectsRoot: historyRoot) != nil else {
             throw LaunchError.resumeTranscriptMissing
         }
 
@@ -593,24 +593,6 @@ final class SessionLaunchCoordinator {
         lastFailure = nil
         ConsoleNavigation.showSessions()
         return sessionID
-    }
-
-    /// Cheap transcript-existence check for the resume path: any project
-    /// directory under Claude's history root may hold the transcript.
-    private func directoryContainsTranscript(named sessionID: String, under root: URL) -> Bool {
-        let fileManager = FileManager.default
-        guard let projectDirs = try? fileManager.contentsOfDirectory(
-            at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
-        ) else {
-            return false
-        }
-        let fileName = "\(sessionID).jsonl"
-        for projectDir in projectDirs {
-            if fileManager.fileExists(atPath: projectDir.appendingPathComponent(fileName).path) {
-                return true
-            }
-        }
-        return false
     }
 
     /// Opens Settings so the user can fix the Claude executable or the

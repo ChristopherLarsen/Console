@@ -56,6 +56,7 @@ final class SessionStore {
     @ObservationIgnored private var headlessPreviewMode = false
     #endif
     @ObservationIgnored private let restorationStore: SessionRestorationStore?
+    private(set) var recentlyClosedSessions: [SessionRestorationRecord] = []
     @ObservationIgnored private var savedSnapshot = SessionRestorationSnapshot()
     @ObservationIgnored private var isTerminating = false
     @ObservationIgnored private var restorationLoadFailed = false
@@ -133,6 +134,7 @@ final class SessionStore {
             do {
                 savedSnapshot = try restorationStore.load()
                 pendingRestorations = savedSnapshot.sessions
+                recentlyClosedSessions = savedSnapshot.recentlyClosed ?? []
             } catch {
                 restorationLoadFailed = true
                 restorationPersistenceError = "Saved sessions could not be read: \(error.localizedDescription)"
@@ -360,6 +362,12 @@ final class SessionStore {
 
         let consoleID = UUID()
         let claudeID = record?.claudeSessionID ?? UUID()
+        let model = record?.model ?? request.model
+        let toolProfile: SessionToolProfile = if let record {
+            record.readOnly == true ? .readOnlyPrep(contextDirectory: request.workingDirectory) : .standard
+        } else {
+            request.toolProfile
+        }
         let displayName = request.purpose == .orchestrator
             ? SessionPurpose.orchestrator.defaultName(source: nil)
             : Self.uniquedName(request.name.trimmingCharacters(in: .whitespacesAndNewlines), existingNames: activeNames)
@@ -389,7 +397,8 @@ final class SessionStore {
                 pluginDirectory: pluginRoot.path,
                 resume: record != nil,
                 agent: Self.agent(for: request),
-                toolProfile: record == nil ? request.toolProfile : .standard
+                model: model,
+                toolProfile: toolProfile
             )
             environment = childEnvironment(
                 bridgeEnvironment: [
@@ -411,7 +420,8 @@ final class SessionStore {
                 pluginDirectory: nil,
                 resume: record != nil,
                 agent: Self.agent(for: request),
-                toolProfile: record == nil ? request.toolProfile : .standard
+                model: model,
+                toolProfile: toolProfile
             )
             environment = childEnvironment(bridgeEnvironment: [:])
             bridgeStatus = .unavailable
@@ -422,7 +432,7 @@ final class SessionStore {
         // for Claude because discovery also checks the executable and session argv.
         environment[HeadlessSessionProcesses.sessionEnvironmentKey] = claudeID.uuidString
 
-        let session = ConsoleSession(
+        var session = ConsoleSession(
             id: consoleID,
             claudeSessionID: claudeID,
             name: displayName,
@@ -440,6 +450,8 @@ final class SessionStore {
             parentClaudeSessionID: parentClaudeSessionID
         )
 
+        session.model = model
+        session.toolProfile = toolProfile
         let previousSelection = selectedSessionID
         insertSession(session)
         if let token {
@@ -599,9 +611,11 @@ final class SessionStore {
         pluginDirectory: String?,
         resume: Bool = false,
         agent: String? = nil,
+        model: String? = nil,
         toolProfile: SessionToolProfile = .standard
     ) -> [String] {
         var arguments = [resume ? "--resume" : "--session-id", claudeSessionID.uuidString]
+        if let model { arguments += ["--model", model] }
         switch toolProfile {
         case .standard:
             arguments.append("--dangerously-skip-permissions")
@@ -724,6 +738,9 @@ final class SessionStore {
         guard let index = sessions.firstIndex(where: { $0.id == sessionID }),
               sessions[index].attention == .unreadCompletion else { return }
         sessions[index].attention = .none
+        sessions[index].stateSince = Date()
+        if watchedSessions[sessionID] != nil { scheduleRelay(for: sessionID, outcome: .attention) }
+        writeSessionsSnapshot()
     }
 
     /// Drops the selection so the Sessions destination shows its empty pane.
@@ -989,10 +1006,19 @@ final class SessionStore {
     private func closeSession(id: UUID, preservingRestoration: Bool = false) {
         if !preservingRestoration, let session = session(withID: id) {
             pendingRestorations.removeAll { $0.id == session.claudeSessionID }
+            if session.purpose != .blank, session.purpose != .orchestrator,
+               session.lastTurnStarted != nil || TranscriptTail.transcriptURL(
+                   claudeSessionID: session.claudeSessionID, projectsRoot: TranscriptTail.defaultProjectsRoot
+               ) != nil {
+                let record = restorationRecord(for: session, processIdentity: nil)
+                recentlyClosedSessions.removeAll { $0.id == record.id }
+                recentlyClosedSessions.insert(record, at: 0)
+                recentlyClosedSessions = Array(recentlyClosedSessions.prefix(10))
+            }
         }
         terminateOwnedProcesses(for: id)
         stopTargets.removeValue(forKey: id)
-        dropDirectives(for: id, reason: "was closed before finishing")
+        dropDirectives(for: id, reason: .exited)
         sessions.removeAll(where: { $0.id == id })
         sessionTokens.removeValue(forKey: id)
         pendingSlashCommands.removeValue(forKey: id)
@@ -1011,7 +1037,7 @@ final class SessionStore {
         stopTargets.removeValue(forKey: sessionID)
         pendingSlashCommands.removeValue(forKey: sessionID)
         settlingSessions.remove(sessionID)
-        dropDirectives(for: sessionID, reason: "ended before finishing")
+        dropDirectives(for: sessionID, reason: .exited)
         if !isTerminating, let record = startingRestorations.removeValue(forKey: sessionID) {
             if !pendingRestorations.contains(where: { $0.id == record.id }) {
                 pendingRestorations.append(record)
@@ -1207,8 +1233,10 @@ final class SessionStore {
     func noteUserInput(sessionID: UUID) {
         guard session(withID: sessionID) != nil else { return }
         lastUserInputAt[sessionID] = Date()
+        let attention = session(withID: sessionID)?.attention
         applyEvent(.userInputObserved, to: sessionID)
         if heldDirectives[sessionID] != nil { scheduleDirectiveRecheck() }
+        if attention != session(withID: sessionID)?.attention { writeSessionsSnapshot() }
     }
 
     fileprivate func handleValidatedEnvelope(sessionID: UUID, envelope: BridgeEnvelope) {
@@ -1254,14 +1282,109 @@ final class SessionStore {
         case .cancelDirective:
             handleCancelDirectiveRequest(from: sessionID, envelope: envelope)
             return
+        case .refreshSessions:
+            writeSessionsSnapshot()
+            writeMCPResult(requestID: envelope.requestID, ok: true)
+            return
         case .homeBoard:
             handleHomeBoardRequest(from: sessionID, envelope: envelope)
+            return
+        case .getPlan, .updatePlan, .watchSession, .recheckIn:
+            handleOrchestratorRequest(from: sessionID, envelope: envelope)
             return
         }
 
         applyEvent(event, to: sessionID)
         handleDirectiveLifecycle(sessionID: sessionID, event: event)
         writeSessionsSnapshot()
+    }
+
+    private var watchedSessions: [UUID: UUID] = [:]
+    private var scheduledRechecks: [UUID: Task<Void, Never>] = [:]
+
+    private var bridgeDirectory: URL? {
+        socketPath.map { URL(fileURLWithPath: $0).deletingLastPathComponent() }
+    }
+
+    private var orchestratorPlanURL: URL? {
+        (restorationStore?.url.deletingLastPathComponent() ?? bridgeDirectory)?
+            .appendingPathComponent("orchestrator-plan.json")
+    }
+
+    func loadOrchestratorPlan() throws -> OrchestratorPlan {
+        guard let url = orchestratorPlanURL else { return .init() }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return .init()
+        }
+        let plan = try JSONDecoder().decode(OrchestratorPlan.self, from: data)
+        guard plan.isValid else { throw CocoaError(.fileReadCorruptFile) }
+        return plan
+    }
+
+    private func handleOrchestratorRequest(from requesterID: UUID, envelope: BridgeEnvelope) {
+        let requestID = envelope.requestID
+        guard let requester = session(withID: requesterID),
+              requester.purpose == .orchestrator, requester.activity != .exited else {
+            writeMCPResult(requestID: requestID, ok: false, error: "only the live orchestrator may use this tool")
+            return
+        }
+        switch envelope.kind {
+        case .getPlan, .updatePlan:
+            do {
+                var plan = try loadOrchestratorPlan()
+                if envelope.kind == .updatePlan {
+                    guard let id = envelope.planUpdateID, let bridgeDirectory, let url = orchestratorPlanURL else {
+                        throw CocoaError(.fileNoSuchFile)
+                    }
+                    let staged = bridgeDirectory.appendingPathComponent("plan-update-\(id).json")
+                    defer { try? FileManager.default.removeItem(at: staged) }
+                    let values = try staged.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+                    guard values.isRegularFile == true, values.isSymbolicLink != true,
+                          let size = values.fileSize, (1...65536).contains(size) else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    var updated = try JSONDecoder().decode(OrchestratorPlan.self, from: Data(contentsOf: staged))
+                    guard updated.isValid else { throw CocoaError(.fileReadCorruptFile) }
+                    guard updated.revision == plan.revision else {
+                        writeMCPResult(requestID: requestID, ok: false, error: "plan revision changed; reload with get_plan")
+                        return
+                    }
+                    updated.revision += 1
+                    let data = try updated.json()
+                    guard data.count <= 65536 else { throw CocoaError(.fileWriteOutOfSpace) }
+                    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try data.write(to: url, options: .atomic)
+                    plan = updated
+                }
+                writeMCPResult(requestID: requestID, ok: true, output: String(decoding: try plan.json(), as: UTF8.self))
+            } catch {
+                writeMCPResult(requestID: requestID, ok: false, error: "could not read or update plan: \(error.localizedDescription)")
+            }
+        case .watchSession:
+            guard let raw = envelope.targetSessionID, let id = UUID(uuidString: raw),
+                  let target = session(withID: id), target.purpose != .orchestrator, target.purpose != .blank,
+                  target.activity != .exited else {
+                writeMCPResult(requestID: requestID, ok: false, error: "watch requires a live Claude peer")
+                return
+            }
+            watchedSessions[id] = requesterID
+            writeMCPResult(requestID: requestID, ok: true, sessionID: id, status: "watching")
+        case .recheckIn:
+            guard let minutes = envelope.recheckMinutes else { return }
+            scheduledRechecks[requesterID]?.cancel()
+            scheduledRechecks[requesterID] = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(minutes * 60)) } catch { return }
+                guard let self else { return }
+                self.scheduledRechecks.removeValue(forKey: requesterID)
+                self.relay("Console relay: scheduled recheck is due. Read the plan and continue ready work within the approval tiers.", to: requesterID)
+            }
+            writeMCPResult(requestID: requestID, ok: true, status: "scheduled")
+        default:
+            break
+        }
     }
 
     /// Console MCP create: only the orchestrator may request new sessions.
@@ -1280,8 +1403,8 @@ final class SessionStore {
             writeMCPResult(requestID: requestID, ok: false, error: "invalid or disallowed purpose")
             return
         }
-        let prompt = envelope.createInitialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard purpose != .blank || prompt.isEmpty else {
+        var prompt = envelope.createInitialPrompt ?? ""
+        guard purpose != .blank || (prompt.isEmpty && envelope.createBriefID == nil) else {
             writeMCPResult(requestID: requestID, ok: false, error: "blank sessions cannot take an initial_prompt")
             return
         }
@@ -1289,13 +1412,51 @@ final class SessionStore {
         let displayName = (name?.isEmpty == false) ? name! : purpose.defaultName(source: nil)
         // Agent is opt-in only. Do not invent `agent-review` for purpose=review —
         // that agent is often absent and would fail the launch.
-        let agent = envelope.createAgent
+        let workingDirectory: URL
+        if let path = envelope.createCWD {
+            guard let validated = validatedChildDirectory(path) else {
+                writeMCPResult(requestID: requestID, ok: false, error: "cwd must be an available directory inside a configured workspace")
+                return
+            }
+            workingDirectory = validated
+        } else {
+            workingDirectory = requester.workingDirectory
+        }
+        var briefDirectory: URL?
+        if let briefID = envelope.createBriefID, let socketPath {
+            let directory = URL(fileURLWithPath: socketPath).deletingLastPathComponent()
+            let brief = directory.appendingPathComponent("child-brief-\(briefID).md")
+            guard briefID == requestID,
+                  let values = try? brief.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+                  values.isRegularFile == true, values.isSymbolicLink != true,
+                  let size = values.fileSize, (1...262144).contains(size) else {
+                writeMCPResult(requestID: requestID, ok: false, error: "staged child brief unavailable")
+                return
+            }
+            // Expose only the child brief to the restricted process, not the socket's siblings.
+            let context = directory.appendingPathComponent("child-context-\(briefID)", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: context, withIntermediateDirectories: false)
+                let childBrief = context.appendingPathComponent("brief.md")
+                try FileManager.default.moveItem(at: brief, to: childBrief)
+                briefDirectory = context
+                prompt = "Read the task brief at \(childBrief.path) and carry out its instructions."
+            } catch {
+                try? FileManager.default.removeItem(at: context)
+                writeMCPResult(requestID: requestID, ok: false, error: "could not prepare child brief")
+                return
+            }
+        }
+        let profile: SessionToolProfile = envelope.createToolProfile == "readOnlyPrep"
+            ? .readOnlyPrep(contextDirectory: briefDirectory ?? workingDirectory) : .standard
         do {
             let createdID = try createSession(request: SessionCreationRequest(
                 purpose: purpose,
                 name: displayName,
-                workingDirectory: requester.workingDirectory,
-                agent: agent,
+                workingDirectory: workingDirectory,
+                agent: envelope.createAgent,
+                model: envelope.createModel,
+                toolProfile: profile,
                 revealsSession: false,
                 parentClaudeSessionID: requester.claudeSessionID
             ))
@@ -1314,8 +1475,25 @@ final class SessionStore {
             writeSessionsSnapshot()
             writeMCPResult(requestID: requestID, ok: true, sessionID: createdID)
         } catch {
+            if let briefDirectory { try? FileManager.default.removeItem(at: briefDirectory) }
             writeMCPResult(requestID: requestID, ok: false, error: error.localizedDescription)
         }
+    }
+
+    @ObservationIgnored var childWorkspaceRoots: (@MainActor () -> [URL])?
+
+    private func validatedChildDirectory(_ path: String) -> URL? {
+        let expanded = (path as NSString).expandingTildeInPath
+        guard expanded.hasPrefix("/") else { return nil }
+        let directory = URL(fileURLWithPath: CheckoutPath.canonical(URL(fileURLWithPath: expanded)), isDirectory: true)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              childWorkspaceRoots?().contains(where: { root in
+                  let components = URL(fileURLWithPath: CheckoutPath.canonical(root)).pathComponents
+                  return directory.pathComponents.starts(with: components)
+              }) == true else { return nil }
+        return directory
     }
 
     /// Console MCP close: only the orchestrator may close peers; never itself.
@@ -1441,6 +1619,28 @@ final class SessionStore {
     /// Last keystroke the user typed into each terminal.
     private var lastUserInputAt: [UUID: Date] = [:]
     private var directiveRecheckScheduled = false
+    @ObservationIgnored var transcriptReply: (UUID, Date?) -> String? = {
+        TranscriptTail.currentTurnReply(claudeSessionID: $0, since: $1)
+    }
+    private var pendingRelays: [UUID: PendingRelay] = [:]
+
+    private enum RelayOutcome: String {
+        case attention = "changed attention"
+        case endedTurn = "ended its turn"
+        case failed
+        case finished
+        case blocked = "reported blocked"
+        case review = "reported ready for review"
+        case exited = "exited"
+    }
+
+    private struct PendingRelay {
+        let target: ConsoleSession
+        let recipient: UUID
+        let outcome: RelayOutcome
+        let directive: Bool
+        let task: Task<Void, Never>
+    }
 
     /// Typing within this window (longer while the terminal has focus) means
     /// the user may have a draft that a delivery would erase.
@@ -1467,6 +1667,9 @@ final class SessionStore {
     private struct HeldDirective {
         let text: String
         let relayTo: UUID?
+        var relaySource: UUID?
+        var relayOutcome: RelayOutcome?
+        var render: (() -> String)?
     }
 
     /// True when typed input lands in Claude's prompt as a new user turn.
@@ -1494,11 +1697,28 @@ final class SessionStore {
     /// dropped so a retried tool call cannot send twice.
     @discardableResult
     func deliverDirective(_ text: String, to targetID: UUID, relayTo: UUID?) -> DirectiveDelivery {
-        if directivesInFlight[targetID] == text
-            || heldDirectives[targetID]?.contains(where: { $0.text == text }) == true {
-            return .duplicate
+        deliverDirective(HeldDirective(text: text, relayTo: relayTo), to: targetID)
+    }
+
+    @discardableResult
+    private func deliverDirective(_ directive: HeldDirective, to targetID: UUID) -> DirectiveDelivery {
+        if let source = directive.relaySource, let outcome = directive.relayOutcome {
+            let progress: Set<RelayOutcome> = [.attention, .endedTurn]
+            if let index = heldDirectives[targetID]?.firstIndex(where: { held in
+                guard held.relaySource == source, let heldOutcome = held.relayOutcome else { return false }
+                return heldOutcome == outcome || (progress.contains(heldOutcome) && outcome != .attention)
+            }) {
+                heldDirectives[targetID]?[index] = directive
+            } else {
+                heldDirectives[targetID, default: []].append(directive)
+            }
+        } else {
+            if directivesInFlight[targetID] == directive.text
+                || heldDirectives[targetID]?.contains(where: { $0.text == directive.text }) == true {
+                return .duplicate
+            }
+            heldDirectives[targetID, default: []].append(directive)
         }
-        heldDirectives[targetID, default: []].append(HeldDirective(text: text, relayTo: relayTo))
         if deliverHeldDirectives(for: targetID) { return .sent }
         scheduleDirectiveRecheck()
         return .held
@@ -1518,9 +1738,10 @@ final class SessionStore {
         if let origin = next.relayTo {
             directiveOrigins[targetID] = origin
         }
-        directivesInFlight[targetID] = next.text
+        let text = next.render?() ?? next.text
+        directivesInFlight[targetID] = text
         let expectsRelay = next.relayTo != nil
-        queuePrompt(next.text, for: targetID) { [weak self] in
+        queuePrompt(text, for: targetID) { [weak self] in
             guard let self else { return }
             self.directivesInFlight.removeValue(forKey: targetID)
             if expectsRelay {
@@ -1562,34 +1783,111 @@ final class SessionStore {
         }
     }
 
-    /// Bridge-reported lifecycle: acceptance, outcome relay, then delivery.
+    /// A turn boundary leaves the origin intact. A report resolves the
+    /// directive even when Claude stays live for follow-up work.
     private func handleDirectiveLifecycle(sessionID: UUID, event: SessionLifecycleEvent) {
         switch event {
         case .promptSubmitted:
             awaitingAcceptance.removeValue(forKey: sessionID)
         case .turnCompleted, .turnFailed:
             awaitingAcceptance.removeValue(forKey: sessionID)
-            if let origin = directiveOrigins.removeValue(forKey: sessionID),
-               let finishedSession = session(withID: sessionID) {
-                let outcome: String
-                if case .turnFailed = event { outcome = "failed" } else { outcome = "finished" }
-                DispatchQueue.main.asyncAfter(deadline: .now() + Self.relaySettleSeconds) { [weak self] in
-                    guard let self else { return }
-                    let target = self.session(withID: sessionID) ?? finishedSession
-                    let reply = TranscriptTail.lastAssistantMessages(
-                        claudeSessionID: target.claudeSessionID, count: 1
-                    ).last
-                    self.relay(Self.relayNote(target: target, outcome: outcome, lastReply: reply), to: origin)
+            if let session = session(withID: sessionID), session.completionOutcome == nil {
+                let failed = event == .turnFailed || Self.currentTurnFailed(session)
+                scheduleRelay(for: sessionID, outcome: failed ? .failed : .endedTurn)
+                if !failed, pendingRelays[sessionID] == nil {
+                    Task { [weak self] in
+                        do { try await Task.sleep(for: .seconds(Self.relaySettleSeconds)) } catch { return }
+                        guard let self, let current = self.session(withID: sessionID), current.activity == .idle,
+                              current.lastTurnEnd == session.lastTurnEnd else { return }
+                        self.recordTranscriptFailure(for: sessionID, reply: self.transcriptReply(
+                            current.claudeSessionID, current.lastTurnStarted
+                        ))
+                    }
                 }
             }
+        case .completionReported(let report, _):
+            let outcome: RelayOutcome = switch report {
+            case .completed: .finished
+            case .blocked: .blocked
+            case .needsReview: .review
+            }
+            scheduleRelay(for: sessionID, outcome: outcome)
+            directiveOrigins.removeValue(forKey: sessionID)
+        case .attentionReported(.blocked, _):
+            scheduleRelay(for: sessionID, outcome: .blocked)
+            directiveOrigins.removeValue(forKey: sessionID)
         case .sessionEnded:
             pendingSlashCommands.removeValue(forKey: sessionID)
             settlingSessions.remove(sessionID)
-            dropDirectives(for: sessionID, reason: "ended before finishing")
+            dropDirectives(for: sessionID, reason: .exited)
         default:
             break
         }
         deliverHeldDirectives(for: sessionID)
+    }
+
+    private func scheduleRelay(for sessionID: UUID, outcome: RelayOutcome) {
+        let previous = pendingRelays[sessionID]
+        let origin = directiveOrigins[sessionID]
+        guard let recipient = origin ?? watchedSessions[sessionID] ?? previous?.recipient,
+              let target = session(withID: sessionID) else { return }
+        // A Stop or attention echo can follow a report. Keep the more
+        // informative result during the debounce window.
+        if let previous {
+            if outcome == .attention && previous.outcome != .attention { return }
+            if outcome == .endedTurn && previous.outcome != .attention && previous.outcome != .endedTurn { return }
+            if outcome == .exited && [.finished, .blocked, .review, .failed].contains(previous.outcome) { return }
+            previous.task.cancel()
+        }
+        let task = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(Self.relaySettleSeconds)) } catch { return }
+            self?.enqueueSettledRelay(for: sessionID)
+        }
+        pendingRelays[sessionID] = PendingRelay(target: target, recipient: recipient, outcome: outcome,
+                                                directive: origin != nil || previous?.directive == true, task: task)
+    }
+
+    private func enqueueSettledRelay(for sessionID: UUID) {
+        guard let pending = pendingRelays.removeValue(forKey: sessionID),
+              session(withID: pending.recipient)?.activity != .exited,
+              session(withID: pending.recipient) != nil else { return }
+        // Detect a failure as soon as the transcript settles, including while
+        // the Orchestrator is busy. Read again immediately before delivery.
+        _ = relayContent(pending)
+        let next = HeldDirective(text: "", relayTo: nil, relaySource: sessionID, relayOutcome: pending.outcome,
+                                 render: { [weak self] in self?.relayContent(pending) ?? "" })
+        deliverDirective(next, to: pending.recipient)
+        writeSessionsSnapshot()
+    }
+
+    private func relayContent(_ pending: PendingRelay) -> String {
+        let current = session(withID: pending.target.id)
+        let sameTurn = current?.lastTurnStarted == pending.target.lastTurnStarted
+        let target = sameTurn ? current ?? pending.target : pending.target
+        var outcome = pending.outcome
+        var reply: String?
+        if sameTurn || current == nil {
+            reply = transcriptReply(target.claudeSessionID, target.lastTurnStarted)
+        }
+        if [.endedTurn, .failed, .exited].contains(outcome),
+           (reply?.hasPrefix("API Error") == true || Self.currentTurnFailed(target)) {
+            outcome = .failed
+            if sameTurn { recordTranscriptFailure(for: target.id, reply: reply) }
+        }
+        return Self.relayNote(target: target, outcome: outcome.rawValue, lastReply: reply,
+                              directed: pending.directive)
+    }
+
+    private static func currentTurnFailed(_ session: ConsoleSession) -> Bool {
+        session.lastTurnFailed && (session.lastTurnEnd ?? .distantPast) >= (session.lastTurnStarted ?? .distantPast)
+    }
+
+    private func recordTranscriptFailure(for id: UUID, reply: String?) {
+        guard reply?.hasPrefix("API Error") == true,
+              let session = session(withID: id), session.activity == .idle,
+              !Self.currentTurnFailed(session) else { return }
+        applyEvent(.turnFailed, to: id)
+        writeSessionsSnapshot()
     }
 
     /// Removes held directives for `targetID` that `requesterID` sent.
@@ -1602,15 +1900,17 @@ final class SessionStore {
         return held.count - kept.count
     }
 
-    private func dropDirectives(for sessionID: UUID, reason: String) {
+    private func dropDirectives(for sessionID: UUID, reason: RelayOutcome) {
+        scheduleRelay(for: sessionID, outcome: reason)
         heldDirectives.removeValue(forKey: sessionID)
         directivesInFlight.removeValue(forKey: sessionID)
         awaitingAcceptance.removeValue(forKey: sessionID)
         lastUserInputAt.removeValue(forKey: sessionID)
+        directiveOrigins.removeValue(forKey: sessionID)
         directiveOrigins = directiveOrigins.filter { $0.value != sessionID }
-        guard let origin = directiveOrigins.removeValue(forKey: sessionID),
-              let target = session(withID: sessionID) else { return }
-        relay(Self.relayNote(target: target, outcome: reason), to: origin)
+        watchedSessions.removeValue(forKey: sessionID)
+        watchedSessions = watchedSessions.filter { $0.value != sessionID }
+        scheduledRechecks.removeValue(forKey: sessionID)?.cancel()
     }
 
     private func relay(_ note: String, to orchestratorID: UUID) {
@@ -1619,14 +1919,20 @@ final class SessionStore {
         deliverDirective(note, to: orchestratorID, relayTo: nil)
     }
 
-    static func relayNote(target: ConsoleSession, outcome: String, lastReply: String? = nil) -> String {
+    static func relayNote(target: ConsoleSession, outcome: String, lastReply: String? = nil,
+                          directed: Bool = true) -> String {
         func oneLine(_ text: String, limit: Int) -> String {
             String(text.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(limit))
         }
-        var note = "Console relay: session \"\(target.name)\" (id=\(target.id.uuidString)) \(outcome) your directive."
+        let suffix = directed && ["finished", "failed", "did not accept"].contains(outcome) ? " your directive" : ""
+        var note = "Console relay: session \"\(target.name)\" (id=\(target.id.uuidString)) \(outcome)\(suffix)."
+        if ["finished", "reported blocked", "reported ready for review"].contains(outcome),
+           let report = target.completionOutcome, let summary = target.summary {
+            note += " Report (\(report.rawValue)): \(oneLine(summary, limit: 400))"
+        }
         if let reply = lastReply?.trimmingCharacters(in: .whitespacesAndNewlines), !reply.isEmpty {
             note += " Last reply: \(oneLine(reply, limit: 600))"
-        } else if let summary = target.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
+        } else if target.completionOutcome == nil, let summary = target.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
             note += " Summary: \(oneLine(summary, limit: 400))"
         }
         if target.attention != .none && target.attention != .unreadCompletion {
@@ -1634,7 +1940,7 @@ final class SessionStore {
             if let ask = target.attentionMessage { note += " (\(oneLine(ask, limit: 200)))" }
             note += "."
         }
-        note += " Update your plan. Continue approved steps; ask before anything off-plan."
+        note += " Update the plan and continue ready work within the approval tiers. Batch outward-facing decisions for the user."
         return note
     }
 
@@ -1814,6 +2120,25 @@ final class SessionStore {
             return
         }
 
+        let previous = sessions[index]
+        let now = Date()
+        switch event {
+        case .sessionStarted:
+            sessions[index].lastTurnStarted = nil
+            sessions[index].lastTurnEnd = nil
+            sessions[index].lastTurnFailed = false
+            sessions[index].completionOutcome = nil
+        case .promptSubmitted:
+            sessions[index].lastTurnStarted = now
+            sessions[index].completionOutcome = nil
+        case .turnCompleted, .turnFailed:
+            sessions[index].lastTurnEnd = now
+            sessions[index].lastTurnFailed = event == .turnFailed || Self.currentTurnFailed(previous)
+        case .completionReported(let outcome, _):
+            sessions[index].completionOutcome = outcome
+        default:
+            break
+        }
         let viewing = viewingFocusDetector(sessionID)
         var state = SessionLifecycleState(
             activity: sessions[index].activity,
@@ -1821,7 +2146,9 @@ final class SessionStore {
             summary: sessions[index].summary,
             workingDirectoryPath: sessions[index].workingDirectory.path
         )
-        state.apply(event)
+        if event != .turnCompleted || !Self.currentTurnFailed(previous) {
+            state.apply(event)
+        }
         if viewing,
            state.attention == .unreadCompletion,
            sessions[index].attention != .unreadCompletion {
@@ -1845,6 +2172,15 @@ final class SessionStore {
             sessions[index].workingDirectory = URL(fileURLWithPath: path)
         }
 
+        let attentionChanged = previous.attention != sessions[index].attention
+            || previous.attentionMessage != sessions[index].attentionMessage
+        if previous.activity != sessions[index].activity || previous.attention != sessions[index].attention {
+            sessions[index].stateSince = now
+        }
+        if attentionChanged, watchedSessions[sessionID] != nil,
+           ![SessionLifecycleEvent.turnCompleted, .turnFailed, .sessionEnded, .processTerminated].contains(event) {
+            scheduleRelay(for: sessionID, outcome: .attention)
+        }
         notifyLifecycle(sessionID: sessionID, event: event)
         persistRestorationSnapshot()
     }
@@ -2126,20 +2462,75 @@ final class SessionStore {
     private static let snapshotSummaryLimit = 200
     private static let snapshotArtifactLimit = 5
 
+    private static func currentGitBranch(in directory: URL) -> String? {
+        func readSmallFile(_ url: URL) -> String? {
+            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+                  let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+            defer { try? handle.close() }
+            guard let data = try? handle.read(upToCount: 4096) else { return nil }
+            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        var folder = directory.standardizedFileURL
+        while true {
+            let dotGit = folder.appendingPathComponent(".git")
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: dotGit.path, isDirectory: &isDirectory) {
+                let gitDirectory: URL
+                if isDirectory.boolValue {
+                    gitDirectory = dotGit
+                } else {
+                    guard let pointer = readSmallFile(dotGit), pointer.hasPrefix("gitdir: ") else { return nil }
+                    let path = String(pointer.dropFirst("gitdir: ".count))
+                    gitDirectory = URL(fileURLWithPath: path, isDirectory: true, relativeTo: folder)
+                }
+                guard let head = readSmallFile(gitDirectory.appendingPathComponent("HEAD")) else { return nil }
+                return head.hasPrefix("ref: refs/heads/") ? String(head.dropFirst("ref: refs/heads/".count)) : nil
+            }
+            let parent = folder.deletingLastPathComponent()
+            guard !parent.path.isEmpty, parent.path.count < folder.path.count else { return nil }
+            folder = parent
+        }
+    }
+
     /// JSON snapshot of live Console sessions for the Console MCP
     /// `list_console_sessions` tool. Written beside the bridge socket.
     private func writeSessionsSnapshot() {
         guard let path = sessionsSnapshotPath() else { return }
         let orchestrator = orchestratorSession()
         let childIDs = Set(orchestrator.map { children(of: $0).map(\.id) } ?? [])
+        let now = Date()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        var processRoots: [pid_t: Set<pid_t>]?
         let payload: [[String: Any]] = sessions.map { session in
+            let pid = session.terminalView.process?.shellPid ?? 0
+            if pid > 1, processRoots == nil { processRoots = OwnedProcessTree.childrenByParent() }
+            let processes = OwnedProcessTree.descendantIDs(of: pid, childrenByParent: processRoots ?? [:])
+            let names = processes.compactMap(OwnedProcessTree.processName).filter { $0 != "ConsoleTermBridge" }
+            let attention = session.attention == .unreadCompletion && session.completionOutcome == nil
+                ? .none : session.attention
             var row: [String: Any] = [
                 "id": session.id.uuidString,
                 "name": session.name,
                 "activity": session.activity.rawValue,
                 "attention": session.attention.rawValue,
                 "bridge_status": session.bridgeStatus.rawValue,
+                "state": displayedSessionState(activity: session.activity, attention: attention).rawValue,
+                "tool_profile": session.toolProfile == .standard ? "full" : "readOnlyPrep",
+                "model": session.model ?? "default",
+                "cwd": session.workingDirectory.path,
+                "state_since": formatter.string(from: session.stateSince),
+                "state_age_seconds": max(0, Int(now.timeIntervalSince(session.stateSince))),
+                "live_child_process_count": names.count,
             ]
+            if let branch = Self.currentGitBranch(in: session.workingDirectory) { row["git_branch"] = branch }
+            if let end = session.lastTurnEnd {
+                row["last_turn_end"] = formatter.string(from: end)
+                row["last_turn_outcome"] = session.lastTurnFailed ? "failed" : "ended"
+            }
+            if let outcome = session.completionOutcome { row["completion_outcome"] = outcome.rawValue }
+            if !names.isEmpty { row["live_child_processes"] = Set(names).sorted() }
+
             if let purpose = session.purpose {
                 row["purpose"] = purpose.rawValue
             }
@@ -2181,10 +2572,10 @@ final class SessionStore {
     /// prompt can be one typed line that points at it. A multi-line prompt
     /// reaches Claude as pasted content, which it treats as untrusted data.
     func writeOrchestratorBrief(_ brief: String) -> URL? {
-        guard let socketPath else { return nil }
-        let directory = (socketPath as NSString).deletingLastPathComponent
-        let url = URL(fileURLWithPath: directory).appendingPathComponent("orchestrator-brief.md")
+        guard let directory = orchestratorPlanURL?.deletingLastPathComponent() else { return nil }
+        let url = directory.appendingPathComponent("orchestrator-brief.md")
         do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try brief.write(to: url, atomically: true, encoding: .utf8)
             return url
         } catch {
@@ -2216,6 +2607,13 @@ final class SessionStore {
         try? data.write(to: dir.appendingPathComponent("\(requestID).json"), options: .atomic)
     }
 
+    private func restorationRecord(for session: ConsoleSession, processIdentity: SessionProcessIdentity?) -> SessionRestorationRecord {
+        .init(claudeSessionID: session.claudeSessionID, name: session.name,
+              workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general,
+              processIdentity: processIdentity, parentClaudeSessionID: session.parentClaudeSessionID,
+              model: session.model, readOnly: session.toolProfile == .standard ? nil : true)
+    }
+
     private func persistRestorationSnapshot() {
         guard !isTerminating, !restorationLoadFailed, let restorationStore else { return }
         var records = pendingRestorations
@@ -2224,10 +2622,9 @@ final class SessionStore {
         // the process is still alive and the termination can still fail.
         for session in sessions where session.activity != .exited {
             rememberAssociation(for: session)
-            let record = SessionRestorationRecord(claudeSessionID: session.claudeSessionID,
-                name: session.name, workingDirectory: session.workingDirectory, purpose: session.purpose ?? .general,
-                processIdentity: HeadlessSessionProcesses.identity(for: session.terminalView.process?.shellPid ?? 0),
-                parentClaudeSessionID: session.parentClaudeSessionID)
+            let record = restorationRecord(
+                for: session, processIdentity: HeadlessSessionProcesses.identity(for: session.terminalView.process?.shellPid ?? 0)
+            )
             records.removeAll { $0.id == record.id }
             records.append(record)
         }
@@ -2240,7 +2637,8 @@ final class SessionStore {
             pendingRestorations.contains(where: { $0.id == id }) ? id : nil
         }
         let snapshot = SessionRestorationSnapshot(sessions: records,
-            selectedClaudeSessionID: isRestoringSessions ? savedSnapshot.selectedClaudeSessionID : pendingSelection ?? selected)
+            selectedClaudeSessionID: isRestoringSessions ? savedSnapshot.selectedClaudeSessionID : pendingSelection ?? selected,
+            recentlyClosed: recentlyClosedSessions.isEmpty ? nil : recentlyClosedSessions)
         guard snapshot != savedSnapshot else { return }
         do {
             try restorationStore.save(snapshot)

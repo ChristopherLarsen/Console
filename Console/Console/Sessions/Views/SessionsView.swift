@@ -284,6 +284,11 @@ struct SessionsView: View {
             .accessibilityIdentifier("NewSessionButton")
 
             Spacer(minLength: 8)
+            let active = Set(store.sessions.filter { $0.activity != .exited }.map(\.claudeSessionID))
+            let recentlyClosed = store.recentlyClosedSessions.filter { !active.contains($0.id) }
+            if !recentlyClosed.isEmpty {
+                RecentlyClosedSessionsMenu(sessions: recentlyClosed)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -586,6 +591,25 @@ struct SessionsView: View {
                 }
             }
         )
+    }
+}
+
+private struct RecentlyClosedSessionsMenu: View {
+    @Environment(SessionLaunchCoordinator.self) private var coordinator
+    let sessions: [SessionRestorationRecord]
+
+    var body: some View {
+        Menu {
+            ForEach(sessions) { record in
+                Button(record.name) { Task { await coordinator.resumeFromCard(record: record) } }
+            }
+        } label: {
+            Image(systemName: "clock.arrow.circlepath")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Reopen a recently closed session")
+        .accessibilityLabel("Recently Closed Sessions")
     }
 }
 

@@ -37,6 +37,10 @@ struct ConsoleClaudePluginAssembler: ConsoleClaudePluginAssembling {
             "\(prefix)read_console_session_output",
             "\(prefix)cancel_console_directive",
             "\(prefix)get_home_board",
+            "\(prefix)recheck_in",
+            "\(prefix)watch_console_session",
+            "\(prefix)update_plan",
+            "\(prefix)get_plan",
         ]
     }
 

@@ -48,6 +48,12 @@ struct BridgeEnvelope {
     var createAgent: String?
     var targetSessionID: String?
     var promptText: String?
+    var createModel: String?
+    var createCWD: String?
+    var createToolProfile: String?
+    var createBriefID: String?
+    var planUpdateID: String?
+    var recheckMinutes: Double?
     var requestID: String?
 
     func encodedLine() -> Data? {
@@ -73,6 +79,12 @@ struct BridgeEnvelope {
         if let createAgent { object["create_agent"] = createAgent }
         if let targetSessionID { object["target_session_id"] = targetSessionID }
         if let promptText { object["prompt_text"] = promptText }
+        if let createModel { object["create_model"] = createModel }
+        if let createCWD { object["create_cwd"] = createCWD }
+        if let createToolProfile { object["create_tool_profile"] = createToolProfile }
+        if let createBriefID { object["create_brief_id"] = createBriefID }
+        if let planUpdateID { object["plan_update_id"] = planUpdateID }
+        if let recheckMinutes { object["recheck_minutes"] = recheckMinutes }
         if let requestID { object["request_id"] = requestID }
         guard JSONSerialization.isValidJSONObject(object),
               let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
@@ -136,11 +148,11 @@ private let bridgeUnreachableMessage =
 /// Narrow decode of hook input: only fields Console needs. The raw payload is
 /// discarded immediately after decoding; nothing sensitive is ever forwarded.
 private struct HookInput: Decodable {
-    let notification_type: String?
+    let last_assistant_message: String?
     let new_cwd: String?
 
     enum CodingKeys: String, CodingKey {
-        case notification_type = "notification_type"
+        case last_assistant_message
         case new_cwd = "new_cwd"
     }
 }
@@ -154,8 +166,10 @@ func runHookMode(eventName: String) {
         sendEnvelope(BridgeEnvelope(kind: "lifecycle", lifecycleEvent: "session_started"))
     case "UserPromptSubmit":
         sendEnvelope(BridgeEnvelope(kind: "lifecycle", lifecycleEvent: "prompt_submitted"))
-    case "Stop", "NotificationIdlePrompt":
-        sendEnvelope(BridgeEnvelope(kind: "lifecycle", lifecycleEvent: "turn_completed"))
+    case "Stop":
+        let reply = decoded?.last_assistant_message?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let outcome = reply?.hasPrefix("API Error") == true ? "turn_failed" : "turn_completed"
+        sendEnvelope(BridgeEnvelope(kind: "lifecycle", lifecycleEvent: outcome))
     case "StopFailure":
         sendEnvelope(BridgeEnvelope(kind: "lifecycle", lifecycleEvent: "turn_failed"))
     case "SessionEnd":
@@ -261,6 +275,10 @@ private let consoleTools: [MCPServerTool] = [
                 "name": ["type": "string", "minLength": 1, "maxLength": 80],
                 "initial_prompt": ["type": "string", "minLength": 1, "maxLength": 1500],
                 "agent": ["type": "string", "minLength": 1, "maxLength": 80],
+                "model": ["type": "string", "minLength": 1, "maxLength": 120],
+                "cwd": ["type": "string", "minLength": 1, "maxLength": 4096],
+                "tool_profile": ["type": "string", "enum": ["full", "readOnlyPrep"]],
+                "initial_prompt_file": ["type": "string", "description": "Local path to a UTF-8 task brief (up to 256 KiB). Use instead of initial_prompt."],
             ],
             "required": ["purpose"],
             "additionalProperties": false,
@@ -268,7 +286,7 @@ private let consoleTools: [MCPServerTool] = [
     ),
     MCPServerTool(
         name: "close_console_session",
-        description: "Terminate and remove a session by Console session id with explicit user approval. Refuses the orchestrator.",
+        description: "Close a session by Console id. A child with a recorded result can be closed automatically. Refuses the orchestrator.",
         schema: [
             "type": "object",
             "properties": [
@@ -298,7 +316,8 @@ private let consoleTools: [MCPServerTool] = [
             "type": "object",
             "properties": [
                 "session_id": ["type": "string", "minLength": 1, "maxLength": 64],
-                "messages": ["type": "integer", "minimum": 1, "maximum": 5],
+                "messages": ["type": "integer", "minimum": 1, "maximum": 25],
+                "since": ["type": "string", "description": "Opaque next_cursor from the previous read."],
             ],
             "required": ["session_id"],
             "additionalProperties": false,
@@ -315,6 +334,61 @@ private let consoleTools: [MCPServerTool] = [
             "required": ["session_id"],
             "additionalProperties": false,
         ]
+    ),
+    MCPServerTool(
+        name: "get_plan",
+        description: "Load the durable Orchestrator plan, current revision and numbered decisions.",
+        schema: ["type": "object", "properties": [:], "additionalProperties": false]
+    ),
+    MCPServerTool(
+        name: "update_plan",
+        description: "Replace the plan using its current revision. Preserve stable step and decision IDs. A decision with no answer is open.",
+        schema: [
+            "type": "object",
+            "properties": ["plan": [
+                "type": "object",
+                "required": ["revision", "goal", "approved", "steps", "decisions"],
+                "properties": [
+                    "revision": ["type": "integer", "minimum": 0],
+                    "goal": ["type": "string"],
+                    "approved": ["type": "boolean"],
+                    "steps": ["type": "array", "items": [
+                        "type": "object",
+                        "required": ["id", "directive", "status"],
+                        "properties": [
+                            "id": ["type": "string"],
+                            "owner_session": ["type": "string", "description": "Console UUID, omit until assigned."],
+                            "owner_conversation": ["type": "string", "description": "Claude conversation UUID for restoring ownership."],
+                            "directive": ["type": "string"],
+                            "status": ["type": "string", "enum": ["pending", "held", "running", "blocked", "failed", "completed", "cancelled"]],
+                        ],
+                    ]],
+                    "decisions": ["type": "array", "items": [
+                        "type": "object",
+                        "required": ["id", "question", "options"],
+                        "properties": [
+                            "id": ["type": "integer", "minimum": 1],
+                            "question": ["type": "string"],
+                            "options": ["type": "array", "items": ["type": "string"]],
+                            "answer": ["type": "string"],
+                            "presented": ["type": "boolean", "description": "Whether the numbered decision was already shown to the user."],
+                        ],
+                    ]],
+                ],
+            ]],
+            "required": ["plan"],
+            "additionalProperties": false,
+        ]
+    ),
+    MCPServerTool(
+        name: "watch_console_session",
+        description: "Wake the Orchestrator for turn outcomes, attention changes and exit of a live Claude peer.",
+        schema: ["type": "object", "properties": ["session_id": ["type": "string"]], "required": ["session_id"]]
+    ),
+    MCPServerTool(
+        name: "recheck_in",
+        description: "Schedule a Console wake-up. A new recheck replaces the previous scheduled recheck.",
+        schema: ["type": "object", "properties": ["minutes": ["type": "number", "minimum": 0.1, "maximum": 1440]], "required": ["minutes"]]
     ),
     MCPServerTool(
         name: "get_home_board",
@@ -433,6 +507,8 @@ private func handleToolsCall(request: [String: Any], stdout: FileHandle) {
         outcome = handleReadConsoleSessionOutput(args)
     case "cancel_console_directive":
         outcome = handleCancelConsoleDirective(args)
+    case "get_plan", "update_plan", "watch_console_session", "recheck_in":
+        outcome = handleOrchestratorTool(toolName, args)
     case "get_home_board":
         outcome = handleGetHomeBoard()
     default:
@@ -627,7 +703,59 @@ private func waitForMCPResult(
     return #"{"ok":null,"status":"unconfirmed","error":"Console did not confirm in time. The request may still have been applied: call list_console_sessions to check before retrying."}"#
 }
 
+private func handleOrchestratorTool(_ name: String, _ args: [String: Any]) -> Result<String, ToolFailure> {
+    let requestID = UUID().uuidString
+    var envelope = BridgeEnvelope(kind: name, requestID: requestID)
+    var staged: URL?
+    switch name {
+    case "watch_console_session":
+        guard let id = args["session_id"] as? String, UUID(uuidString: id) != nil else {
+            return .failure(ToolFailure(message: "session_id must be a Console UUID"))
+        }
+        envelope.targetSessionID = id
+    case "recheck_in":
+        guard let minutes = args["minutes"] as? Double, (0.1...1440).contains(minutes) else {
+            return .failure(ToolFailure(message: "minutes must be between 0.1 and 1440"))
+        }
+        envelope.recheckMinutes = minutes
+    case "update_plan":
+        guard let plan = args["plan"] as? [String: Any], let socketPath,
+              let data = try? JSONSerialization.data(withJSONObject: plan), data.count <= 65536 else {
+            return .failure(ToolFailure(message: "a plan object up to 64 KiB and an active bridge are required"))
+        }
+        let url = URL(fileURLWithPath: socketPath).deletingLastPathComponent()
+            .appendingPathComponent("plan-update-\(requestID).json")
+        do {
+            try data.write(to: url, options: .atomic)
+            staged = url
+            envelope.planUpdateID = requestID
+        } catch {
+            return .failure(ToolFailure(message: "could not stage plan update"))
+        }
+    default:
+        break
+    }
+    guard sendEnvelope(envelope) else {
+        if let staged { try? FileManager.default.removeItem(at: staged) }
+        return .failure(ToolFailure(message: bridgeUnreachableMessage))
+    }
+    let result = waitForMCPResult(requestID: requestID)
+    if let object = try? JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any] {
+        if let output = object["output"] as? String { return .success(output) }
+        if object["ok"] as? Bool == false, let staged { try? FileManager.default.removeItem(at: staged) }
+    }
+    return .success(result)
+}
+
+private func refreshSessionsSnapshot() {
+    guard mcpResultsDirectory != nil else { return }
+    let requestID = UUID().uuidString
+    guard sendEnvelope(BridgeEnvelope(kind: "refresh_sessions", requestID: requestID)) else { return }
+    _ = waitForMCPResult(requestID: requestID, timeout: 1)
+}
+
 private func handleListConsoleSessions() -> Result<String, ToolFailure> {
+    refreshSessionsSnapshot()
     guard let path = sessionsSnapshotPath, !path.isEmpty else {
         return .failure(ToolFailure(message: "sessions snapshot unavailable"))
     }
@@ -642,6 +770,17 @@ private func handleListConsoleSessions() -> Result<String, ToolFailure> {
 private let creatablePurposes: Set<String> = [
     "blank", "newTicket", "existingTicket", "review", "general",
 ]
+
+private func validText(_ value: String, maxLength: Int) -> Bool {
+    !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && value.count <= maxLength
+        && !value.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) || $0.properties.isDefaultIgnorableCodePoint }
+}
+
+private func localFileURL(_ path: String) -> URL? {
+    guard validText(path, maxLength: 4096) else { return nil }
+    let expanded = (path as NSString).expandingTildeInPath
+    return URL(fileURLWithPath: expanded).standardizedFileURL.resolvingSymlinksInPath()
+}
 
 private func handleCreateConsoleSession(_ args: [String: Any]) -> Result<String, ToolFailure> {
     guard let purpose = args["purpose"] as? String else {
@@ -683,16 +822,67 @@ private func handleCreateConsoleSession(_ args: [String: Any]) -> Result<String,
         }
         agent = trimmed
     }
+    let model = args["model"] as? String
+    let cwd = args["cwd"] as? String
+    let profile = args["tool_profile"] as? String
+    if let model, !validText(model, maxLength: 120) {
+        return .failure(ToolFailure(message: "invalid model"))
+    }
+    if let cwd, !validText(cwd, maxLength: 4096) {
+        return .failure(ToolFailure(message: "invalid cwd"))
+    }
+    if let profile, !["full", "readOnlyPrep"].contains(profile) {
+        return .failure(ToolFailure(message: "tool_profile must be full or readOnlyPrep"))
+    }
     let requestID = UUID().uuidString
-    guard sendEnvelope(BridgeEnvelope(
+    var briefURL: URL?
+    if let file = args["initial_prompt_file"] as? String {
+        guard purpose != "blank", initialPrompt == nil, let socketPath else {
+            return .failure(ToolFailure(message: "initial_prompt_file requires a connected Claude child and replaces initial_prompt"))
+        }
+        guard let source = localFileURL(file),
+              let values = try? source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true, let size = values.fileSize, (1...262144).contains(size),
+              let handle = try? FileHandle(forReadingFrom: source) else {
+            return .failure(ToolFailure(message: "initial_prompt_file must be a regular UTF-8 file up to 256 KiB"))
+        }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 262145), data.count <= 262144,
+              let brief = String(data: data, encoding: .utf8),
+              !brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .failure(ToolFailure(message: "initial_prompt_file must contain a non-empty UTF-8 brief up to 256 KiB"))
+        }
+        let destination = URL(fileURLWithPath: socketPath).deletingLastPathComponent()
+            .appendingPathComponent("child-brief-\(requestID).md")
+        do {
+            try data.write(to: destination, options: [.atomic])
+            briefURL = destination
+        } catch {
+            return .failure(ToolFailure(message: "could not stage child brief"))
+        }
+    }
+    let envelope = BridgeEnvelope(
         kind: "create_session",
         createPurpose: purpose,
         createName: name,
         createInitialPrompt: initialPrompt,
         createAgent: agent,
+        createModel: model,
+        createCWD: cwd,
+        createToolProfile: profile,
+        createBriefID: briefURL == nil ? nil : requestID,
         requestID: requestID
-    )) else { return .failure(ToolFailure(message: bridgeUnreachableMessage)) }
-    return .success(waitForMCPResult(requestID: requestID, timeout: mcpCreateResultTimeoutSeconds))
+    )
+    guard let encoded = envelope.encodedLine(), encoded.count <= 8192, sendEnvelope(envelope) else {
+        if let briefURL { try? FileManager.default.removeItem(at: briefURL) }
+        return .failure(ToolFailure(message: bridgeUnreachableMessage))
+    }
+    let result = waitForMCPResult(requestID: requestID, timeout: mcpCreateResultTimeoutSeconds)
+    if let briefURL, let object = try? JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any],
+       object["ok"] as? Bool == false {
+        try? FileManager.default.removeItem(at: briefURL)
+    }
+    return .success(result)
 }
 
 private func handleCloseConsoleSession(_ args: [String: Any]) -> Result<String, ToolFailure> {
@@ -801,7 +991,17 @@ private func handleReadConsoleSessionOutput(_ args: [String: Any]) -> Result<Str
     case .success(let id): sessionID = id
     case .failure(let failure): return .failure(failure)
     }
-    let count = min(max((args["messages"] as? Int) ?? 1, 1), 5)
+    let count = min(max((args["messages"] as? Int) ?? 5, 1), 25)
+    let since: UInt64?
+    if let cursor = args["since"] as? String {
+        guard let offset = UInt64(cursor) else {
+            return .failure(ToolFailure(message: "since must be a next_cursor from this session"))
+        }
+        since = offset
+    } else {
+        since = nil
+    }
+    refreshSessionsSnapshot()
     guard let path = sessionsSnapshotPath, !path.isEmpty,
           let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
           let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
@@ -812,18 +1012,24 @@ private func handleReadConsoleSessionOutput(_ args: [String: Any]) -> Result<Str
     }) else {
         return .failure(ToolFailure(message: "session not found"))
     }
-    guard let claudeID = row["claude_session_id"] as? String,
-          let transcript = findTranscript(claudeSessionID: claudeID) else {
-        return .success("(no transcript yet for this session)")
+    var output = row
+    let transcript = (row["claude_session_id"] as? String).flatMap(findTranscript(claudeSessionID:))
+    let page = transcript.flatMap { assistantReplyPage(at: $0, count: count, since: since) }
+    output["messages"] = page?.messages ?? []
+    output["next_cursor"] = String(page?.next ?? since ?? 0)
+    output["has_more"] = page?.hasMore ?? false
+    if page?.reset == true { output["cursor_reset"] = true }
+    if transcript == nil { output["transcript_pending"] = true }
+    guard let result = try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]) else {
+        return .failure(ToolFailure(message: "could not encode session output"))
     }
-    let replies = lastAssistantReplies(inTranscriptAt: transcript, count: count)
-    guard !replies.isEmpty else { return .success("(no assistant replies yet)") }
-    return .success(replies.map { String($0.prefix(4000)) }.joined(separator: "\n\n---\n\n"))
+    return .success(String(decoding: result, as: UTF8.self))
 }
 
 private func findTranscript(claudeSessionID: String) -> URL? {
-    let root = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".claude/projects", isDirectory: true)
+    let config = environmentValue("CLAUDE_CONFIG_DIR").map { URL(fileURLWithPath: $0, isDirectory: true) }
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true)
+    let root = config.appendingPathComponent("projects", isDirectory: true)
     guard let projects = try? FileManager.default.contentsOfDirectory(
         at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
     ) else { return nil }
@@ -836,37 +1042,53 @@ private func findTranscript(claudeSessionID: String) -> URL? {
     return nil
 }
 
-/// Same parsing as Console's `TranscriptTail`: last assistant text replies,
-/// reading only the file's final 512 KB.
-private func lastAssistantReplies(inTranscriptAt url: URL, count: Int) -> [String] {
-    guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
+/// Offset cursors advance through complete JSONL lines. Initial reads take
+/// the newest replies; reads with a cursor page forward without skipping.
+private func assistantReplyPage(at url: URL, count: Int, since: UInt64?) ->
+    (messages: [[String: Any]], next: UInt64, hasMore: Bool, reset: Bool)? {
+    guard let handle = try? FileHandle(forReadingFrom: url),
+          let size = try? handle.seekToEnd() else { return nil }
     defer { try? handle.close() }
-    let tailBytes: UInt64 = 512 * 1024
-    let size = (try? handle.seekToEnd()) ?? 0
-    let start = size > tailBytes ? size - tailBytes : 0
-    try? handle.seek(toOffset: start)
-    guard let data = try? handle.readToEnd() else { return [] }
-    var text = String(decoding: data, as: UTF8.self)
-    if start > 0, let newline = text.firstIndex(of: "\n") {
-        text = String(text[text.index(after: newline)...])
+    let window: UInt64 = 512 * 1024
+    let reset = since.map { $0 > size } ?? false
+    let cursor = reset ? nil : since
+    var offset = cursor ?? (size > window ? size - window : 0)
+    guard (try? handle.seek(toOffset: offset)) != nil,
+          let data = try? handle.read(upToCount: Int(min(size - offset, window))) else {
+        return ([], offset, false, reset)
     }
-    var replies: [String] = []
-    for line in text.split(separator: "\n").reversed() {
-        guard let lineData = line.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+    var messages: [[String: Any]] = []
+    var start = data.startIndex
+    while start < data.endIndex, let newline = data[start...].firstIndex(of: 0x0a) {
+        let skipPartialHead = cursor == nil && start == data.startIndex && offset > 0
+        let line = data[start..<newline]
+        offset += UInt64(newline + 1 - start)
+        start = newline + 1
+        guard !skipPartialHead,
+              let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               object["type"] as? String == "assistant",
+              object["isSidechain"] as? Bool != true,
               let message = object["message"] as? [String: Any],
               let blocks = message["content"] as? [[String: Any]] else { continue }
-        let reply = blocks
-            .filter { $0["type"] as? String == "text" }
+        let reply = blocks.filter { $0["type"] as? String == "text" }
             .compactMap { $0["text"] as? String }
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !reply.isEmpty else { continue }
-        replies.append(reply)
-        if replies.count == count { break }
+        var entry: [String: Any] = ["text": String(reply.prefix(4000))]
+        entry["timestamp"] = object["timestamp"] ?? NSNull()
+        messages.append(entry)
+        if cursor != nil, messages.count == count { break }
     }
-    return replies.reversed()
+    if start == data.startIndex, size - offset > window {
+        // One oversized record can span the entire page. Resync at the
+        // bounded tail rather than returning the same cursor indefinitely.
+        if let tail = assistantReplyPage(at: url, count: count, since: nil) {
+            return (tail.messages, tail.next, tail.hasMore, true)
+        }
+    }
+    let hasMore = data[start...].contains(0x0a) || size - offset > UInt64(data.count - start)
+    return (Array(messages.suffix(count)), offset, hasMore, reset)
 }
 
 // MARK: - Stdio helpers

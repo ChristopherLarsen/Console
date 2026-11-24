@@ -21,6 +21,11 @@ nonisolated enum BridgeProtocol {
         case promptSession = "prompt_session"
         case cancelDirective = "cancel_directive"
         case homeBoard = "home_board"
+        case refreshSessions = "refresh_sessions"
+        case getPlan = "get_plan"
+        case updatePlan = "update_plan"
+        case watchSession = "watch_console_session"
+        case recheckIn = "recheck_in"
     }
 
     static let maxPromptLength = 1500
@@ -88,6 +93,12 @@ struct BridgeEnvelope: Equatable, Sendable {
     /// Prompt text for `prompt_session` envelopes.
     var promptText: String?
     /// Correlates an MCP tool call with a result file beside the socket.
+    var createModel: String?
+    var createCWD: String?
+    var createToolProfile: String?
+    var createBriefID: String?
+    var planUpdateID: String?
+    var recheckMinutes: Double?
     var requestID: String?
 }
 
@@ -115,6 +126,12 @@ extension BridgeEnvelope {
         if let createAgent { container["create_agent"] = createAgent }
         if let targetSessionID { container["target_session_id"] = targetSessionID }
         if let promptText { container["prompt_text"] = promptText }
+        if let createModel { container["create_model"] = createModel }
+        if let createCWD { container["create_cwd"] = createCWD }
+        if let createToolProfile { container["create_tool_profile"] = createToolProfile }
+        if let createBriefID { container["create_brief_id"] = createBriefID }
+        if let planUpdateID { container["plan_update_id"] = planUpdateID }
+        if let recheckMinutes { container["recheck_minutes"] = recheckMinutes }
         if let requestID { container["request_id"] = requestID }
         guard JSONSerialization.isValidJSONObject(container),
               var data = try? JSONSerialization.data(withJSONObject: container, options: [.sortedKeys]) else {
@@ -238,6 +255,24 @@ extension BridgeEnvelope {
                     prompt, maxLength: BridgeProtocol.maxPromptLength, field: "createInitialPrompt"
                 )
             }
+            if let model = raw.createModel {
+                envelope.createModel = try validatedTrimmedText(model, maxLength: 120, field: "createModel")
+            }
+            if let cwd = raw.createCWD {
+                envelope.createCWD = try validatedTrimmedText(cwd, maxLength: 4096, field: "createCWD")
+            }
+            if let profile = raw.createToolProfile {
+                guard ["full", "readOnlyPrep"].contains(profile) else {
+                    throw BridgeEnvelopeError.invalidEnum(field: "createToolProfile")
+                }
+                envelope.createToolProfile = profile
+            }
+            if let id = raw.createBriefID {
+                guard UUID(uuidString: id) != nil, raw.createInitialPrompt == nil else {
+                    throw BridgeEnvelopeError.invalidEnum(field: "createBriefID")
+                }
+                envelope.createBriefID = id
+            }
             if let agent = raw.createAgent {
                 envelope.createAgent = try validatedTrimmedText(
                     agent, maxLength: BridgeProtocol.maxAgentLength, field: "createAgent"
@@ -246,6 +281,28 @@ extension BridgeEnvelope {
             if let requestID = raw.requestID {
                 try validateIdentifier(requestID, field: "requestID")
                 envelope.requestID = requestID
+            }
+        case .getPlan, .updatePlan, .watchSession, .recheckIn:
+            if let requestID = raw.requestID {
+                try validateIdentifier(requestID, field: "requestID")
+                envelope.requestID = requestID
+            }
+            if kind == .updatePlan {
+                guard let id = raw.planUpdateID, UUID(uuidString: id) != nil, id == raw.requestID else {
+                    throw BridgeEnvelopeError.invalidEnum(field: "planUpdateID")
+                }
+                envelope.planUpdateID = id
+            }
+            if kind == .watchSession {
+                guard let target = raw.targetSessionID else { throw BridgeEnvelopeError.missingField("targetSessionID") }
+                try validateIdentifier(target, field: "targetSessionID")
+                envelope.targetSessionID = target
+            }
+            if kind == .recheckIn {
+                guard let minutes = raw.recheckMinutes, (0.1...1440).contains(minutes) else {
+                    throw BridgeEnvelopeError.invalidEnum(field: "recheckMinutes")
+                }
+                envelope.recheckMinutes = minutes
             }
         case .closeSession:
             guard let target = raw.targetSessionID else {
@@ -267,7 +324,7 @@ extension BridgeEnvelope {
                 try validateIdentifier(requestID, field: "requestID")
                 envelope.requestID = requestID
             }
-        case .homeBoard:
+        case .homeBoard, .refreshSessions:
             if let requestID = raw.requestID {
                 try validateIdentifier(requestID, field: "requestID")
                 envelope.requestID = requestID
@@ -359,6 +416,12 @@ private struct RawEnvelope: Decodable {
     var createAgent: String?
     var targetSessionID: String?
     var promptText: String?
+    var createModel: String?
+    var createCWD: String?
+    var createToolProfile: String?
+    var createBriefID: String?
+    var planUpdateID: String?
+    var recheckMinutes: Double?
     var requestID: String?
 
     enum CodingKeys: String, CodingKey {
@@ -382,6 +445,12 @@ private struct RawEnvelope: Decodable {
         case createAgent = "create_agent"
         case targetSessionID = "target_session_id"
         case promptText = "prompt_text"
+        case createModel = "create_model"
+        case createCWD = "create_cwd"
+        case createToolProfile = "create_tool_profile"
+        case createBriefID = "create_brief_id"
+        case planUpdateID = "plan_update_id"
+        case recheckMinutes = "recheck_minutes"
         case requestID = "request_id"
     }
 }

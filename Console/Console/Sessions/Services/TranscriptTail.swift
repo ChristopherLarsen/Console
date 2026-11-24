@@ -21,6 +21,27 @@ nonisolated enum TranscriptTail {
         return lastAssistantMessages(inJSONL: text, count: count)
     }
 
+    static func currentTurnReply(claudeSessionID: UUID, since: Date?, projectsRoot: URL = defaultProjectsRoot) -> String? {
+        guard let url = transcriptURL(claudeSessionID: claudeSessionID, projectsRoot: projectsRoot),
+              let text = readTail(of: url) else { return nil }
+        for line in text.split(separator: "\n").reversed() {
+            guard let data = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  object["isSidechain"] as? Bool != true, object["isMeta"] as? Bool != true else { continue }
+            if object["type"] as? String == "user",
+               SessionHistoryReader.userMessageText(from: object["message"]) != nil {
+                return nil
+            }
+            guard let reply = lastAssistantMessages(inJSONL: String(line), count: 1).last else { continue }
+            if let since, let stamp = object["timestamp"] as? String,
+               let timestamp = SessionHistoryReader.decodeTimestamp(stamp), timestamp < since {
+                return nil
+            }
+            return reply
+        }
+        return nil
+    }
+
     static func transcriptURL(claudeSessionID: UUID, projectsRoot: URL) -> URL? {
         let fileName = "\(claudeSessionID.uuidString.lowercased()).jsonl"
         let fileManager = FileManager.default

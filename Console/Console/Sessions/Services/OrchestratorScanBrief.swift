@@ -6,19 +6,25 @@ enum OrchestratorScanBrief {
 
     /// One typed line that starts a run from a brief written to disk.
     static func runPrompt(briefPath: String) -> String {
-        "Run the orchestrator-run skill. Read the Console scan brief at \(briefPath), "
-            + "then ask me to approve the goal and plan."
+        "Run the orchestrator-run skill. Read the Console scan brief at \"\(briefPath)\", "
+            + "then load the current plan. Ask me to approve any new goal and plan."
     }
 
     /// Assembles a brief from live sessions and an optional Home board snapshot.
     static func build(
         sessions: [ConsoleSession],
-        homeSnapshot: HomeBoardSnapshot?
+        homeSnapshot: HomeBoardSnapshot?,
+        plan: OrchestratorPlan? = nil
     ) -> String {
         var lines: [String] = []
         lines.append("Run the orchestrator-run skill using this Console scan brief.")
         lines.append("Use prompt_console_session for approved directives to existing sessions and create_console_session with initial_prompt for approved new children.")
         lines.append("")
+        if let plan, let data = try? plan.json() {
+            lines.append("## Saved plan (get_plan for the current full version)")
+            lines.append(String(String(decoding: data, as: UTF8.self).prefix(3_000)))
+            lines.append("")
+        }
         lines.append("## Sessions")
         let peers = sessions.filter { $0.purpose != .orchestrator }
         if peers.isEmpty {
@@ -51,7 +57,7 @@ enum OrchestratorScanBrief {
         }
 
         lines.append("")
-        lines.append("Ask the user to approve the goal and plan before carrying out its steps.")
+        lines.append("Obtain approval for a new goal and plan. Continue approved work within the approval tiers.")
         let text = lines.joined(separator: "\n")
         if text.count <= maxCharacters { return text }
         return String(text.prefix(maxCharacters))
@@ -65,6 +71,8 @@ enum OrchestratorScanBrief {
             "activity=\(session.activity.rawValue)",
             "attention=\(session.attention.rawValue)",
             "bridge=\(session.bridgeStatus.rawValue)",
+            "tool_profile=\(session.toolProfile == .standard ? "full" : "readOnlyPrep")",
+            "cwd=\(session.workingDirectory.path)",
         ]
         if let summary = session.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
             parts.append("summary=\(String(summary.prefix(120)))")

@@ -11,6 +11,7 @@ final class HelperMCPTests: XCTestCase {
     private var received: [String] = []
     private let receivedLock = NSLock()
     private var resultsDirectory: URL!
+    private var transcript: URL!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -93,6 +94,8 @@ final class HelperMCPTests: XCTestCase {
                 "name": "Worker",
                 "purpose": "general",
                 "activity": "working",
+                "claude_session_id": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+                "last_turn_outcome": "failed",
                 "attention": "none",
                 "bridge_status": "active",
                 "summary": "Implementing login",
@@ -102,7 +105,12 @@ final class HelperMCPTests: XCTestCase {
         let snapshotData = try JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys])
         try snapshotData.write(to: snapshotURL, options: .atomic)
 
+        let config = socketURL.deletingLastPathComponent().appendingPathComponent("claude")
+        let project = config.appendingPathComponent("projects/fixture")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        transcript = project.appendingPathComponent("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl")
         p.environment = [
+            "CLAUDE_CONFIG_DIR": config.path,
             "CONSOLE_TERM_BRIDGE_SOCKET": socketURL.path,
             "CONSOLE_TERM_BRIDGE_SESSION_ID": "11111111-1111-1111-1111-111111111111",
             "CONSOLE_TERM_BRIDGE_TOKEN": "test-token-0123456789",
@@ -228,6 +236,10 @@ final class HelperMCPTests: XCTestCase {
             "read_console_session_output",
             "cancel_console_directive",
             "get_home_board",
+            "recheck_in",
+            "watch_console_session",
+            "update_plan",
+            "get_plan",
         ])
 
         for tool in tools {
@@ -317,7 +329,8 @@ final class HelperMCPTests: XCTestCase {
         let text = try XCTUnwrap(content.first?["text"] as? String)
         XCTAssertTrue(text.contains("Orchestrator"))
         XCTAssertTrue(text.contains("Worker"))
-        assertNothingDelivered()
+        let refresh = try XCTUnwrap(waitForDeliveredEnvelope())
+        XCTAssertEqual(refresh["kind"] as? String, "refresh_sessions")
     }
 
     func testCreateConsoleSessionDeliversEnvelope() throws {
@@ -426,6 +439,41 @@ final class HelperMCPTests: XCTestCase {
         XCTAssertTrue(text.contains("bridge_status"))
         XCTAssertTrue(text.contains("Implementing login"))
         XCTAssertTrue(text.contains("NMA-1"))
+    }
+
+    func testReadSessionOutputPagesForwardFromCompleteLines() throws {
+        let first = #"{"type":"assistant","timestamp":"2026-11-24T12:00:00Z","message":{"content":[{"type":"text","text":"First"}]}}"#
+        let second = #"{"type":"assistant","timestamp":"2026-11-24T12:05:00Z","message":{"content":[{"type":"text","text":"Second"}]}}"#
+        let third = #"{"type":"assistant","timestamp":"2026-11-24T12:10:00Z","message":{"content":[{"type":"text","text":"Third"}]}}"#
+        try (first + "\n" + second).write(to: transcript, atomically: true, encoding: .utf8)
+        func read(since: String? = nil) throws -> [String: Any] {
+            var arguments: [String: Any] = [
+                "session_id": "22222222-2222-2222-2222-222222222222", "messages": 1,
+            ]
+            if let since { arguments["since"] = since }
+            let response = try send([
+                "jsonrpc": "2.0", "id": 26, "method": "tools/call",
+                "params": ["name": "read_console_session_output", "arguments": arguments],
+            ])
+            let result = try XCTUnwrap(response["result"] as? [String: Any])
+            let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+            let text = try XCTUnwrap(content.first?["text"] as? String)
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        }
+        let initial = try read()
+        let cursor = try XCTUnwrap(initial["next_cursor"] as? String)
+        XCTAssertEqual(initial["last_turn_outcome"] as? String, "failed")
+        let initialMessage = (initial["messages"] as? [[String: String]])?.first
+        XCTAssertEqual(initialMessage?["text"], "First")
+        XCTAssertEqual(initialMessage?["timestamp"], "2026-11-24T12:00:00Z")
+
+        try ([first, second, third, ""].joined(separator: "\n")).write(to: transcript, atomically: true, encoding: .utf8)
+        let next = try read(since: cursor)
+        XCTAssertEqual((next["messages"] as? [[String: String]])?.first?["text"], "Second")
+        XCTAssertEqual(next["has_more"] as? Bool, true)
+        let last = try read(since: XCTUnwrap(next["next_cursor"] as? String))
+        XCTAssertEqual((last["messages"] as? [[String: String]])?.first?["text"], "Third")
+        XCTAssertEqual(last["has_more"] as? Bool, false)
     }
 
     func testInvalidCategoryIsToolError() throws {
