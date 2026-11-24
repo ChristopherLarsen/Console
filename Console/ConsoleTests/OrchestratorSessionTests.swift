@@ -497,6 +497,7 @@ final class OrchestratorSessionTests: XCTestCase {
         }
         XCTAssertEqual(store.openDecisions.map(\.id), [1])
         XCTAssertEqual(announced, [[1]])
+        XCTAssertNil(store.proposedPlan, "an approved plan is not proposed again")
 
         XCTAssertThrowsError(try store.answerDecision(id: 1, option: "maybe"))
         try store.answerDecision(id: 1, option: "yes")
@@ -508,6 +509,34 @@ final class OrchestratorSessionTests: XCTestCase {
         XCTAssertTrue(note.contains("answered decision 1"))
         XCTAssertTrue(note.contains("\"yes\""))
         XCTAssertThrowsError(try store.answerDecision(id: 1, option: "yes"))
+    }
+
+    func testProposedPlanIsShownUntilApprovedFromHome() throws {
+        let store = makeStore()
+        store.queuedCommandSpacing = 0
+        var badge = 0
+        store.openDecisionsObserver = { _, count in badge = count }
+        let lead = try startOrchestrator(in: store, directory: tmpDirectory("approve"))
+        try receive(.sessionStarted, from: lead.id, in: store)
+        let root = try XCTUnwrap(store.writeOrchestratorBrief("Scan")).deletingLastPathComponent()
+        let id = UUID().uuidString
+        let plan = OrchestratorPlan(goal: "Finish NMA-1", steps: [
+            .init(id: "build", ownerSession: nil, directive: "Build and run the tests.", status: .pending),
+        ])
+        try plan.json().write(to: root.appendingPathComponent("plan-update-\(id).json"))
+        try send(.updatePlan, from: lead.id, in: store) { envelope in
+            envelope.requestID = id
+            envelope.planUpdateID = id
+        }
+        XCTAssertEqual(store.proposedPlan?.steps.map(\.directive), ["Build and run the tests."])
+        XCTAssertEqual(badge, 1)
+
+        try store.approveProposedPlan()
+        XCTAssertNil(store.proposedPlan)
+        XCTAssertEqual(badge, 0)
+        XCTAssertTrue(try store.loadOrchestratorPlan().approved)
+        XCTAssertTrue(relayNotes(for: lead.id, in: store).last?.contains("approved the plan") == true)
+        XCTAssertThrowsError(try store.approveProposedPlan())
     }
 
     func testHomeBoardEventsReportChangesOnlyBetweenSuccessfulReads() {

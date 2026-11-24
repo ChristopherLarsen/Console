@@ -1346,12 +1346,39 @@ final class SessionStore {
     private(set) var openDecisions: [OrchestratorPlan.Decision] = []
     @ObservationIgnored var openDecisionsObserver: (@MainActor (_ added: [OrchestratorPlan.Decision], _ openCount: Int) -> Void)?
 
+    /// A plan with steps that the user has not approved yet. Home shows its
+    /// goal and steps, so approval is never asked for sight unseen.
+    private(set) var proposedPlan: OrchestratorPlan?
+
     private func refreshOpenDecisions(from plan: OrchestratorPlan?, announce: Bool) {
-        let open = (plan ?? (try? loadOrchestratorPlan()))?.decisions.filter { $0.answer == nil } ?? []
-        guard open != openDecisions else { return }
+        let plan = plan ?? (try? loadOrchestratorPlan())
+        let open = plan?.decisions.filter { $0.answer == nil } ?? []
+        let proposed = plan.flatMap { !$0.approved && !$0.steps.isEmpty ? $0 : nil }
+        guard open != openDecisions || proposed != proposedPlan else { return }
         let known = Set(openDecisions.map(\.id))
+        var added = open.filter { !known.contains($0.id) }
+        if let proposed, proposedPlan?.goal != proposed.goal || proposedPlan?.steps != proposed.steps {
+            added.append(.init(id: 0, question: "Plan to approve: \(proposed.goal)", options: []))
+        }
         openDecisions = open
-        openDecisionsObserver?(announce ? open.filter { !known.contains($0.id) } : [], open.count)
+        proposedPlan = proposed
+        openDecisionsObserver?(announce ? added : [], open.count + (proposed == nil ? 0 : 1))
+    }
+
+    /// Approves the proposed plan from Home and wakes the Orchestrator.
+    func approveProposedPlan() throws {
+        guard let url = orchestratorPlanURL else { throw CocoaError(.fileNoSuchFile) }
+        var plan = try loadOrchestratorPlan()
+        guard !plan.approved, !plan.steps.isEmpty else {
+            refreshOpenDecisions(from: plan, announce: false)
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        plan.approved = true
+        plan.revision += 1
+        try plan.json().write(to: url, options: .atomic)
+        refreshOpenDecisions(from: plan, announce: false)
+        wakeOrchestrator("Console relay: the user approved the plan on the Home board after reading its goal and steps. "
+            + "It is saved as approved. Call get_plan, then carry out the steps within the approval tiers.")
     }
 
     /// Records the user's answer from a Home card and wakes the Orchestrator.

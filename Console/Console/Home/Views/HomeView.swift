@@ -89,6 +89,22 @@ struct HomeView: View {
     /// one thing here only the user can move.
     @ViewBuilder
     private var decisionCards: some View {
+        if let sessionStore, let plan = sessionStore.proposedPlan {
+            HomePlanCard(
+                plan: plan,
+                ownerName: { id in sessionStore.sessions.first { $0.id == id }?.name },
+                approve: {
+                    do {
+                        try sessionStore.approveProposedPlan()
+                    } catch {
+                        launchCoordinator.report(failure: "The plan could not be approved. It may have changed; check the Orchestrator.")
+                    }
+                },
+                discuss: {
+                    if let id = sessionStore.orchestratorSession()?.id { model.selectSession(id) }
+                }
+            )
+        }
         if let sessionStore, !sessionStore.openDecisions.isEmpty {
             LazyVGrid(
                 columns: [GridItem(.adaptive(minimum: 260), spacing: HomeCardMetrics.listGap, alignment: .top)],
