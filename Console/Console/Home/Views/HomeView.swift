@@ -129,7 +129,13 @@ struct HomeView: View {
                             HomeDecisionCard(
                                 decision: decision,
                                 sessionName: session?.name,
-                                discuss: { discuss(decision: decision.id) }
+                                discuss: { discuss(decision: decision.id) },
+                                openMergeRequest: session.flatMap(mergeRequestURL(for:)).map { url in
+                                    { HomeBoardModel.executeNavigation(.openMergeRequest(url: url)) }
+                                },
+                                openJira: session.flatMap(storyURL(for:)).map { url in
+                                    { HomeBoardModel.executeNavigation(.openJiraIssue(url: url)) }
+                                }
                             ) { option in
                                 do {
                                     try sessionStore.answerDecision(id: decision.id, option: option)
@@ -155,6 +161,18 @@ struct HomeView: View {
     }
 
     private static let orchestratorCardMinWidth: CGFloat = 300
+
+    /// The session's most recently linked merge request.
+    private func mergeRequestURL(for session: ConsoleSession) -> URL? {
+        session.artifacts.last(where: { $0.kind == .gitlabMergeRequest })?.url
+    }
+
+    /// The session's JIRA story, resolved the same way the Sessions header does.
+    private func storyURL(for session: ConsoleSession) -> URL? {
+        HomeStorySessionMatcher.jiraURL(
+            for: session, configuredURL: webViewJiraURL, reviewItems: MRReviewScanController.shared.items
+        )
+    }
 
     /// One or two rows of cards, from how many cards there are
     /// and how many fit across; a single line when nothing is waiting.

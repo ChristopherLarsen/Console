@@ -32,6 +32,9 @@ struct HomeDecisionCard: View {
     let sessionName: String?
     /// Clicking the card itself, not a button: talk it through first.
     let discuss: () -> Void
+    /// Set when the session has a merge request or a JIRA story.
+    var openMergeRequest: (() -> Void)? = nil
+    var openJira: (() -> Void)? = nil
     let answer: (String) -> Void
 
     @State private var hovering = false
@@ -80,7 +83,15 @@ struct HomeDecisionCard: View {
                     CapsuleActionButton(option, isRecommended: option == decision.recommended) { answer(option) }
                         .accessibilityIdentifier("HomeDecisionOption.\(decision.id).\(option)")
                 }
-                Spacer(minLength: 0)
+                Spacer(minLength: 4)
+                if let openMergeRequest {
+                    ServiceCapsuleButton(.gitlab, action: openMergeRequest)
+                        .accessibilityIdentifier("HomeDecisionOpenMR.\(decision.id)")
+                }
+                if let openJira {
+                    ServiceCapsuleButton(.jira, action: openJira)
+                        .accessibilityIdentifier("HomeDecisionOpenJira.\(decision.id)")
+                }
             }
         }
         .padding(HomeCardMetrics.padding)
