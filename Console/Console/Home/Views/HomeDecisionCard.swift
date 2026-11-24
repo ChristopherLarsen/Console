@@ -5,14 +5,25 @@ import SwiftUI
 enum HomeOrchestratorCardMetrics {
     /// Every card in the Orchestrator section is exactly this tall, so the
     /// grid reads as one even row. A long plan scrolls inside its card.
-    static let height: CGFloat = 168
+    static let height: CGFloat = 190
 }
 
+/// One open Orchestrator decision: which session it is about, the current
+/// state, the question, and one button per option. Choosing an option records
+/// the answer in the plan and wakes the Orchestrator.
 struct HomeDecisionCard: View {
     let decision: OrchestratorPlan.Decision
+    /// The session's name when the decision names a live session.
+    let sessionName: String?
+    let openSession: (() -> Void)?
     let answer: (String) -> Void
 
     @State private var hovering = false
+
+    private var title: String {
+        let fallback = decision.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return sessionName ?? (fallback.isEmpty ? "Orchestrator" : fallback)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: HomeCardMetrics.rowGap) {
@@ -26,10 +37,30 @@ struct HomeDecisionCard: View {
                     .foregroundStyle(AttentionChannel.needsYou.color)
                 Spacer(minLength: 4)
             }
+            Button(action: { openSession?() }) {
+                Text(title)
+                    .font(HomeCardMetrics.titleFont)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .disabled(openSession == nil)
+            .help(openSession == nil ? title : "Open \(title)")
+            .accessibilityIdentifier("HomeDecisionTitle.\(decision.id)")
+            if let summary = decision.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
+                Text(summary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .help(summary)
+            }
             Text(decision.question)
-                .font(HomeCardMetrics.titleFont)
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.primary)
-                .lineLimit(5)
+                .lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help(decision.question)
             Spacer(minLength: 0)
@@ -40,7 +71,6 @@ struct HomeDecisionCard: View {
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.top, 4)
         }
         .padding(HomeCardMetrics.padding)
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -77,7 +107,7 @@ struct HomePlanCard: View {
             Text(plan.goal.isEmpty ? "No goal stated" : plan.goal)
                 .font(HomeCardMetrics.titleFont)
                 .foregroundStyle(.primary)
-                .lineLimit(2)
+                .lineLimit(1)
                 .help(plan.goal)
                 .frame(maxWidth: .infinity, alignment: .leading)
             ScrollView {

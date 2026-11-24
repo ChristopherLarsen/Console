@@ -25,6 +25,13 @@ struct OrchestratorPlan: Codable, Equatable {
         var options: [String]
         var answer: String?
         var presented: Bool?
+        /// Console ID of the session the decision is about. Kept as text so a
+        /// malformed value cannot make the whole plan unreadable.
+        var session: String?
+        /// Fallback card title when no live session matches.
+        var title: String?
+        /// Short current state the user needs in order to decide.
+        var summary: String?
     }
 
     var revision = 0

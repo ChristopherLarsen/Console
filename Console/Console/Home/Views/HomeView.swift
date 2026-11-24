@@ -66,12 +66,17 @@ struct HomeView: View {
         let board = HomeBoardBuilder.build(snapshot)
         let sessions = sessionStore?.sessions ?? []
 
-        return VStack(alignment: .leading, spacing: 10) {
-            decisionCards
-            HStack(alignment: .top, spacing: 12) {
-                nextColumn(board, sessions: sessions)
-                inProgressColumn(board, sessions: sessions)
-                reviewColumn(board)
+        // The Orchestrator section owns the top half of Home; the three
+        // columns share the bottom half.
+        return GeometryReader { geometry in
+            VStack(alignment: .leading, spacing: 10) {
+                decisionCards
+                    .frame(height: max(0, (geometry.size.height - 10) / 2))
+                HStack(alignment: .top, spacing: 12) {
+                    nextColumn(board, sessions: sessions)
+                    inProgressColumn(board, sessions: sessions)
+                    reviewColumn(board)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -88,53 +93,68 @@ struct HomeView: View {
     /// What the Orchestrator is waiting on leads the board: it is the one
     /// thing here only the user can move. The section has its own title and
     /// a very light grey ground; its cards keep the shared white surface.
-    @ViewBuilder
     private var decisionCards: some View {
-        if let sessionStore, sessionStore.proposedPlan != nil || !sessionStore.openDecisions.isEmpty {
-            VStack(alignment: .leading, spacing: 0) {
-                HomePanelHeader(
-                    title: "Orchestrator",
-                    titleFontSize: HomeCardMetrics.columnTitleFontSize,
-                    height: HomeCardMetrics.columnHeaderHeight,
-                    accessory: { EmptyView() }
-                )
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 300), spacing: HomeCardMetrics.listGap, alignment: .top)],
-                    alignment: .leading, spacing: HomeCardMetrics.listGap
-                ) {
-                    if let plan = sessionStore.proposedPlan {
-                        HomePlanCard(
-                            plan: plan,
-                            ownerName: { id in sessionStore.sessions.first { $0.id == id }?.name },
-                            approve: {
-                                do {
-                                    try sessionStore.approveProposedPlan()
-                                } catch {
-                                    launchCoordinator.report(failure: "The plan could not be approved. It may have changed; check the Orchestrator.")
+        let waiting = sessionStore.map { $0.proposedPlan != nil || !$0.openDecisions.isEmpty } ?? false
+        return VStack(alignment: .leading, spacing: 0) {
+            HomePanelHeader(
+                title: "Orchestrator",
+                titleFontSize: HomeCardMetrics.columnTitleFontSize,
+                height: HomeCardMetrics.columnHeaderHeight,
+                accessory: { EmptyView() }
+            )
+            if let sessionStore, waiting {
+                ScrollView {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 300), spacing: HomeCardMetrics.listGap, alignment: .top)],
+                        alignment: .leading, spacing: HomeCardMetrics.listGap
+                    ) {
+                        if let plan = sessionStore.proposedPlan {
+                            HomePlanCard(
+                                plan: plan,
+                                ownerName: { id in sessionStore.sessions.first { $0.id == id }?.name },
+                                approve: {
+                                    do {
+                                        try sessionStore.approveProposedPlan()
+                                    } catch {
+                                        launchCoordinator.report(failure: "The plan could not be approved. It may have changed; check the Orchestrator.")
+                                    }
+                                },
+                                discuss: {
+                                    if let id = sessionStore.orchestratorSession()?.id { model.selectSession(id) }
                                 }
-                            },
-                            discuss: {
-                                if let id = sessionStore.orchestratorSession()?.id { model.selectSession(id) }
+                            )
+                        }
+                        ForEach(sessionStore.openDecisions, id: \.id) { decision in
+                            let session = decision.session.flatMap(UUID.init(uuidString:)).flatMap { id in
+                                sessionStore.sessions.first { $0.id == id }
                             }
-                        )
-                    }
-                    ForEach(sessionStore.openDecisions, id: \.id) { decision in
-                        HomeDecisionCard(decision: decision) { option in
-                            do {
-                                try sessionStore.answerDecision(id: decision.id, option: option)
-                            } catch {
-                                launchCoordinator.report(failure: "That decision could not be saved. It may already be answered.")
+                            HomeDecisionCard(
+                                decision: decision,
+                                sessionName: session?.name,
+                                openSession: session.map { session in { model.selectSession(session.id) } }
+                            ) { option in
+                                do {
+                                    try sessionStore.answerDecision(id: decision.id, option: option)
+                                } catch {
+                                    launchCoordinator.report(failure: "That decision could not be saved. It may already be answered.")
+                                }
                             }
                         }
                     }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 8)
+                    .accessibilityIdentifier("HomeDecisions")
                 }
-                .accessibilityIdentifier("HomeDecisions")
-                .padding(.horizontal, 8)
-                .padding(.bottom, 8)
+            } else {
+                Text("Nothing is waiting on you.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.97)))
-            .accessibilityIdentifier("HomeOrchestratorSection")
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.97)))
+        .accessibilityIdentifier("HomeOrchestratorSection")
     }
 
     // MARK: Next
