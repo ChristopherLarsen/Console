@@ -629,7 +629,15 @@ struct HomeView: View {
                     return url
                 })
                 if urls.count == 1 { return urls.first }
-                if urls.count > 1 { return nil }
+                // Several stories are linked: the one the merge request
+                // itself names is the right one. With no such match the
+                // lookup carries on rather than disabling the button.
+                if let key = item.jiraIssueKey ?? JiraSourceContext.issueKey(in: item.title),
+                   let match = urls.first(where: {
+                       JiraSourceContext.parseIssueKey(fromURL: $0)?.caseInsensitiveCompare(key) == .orderedSame
+                   }) {
+                    return match
+                }
             }
         }
         if let session = reviewSession(for: item),
