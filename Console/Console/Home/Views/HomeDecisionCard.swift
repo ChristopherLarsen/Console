@@ -2,6 +2,12 @@ import SwiftUI
 
 /// One open Orchestrator decision. Each option is a button: choosing one
 /// records the answer in the plan and wakes the Orchestrator.
+enum HomeOrchestratorCardMetrics {
+    /// Every card in the Orchestrator section is exactly this tall, so the
+    /// grid reads as one even row. A long plan scrolls inside its card.
+    static let height: CGFloat = 168
+}
+
 struct HomeDecisionCard: View {
     let decision: OrchestratorPlan.Decision
     let answer: (String) -> Void
@@ -23,9 +29,10 @@ struct HomeDecisionCard: View {
             Text(decision.question)
                 .font(HomeCardMetrics.titleFont)
                 .foregroundStyle(.primary)
-                .lineLimit(4)
+                .lineLimit(5)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help(decision.question)
+            Spacer(minLength: 0)
             HStack(spacing: 6) {
                 ForEach(decision.options, id: \.self) { option in
                     CapsuleActionButton(option) { answer(option) }
@@ -36,7 +43,8 @@ struct HomeDecisionCard: View {
             .padding(.top, 4)
         }
         .padding(HomeCardMetrics.padding)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(height: HomeOrchestratorCardMetrics.height)
         .onHover { hovering = $0 }
         .homeCardSurface(hovering: hovering)
         .accessibilityElement(children: .contain)
@@ -69,21 +77,27 @@ struct HomePlanCard: View {
             Text(plan.goal.isEmpty ? "No goal stated" : plan.goal)
                 .font(HomeCardMetrics.titleFont)
                 .foregroundStyle(.primary)
+                .lineLimit(2)
+                .help(plan.goal)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            ForEach(Array(plan.steps.enumerated()), id: \.element.id) { index, step in
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("\(index + 1).")
-                        .font(HomeCardMetrics.identityFont)
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(step.ownerSession.flatMap(ownerName) ?? "New session")
-                            .font(HomeCardMetrics.stateFont)
-                            .foregroundStyle(.secondary)
-                        Text(step.directive)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.primary)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+            ScrollView {
+                VStack(alignment: .leading, spacing: HomeCardMetrics.rowGap) {
+                    ForEach(Array(plan.steps.enumerated()), id: \.element.id) { index, step in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("\(index + 1).")
+                                .font(HomeCardMetrics.identityFont)
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(step.ownerSession.flatMap(ownerName) ?? "New session")
+                                    .font(HomeCardMetrics.stateFont)
+                                    .foregroundStyle(.secondary)
+                                Text(step.directive)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.primary)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
                     }
                 }
             }
@@ -97,7 +111,8 @@ struct HomePlanCard: View {
             .padding(.top, 4)
         }
         .padding(HomeCardMetrics.padding)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(height: HomeOrchestratorCardMetrics.height)
         .onHover { hovering = $0 }
         .homeCardSurface(hovering: hovering)
         .accessibilityElement(children: .contain)

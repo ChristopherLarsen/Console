@@ -85,42 +85,55 @@ struct HomeView: View {
         }
     }
 
-    /// Decisions the Orchestrator is waiting on lead the board: they are the
-    /// one thing here only the user can move.
+    /// What the Orchestrator is waiting on leads the board: it is the one
+    /// thing here only the user can move. The section has its own title and
+    /// a very light grey ground; its cards keep the shared white surface.
     @ViewBuilder
     private var decisionCards: some View {
-        if let sessionStore, let plan = sessionStore.proposedPlan {
-            HomePlanCard(
-                plan: plan,
-                ownerName: { id in sessionStore.sessions.first { $0.id == id }?.name },
-                approve: {
-                    do {
-                        try sessionStore.approveProposedPlan()
-                    } catch {
-                        launchCoordinator.report(failure: "The plan could not be approved. It may have changed; check the Orchestrator.")
+        if let sessionStore, sessionStore.proposedPlan != nil || !sessionStore.openDecisions.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                HomePanelHeader(
+                    title: "Orchestrator",
+                    titleFontSize: HomeCardMetrics.columnTitleFontSize,
+                    height: HomeCardMetrics.columnHeaderHeight,
+                    accessory: { EmptyView() }
+                )
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 300), spacing: HomeCardMetrics.listGap, alignment: .top)],
+                    alignment: .leading, spacing: HomeCardMetrics.listGap
+                ) {
+                    if let plan = sessionStore.proposedPlan {
+                        HomePlanCard(
+                            plan: plan,
+                            ownerName: { id in sessionStore.sessions.first { $0.id == id }?.name },
+                            approve: {
+                                do {
+                                    try sessionStore.approveProposedPlan()
+                                } catch {
+                                    launchCoordinator.report(failure: "The plan could not be approved. It may have changed; check the Orchestrator.")
+                                }
+                            },
+                            discuss: {
+                                if let id = sessionStore.orchestratorSession()?.id { model.selectSession(id) }
+                            }
+                        )
                     }
-                },
-                discuss: {
-                    if let id = sessionStore.orchestratorSession()?.id { model.selectSession(id) }
-                }
-            )
-        }
-        if let sessionStore, !sessionStore.openDecisions.isEmpty {
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 260), spacing: HomeCardMetrics.listGap, alignment: .top)],
-                alignment: .leading, spacing: HomeCardMetrics.listGap
-            ) {
-                ForEach(sessionStore.openDecisions, id: \.id) { decision in
-                    HomeDecisionCard(decision: decision) { option in
-                        do {
-                            try sessionStore.answerDecision(id: decision.id, option: option)
-                        } catch {
-                            launchCoordinator.report(failure: "That decision could not be saved. It may already be answered.")
+                    ForEach(sessionStore.openDecisions, id: \.id) { decision in
+                        HomeDecisionCard(decision: decision) { option in
+                            do {
+                                try sessionStore.answerDecision(id: decision.id, option: option)
+                            } catch {
+                                launchCoordinator.report(failure: "That decision could not be saved. It may already be answered.")
+                            }
                         }
                     }
                 }
+                .accessibilityIdentifier("HomeDecisions")
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
             }
-            .accessibilityIdentifier("HomeDecisions")
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.97)))
+            .accessibilityIdentifier("HomeOrchestratorSection")
         }
     }
 
