@@ -17,6 +17,8 @@ struct HomeBoardColumn<Accessory: View, Content: View>: View {
     /// is, above the gated content (the Review column's own-MR prep cards
     /// come from the authored scan, which succeeds independently).
     var pinnedContent: AnyView? = nil
+    /// Cards per row. The Review column is two wide; the rest are one.
+    var cardColumns = 1
     /// What to render when `health.retainsContent`. Empty lists render their
     /// own placeholder cards.
     @ViewBuilder var content: () -> Content
@@ -48,7 +50,13 @@ struct HomeBoardColumn<Accessory: View, Content: View>: View {
             }
 
             ScrollView {
-                LazyVStack(spacing: HomeCardMetrics.listGap) {
+                LazyVGrid(
+                    columns: Array(
+                        repeating: GridItem(.flexible(), spacing: HomeCardMetrics.listGap, alignment: .top),
+                        count: cardColumns
+                    ),
+                    spacing: HomeCardMetrics.listGap
+                ) {
                     pinnedContent
                     if health.retainsContent {
                         content()

@@ -72,9 +72,15 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 10) {
                 decisionCards
                     .frame(height: max(0, (geometry.size.height - 10) / 2))
+                // Next up holds at most three cards and Review often holds
+                // many, so the stories stack in the left third and Review
+                // takes the other two thirds, two cards wide.
                 HStack(alignment: .top, spacing: 12) {
-                    nextColumn(board, sessions: sessions)
-                    inProgressColumn(board, sessions: sessions)
+                    VStack(spacing: 10) {
+                        nextColumn(board, sessions: sessions)
+                        inProgressColumn(board, sessions: sessions)
+                    }
+                    .frame(width: max(0, (geometry.size.width - 12) / 3))
                     reviewColumn(board)
                 }
             }
@@ -449,6 +455,7 @@ struct HomeView: View {
             onRecovery: { model.openSettings() },
             statusMessage: reviewScanStatus,
             pinnedContent: AnyView(responsePrepCards),
+            cardColumns: 2,
             content: {
                 if board.reviewQueue.isEmpty {
                     if board.reviewHealth == .ready, responsePrep?.items.isEmpty ?? true {

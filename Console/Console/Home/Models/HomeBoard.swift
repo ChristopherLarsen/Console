@@ -166,8 +166,8 @@ enum HomeBoardBuilder {
     }
 
     /// The In Progress column's cards. Stories in the testing state always
-    /// float above every other in-progress state; host order (`sourceOrder`)
-    /// is preserved within each tier.
+    /// sit below every other in-progress state, since they are waiting on
+    /// someone else; host order (`sourceOrder`) is preserved within each tier.
     static func inProgressTickets(in tickets: [JiraTicketSummary]) -> [JiraTicketSummary] {
         tickets
             .filter {
@@ -179,7 +179,7 @@ enum HomeBoardBuilder {
             .sorted { lhs, rhs in
                 let lhsTesting = AttentionChannel.forTicketStatus(lhs.status) == .testing
                 let rhsTesting = AttentionChannel.forTicketStatus(rhs.status) == .testing
-                if lhsTesting != rhsTesting { return lhsTesting }
+                if lhsTesting != rhsTesting { return rhsTesting }
                 return lhs.sourceOrder < rhs.sourceOrder
             }
     }
