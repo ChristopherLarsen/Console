@@ -266,7 +266,7 @@ private let consoleTools: [MCPServerTool] = [
     ),
     MCPServerTool(
         name: "create_console_session",
-        description: "Create a child session for an approved plan step. Choose a user-selectable Console purpose. Optional initial_prompt is the child's first task and its outcome is relayed to you. Blank sessions take no initial_prompt. At most four live children are allowed.",
+        description: "Create a child session for a step of the work. Choose a user-selectable Console purpose. Optional initial_prompt is the child's first task and its outcome is relayed to you. Blank sessions take no initial_prompt. At most four live children are allowed.",
         schema: [
             "type": "object",
             "properties": [
@@ -300,7 +300,7 @@ private let consoleTools: [MCPServerTool] = [
     ),
     MCPServerTool(
         name: "prompt_console_session",
-        description: "Send an approved plan directive to an existing session by Console session id. Console relays the outcome. Refuses the orchestrator and blank sessions.",
+        description: "Send a directive to an existing session by Console session id. Console relays the outcome. Refuses the orchestrator and blank sessions.",
         schema: [
             "type": "object",
             "properties": [
@@ -339,21 +339,20 @@ private let consoleTools: [MCPServerTool] = [
     ),
     MCPServerTool(
         name: "get_plan",
-        description: "Load the durable Orchestrator plan, current revision and numbered decisions.",
+        description: "Load your working notes (steps and their owner sessions), the current revision, and the numbered user decisions.",
         schema: ["type": "object", "properties": [:], "additionalProperties": false]
     ),
     MCPServerTool(
         name: "update_plan",
-        description: "Replace the plan using its current revision. Preserve stable step and decision IDs. A decision with no answer is open.",
+        description: "Replace your working notes and decisions using the current revision. Steps are private bookkeeping and are never shown or approved. Each open decision becomes a Home card. Preserve stable step and decision IDs. A decision with no answer is open.",
         schema: [
             "type": "object",
             "properties": ["plan": [
                 "type": "object",
-                "required": ["revision", "goal", "approved", "steps", "decisions"],
+                "required": ["revision", "steps", "decisions"],
                 "properties": [
                     "revision": ["type": "integer", "minimum": 0],
                     "goal": ["type": "string"],
-                    "approved": ["type": "boolean"],
                     "steps": ["type": "array", "items": [
                         "type": "object",
                         "required": ["id", "directive", "status"],

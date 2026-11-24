@@ -100,7 +100,7 @@ struct HomeView: View {
     /// thing here only the user can move. The untitled section sits on
     /// a very light grey ground; its cards keep the shared white surface.
     private var decisionCards: some View {
-        let waiting = sessionStore.map { $0.proposedPlan != nil || !$0.openDecisions.isEmpty } ?? false
+        let waiting = sessionStore.map { !$0.openDecisions.isEmpty } ?? false
         return VStack(alignment: .leading, spacing: 0) {
             if let sessionStore, waiting {
                 ScrollView {
@@ -108,20 +108,6 @@ struct HomeView: View {
                         columns: [GridItem(.adaptive(minimum: Self.orchestratorCardMinWidth), spacing: HomeCardMetrics.listGap, alignment: .top)],
                         alignment: .leading, spacing: HomeCardMetrics.listGap
                     ) {
-                        if let plan = sessionStore.proposedPlan {
-                            HomePlanCard(
-                                plan: plan,
-                                ownerName: { id in sessionStore.sessions.first { $0.id == id }?.name },
-                                approve: {
-                                    do {
-                                        try sessionStore.approveProposedPlan()
-                                    } catch {
-                                        launchCoordinator.report(failure: "The plan could not be approved. It may have changed; check the Orchestrator.")
-                                    }
-                                },
-                                discuss: { discuss(decision: nil) }
-                            )
-                        }
                         ForEach(sessionStore.openDecisions, id: \.id) { decision in
                             let session = decision.session.flatMap(UUID.init(uuidString:)).flatMap { id in
                                 sessionStore.sessions.first { $0.id == id }
@@ -177,7 +163,7 @@ struct HomeView: View {
     /// One or two rows of cards, from how many cards there are
     /// and how many fit across; a single line when nothing is waiting.
     private func orchestratorSectionHeight(width: CGFloat) -> CGFloat {
-        let cards = (sessionStore?.openDecisions.count ?? 0) + (sessionStore?.proposedPlan == nil ? 0 : 1)
+        let cards = sessionStore?.openDecisions.count ?? 0
         guard cards > 0 else { return 28 }
         let gap = HomeCardMetrics.listGap
         let perRow = max(1, Int((width - 16 + gap) / (Self.orchestratorCardMinWidth + gap)))
@@ -186,7 +172,7 @@ struct HomeView: View {
     }
 
     /// Switches to the Orchestrator and tells it which card the user opened.
-    private func discuss(decision id: Int?) {
+    private func discuss(decision id: Int) {
         if let orchestrator = sessionStore?.discussWithOrchestrator(decision: id) {
             model.selectSession(orchestrator)
         } else {

@@ -1357,39 +1357,12 @@ final class SessionStore {
     private(set) var openDecisions: [OrchestratorPlan.Decision] = []
     @ObservationIgnored var openDecisionsObserver: (@MainActor (_ added: [OrchestratorPlan.Decision], _ openCount: Int) -> Void)?
 
-    /// A plan with steps that the user has not approved yet. Home shows its
-    /// goal and steps, so approval is never asked for sight unseen.
-    private(set) var proposedPlan: OrchestratorPlan?
-
     private func refreshOpenDecisions(from plan: OrchestratorPlan?, announce: Bool) {
-        let plan = plan ?? (try? loadOrchestratorPlan())
-        let open = plan?.decisions.filter { $0.answer == nil } ?? []
-        let proposed = plan.flatMap { !$0.approved && !$0.steps.isEmpty ? $0 : nil }
-        guard open != openDecisions || proposed != proposedPlan else { return }
+        let open = (plan ?? (try? loadOrchestratorPlan()))?.decisions.filter { $0.answer == nil } ?? []
+        guard open != openDecisions else { return }
         let known = Set(openDecisions.map(\.id))
-        var added = open.filter { !known.contains($0.id) }
-        if let proposed, proposedPlan?.goal != proposed.goal || proposedPlan?.steps != proposed.steps {
-            added.append(.init(id: 0, question: "Plan to approve: \(proposed.goal)", options: []))
-        }
         openDecisions = open
-        proposedPlan = proposed
-        openDecisionsObserver?(announce ? added : [], open.count + (proposed == nil ? 0 : 1))
-    }
-
-    /// Approves the proposed plan from Home and wakes the Orchestrator.
-    func approveProposedPlan() throws {
-        guard let url = orchestratorPlanURL else { throw CocoaError(.fileNoSuchFile) }
-        var plan = try loadOrchestratorPlan()
-        guard !plan.approved, !plan.steps.isEmpty else {
-            refreshOpenDecisions(from: plan, announce: false)
-            throw CocoaError(.fileReadCorruptFile)
-        }
-        plan.approved = true
-        plan.revision += 1
-        try plan.json().write(to: url, options: .atomic)
-        refreshOpenDecisions(from: plan, announce: false)
-        wakeOrchestrator("Console relay: the user approved the plan on the Home board after reading its goal and steps. "
-            + "It is saved as approved. Call get_plan, then carry out the steps within the approval tiers.")
+        openDecisionsObserver?(announce ? open.filter { !known.contains($0.id) } : [], open.count)
     }
 
     /// Records the user's answer from a Home card and wakes the Orchestrator.
@@ -1412,21 +1385,15 @@ final class SessionStore {
             + "This is their explicit decision and is already saved in the plan. Call get_plan, then act on it.")
     }
 
-    /// The user clicked a Home card instead of one of its buttons: they want
-    /// the details and a recommendation before deciding. Nil `id` is the
-    /// proposed plan. Returns the Orchestrator to switch to, if one is live.
+    /// The user clicked a decision card instead of one of its buttons: they
+    /// want the details and a recommendation before deciding. Returns the
+    /// Orchestrator to switch to, if one is live.
     @discardableResult
-    func discussWithOrchestrator(decision id: Int?) -> UUID? {
+    func discussWithOrchestrator(decision id: Int) -> UUID? {
         guard let orchestrator = orchestratorSession(), orchestrator.activity != .exited else { return nil }
-        let subject: String
-        if let id {
-            guard let decision = openDecisions.first(where: { $0.id == id }) else { return orchestrator.id }
-            let question = decision.question.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(200)
-            subject = "decision \(id) (\(question))"
-        } else {
-            subject = "the proposed plan"
-        }
-        relay("Console relay: the user opened \(subject) from the Home board and wants to discuss it before deciding. "
+        guard let decision = openDecisions.first(where: { $0.id == id }) else { return orchestrator.id }
+        let question = decision.question.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(200)
+        relay("Console relay: the user opened decision \(id) (\(question)) from the Home board and wants to discuss it before deciding. "
             + "Explain the details and current state, say what each option leads to, and give your recommendation. "
             + "Do not act on it or record an answer until they decide.", to: orchestrator.id)
         return orchestrator.id
