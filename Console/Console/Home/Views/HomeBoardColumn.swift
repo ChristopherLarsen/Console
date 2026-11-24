@@ -19,6 +19,9 @@ struct HomeBoardColumn<Accessory: View, Content: View>: View {
     var pinnedContent: AnyView? = nil
     /// Cards per row. The Review column is two wide; the rest are one.
     var cardColumns = 1
+    /// True sizes the column to its cards instead of filling and scrolling;
+    /// for a column that only ever holds a few.
+    var fitsContent = false
     /// What to render when `health.retainsContent`. Empty lists render their
     /// own placeholder cards.
     @ViewBuilder var content: () -> Content
@@ -49,26 +52,32 @@ struct HomeBoardColumn<Accessory: View, Content: View>: View {
                     .accessibilityIdentifier("HomeColumnStatus.\(title)")
             }
 
-            ScrollView {
-                LazyVGrid(
-                    columns: Array(
-                        repeating: GridItem(.flexible(), spacing: HomeCardMetrics.listGap, alignment: .top),
-                        count: cardColumns
-                    ),
-                    spacing: HomeCardMetrics.listGap
-                ) {
-                    pinnedContent
-                    if health.retainsContent {
-                        content()
-                    } else {
-                        statePresentation
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 8)
+            if fitsContent {
+                cards
+            } else {
+                ScrollView { cards }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: fitsContent ? nil : .infinity)
+    }
+
+    private var cards: some View {
+        LazyVGrid(
+            columns: Array(
+                repeating: GridItem(.flexible(), spacing: HomeCardMetrics.listGap, alignment: .top),
+                count: cardColumns
+            ),
+            spacing: HomeCardMetrics.listGap
+        ) {
+            pinnedContent
+            if health.retainsContent {
+                content()
+            } else {
+                statePresentation
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.bottom, 8)
     }
 
     @ViewBuilder

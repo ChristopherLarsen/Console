@@ -6,6 +6,21 @@ enum HomeOrchestratorCardMetrics {
     /// Every card in the Orchestrator section is exactly this tall, so the
     /// grid reads as one even row. A long plan scrolls inside its card.
     static let height: CGFloat = 190
+
+    /// Dark burnt orange (#BF5700): "the Orchestrator is waiting on you".
+    /// Red stays reserved for sessions and items that are blocked or failed.
+    static let waitingColor = Color(red: 0.75, green: 0.34, blue: 0)
+}
+
+/// The waiting mark on an Orchestrator card, in the shared glyph slot.
+private struct HomeOrchestratorGlyph: View {
+    var body: some View {
+        Image(systemName: "exclamationmark.circle.fill")
+            .font(.system(size: 12))
+            .foregroundStyle(HomeOrchestratorCardMetrics.waitingColor)
+            .frame(width: HomeCardMetrics.glyphSlotWidth, alignment: .leading)
+            .accessibilityHidden(true)
+    }
 }
 
 /// One open Orchestrator decision: which session it is about, the current
@@ -29,13 +44,13 @@ struct HomeDecisionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: HomeCardMetrics.rowGap) {
             HStack(spacing: 5) {
-                HomeCardGlyph(color: AttentionChannel.needsYou.color, needsYou: true)
+                HomeOrchestratorGlyph()
                 Text("Decision \(decision.id)")
                     .font(HomeCardMetrics.identityFont)
                     .foregroundStyle(.secondary)
                 Text("Orchestrator is waiting")
                     .font(HomeCardMetrics.stateEmphasisFont)
-                    .foregroundStyle(AttentionChannel.needsYou.color)
+                    .foregroundStyle(HomeOrchestratorCardMetrics.waitingColor)
                 Spacer(minLength: 4)
             }
             Text(title)
@@ -94,13 +109,13 @@ struct HomePlanCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: HomeCardMetrics.rowGap) {
             HStack(spacing: 5) {
-                HomeCardGlyph(color: AttentionChannel.needsYou.color, needsYou: true)
+                HomeOrchestratorGlyph()
                 Text("Plan")
                     .font(HomeCardMetrics.identityFont)
                     .foregroundStyle(.secondary)
                 Text("Waiting for your approval")
                     .font(HomeCardMetrics.stateEmphasisFont)
-                    .foregroundStyle(AttentionChannel.needsYou.color)
+                    .foregroundStyle(HomeOrchestratorCardMetrics.waitingColor)
                 Spacer(minLength: 4)
             }
             Text(plan.goal.isEmpty ? "No goal stated" : plan.goal)

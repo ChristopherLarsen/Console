@@ -66,12 +66,12 @@ struct HomeView: View {
         let board = HomeBoardBuilder.build(snapshot)
         let sessions = sessionStore?.sessions ?? []
 
-        // The Orchestrator section owns the top half of Home; the three
-        // columns share the bottom half.
+        // The Orchestrator section takes only the room its cards need, up to
+        // two rows; more than that scrolls inside it.
         return GeometryReader { geometry in
             VStack(alignment: .leading, spacing: 10) {
                 decisionCards
-                    .frame(height: max(0, (geometry.size.height - 10) / 2))
+                    .frame(height: min(orchestratorSectionHeight(width: geometry.size.width), geometry.size.height * 0.6))
                 // Next up holds at most three cards and Review often holds
                 // many, so the stories stack in the left third and Review
                 // takes the other two thirds, two cards wide.
@@ -97,21 +97,15 @@ struct HomeView: View {
     }
 
     /// What the Orchestrator is waiting on leads the board: it is the one
-    /// thing here only the user can move. The section has its own title and
+    /// thing here only the user can move. The untitled section sits on
     /// a very light grey ground; its cards keep the shared white surface.
     private var decisionCards: some View {
         let waiting = sessionStore.map { $0.proposedPlan != nil || !$0.openDecisions.isEmpty } ?? false
         return VStack(alignment: .leading, spacing: 0) {
-            HomePanelHeader(
-                title: "Orchestrator",
-                titleFontSize: HomeCardMetrics.columnTitleFontSize,
-                height: HomeCardMetrics.columnHeaderHeight,
-                accessory: { EmptyView() }
-            )
             if let sessionStore, waiting {
                 ScrollView {
                     LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 300), spacing: HomeCardMetrics.listGap, alignment: .top)],
+                        columns: [GridItem(.adaptive(minimum: Self.orchestratorCardMinWidth), spacing: HomeCardMetrics.listGap, alignment: .top)],
                         alignment: .leading, spacing: HomeCardMetrics.listGap
                     ) {
                         if let plan = sessionStore.proposedPlan {
@@ -145,12 +139,11 @@ struct HomeView: View {
                             }
                         }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 8)
+                    .padding(8)
                     .accessibilityIdentifier("HomeDecisions")
                 }
             } else {
-                Text("Nothing is waiting on you.")
+                Text("The Orchestrator is not waiting on you.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -159,6 +152,19 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.97)))
         .accessibilityIdentifier("HomeOrchestratorSection")
+    }
+
+    private static let orchestratorCardMinWidth: CGFloat = 300
+
+    /// One or two rows of cards, from how many cards there are
+    /// and how many fit across; a single line when nothing is waiting.
+    private func orchestratorSectionHeight(width: CGFloat) -> CGFloat {
+        let cards = (sessionStore?.openDecisions.count ?? 0) + (sessionStore?.proposedPlan == nil ? 0 : 1)
+        guard cards > 0 else { return 28 }
+        let gap = HomeCardMetrics.listGap
+        let perRow = max(1, Int((width - 16 + gap) / (Self.orchestratorCardMinWidth + gap)))
+        let rows = CGFloat(min(2, (cards + perRow - 1) / perRow))
+        return rows * HomeOrchestratorCardMetrics.height + (rows - 1) * gap + 16
     }
 
     /// Switches to the Orchestrator and tells it which card the user opened.
@@ -179,6 +185,7 @@ struct HomeView: View {
             title: "Next up",
             detail: nextDetail(board),
             health: .ready,
+            fitsContent: true,
             content: {
                 nextStorySlot(board, sessions: sessions)
             },
