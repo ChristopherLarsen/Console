@@ -32,6 +32,14 @@ struct OrchestratorPlan: Codable, Equatable {
         var title: String?
         /// Short current state the user needs in order to decide.
         var summary: String?
+        /// The option the Orchestrator recommends; shown first on the card.
+        var recommended: String?
+
+        /// Options in card order: the recommendation first, the rest as given.
+        var orderedOptions: [String] {
+            guard let recommended, options.contains(recommended) else { return options }
+            return [recommended] + options.filter { $0 != recommended }
+        }
     }
 
     var revision = 0

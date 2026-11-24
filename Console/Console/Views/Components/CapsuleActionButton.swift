@@ -9,17 +9,21 @@ struct CapsuleActionButton: View {
     let title: String
     let systemImage: String?
     let isDisabled: Bool
+    /// The recommended action in a row of choices: a darker, heavier border.
+    let isRecommended: Bool
     let action: () -> Void
 
     init(
         _ title: String,
         systemImage: String? = nil,
         isDisabled: Bool = false,
+        isRecommended: Bool = false,
         action: @escaping () -> Void
     ) {
         self.title = title
         self.systemImage = systemImage
         self.isDisabled = isDisabled
+        self.isRecommended = isRecommended
         self.action = action
     }
 
@@ -37,7 +41,10 @@ struct CapsuleActionButton: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
             .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
-            .overlay(Capsule().stroke(Color(nsColor: .separatorColor), lineWidth: 0.5))
+            .overlay(Capsule().stroke(
+                isRecommended ? Color.primary.opacity(0.55) : Color(nsColor: .separatorColor),
+                lineWidth: isRecommended ? 1.25 : 0.5
+            ))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)

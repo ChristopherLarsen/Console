@@ -119,9 +119,7 @@ struct HomeView: View {
                                         launchCoordinator.report(failure: "The plan could not be approved. It may have changed; check the Orchestrator.")
                                     }
                                 },
-                                discuss: {
-                                    if let id = sessionStore.orchestratorSession()?.id { model.selectSession(id) }
-                                }
+                                discuss: { discuss(decision: nil) }
                             )
                         }
                         ForEach(sessionStore.openDecisions, id: \.id) { decision in
@@ -131,7 +129,7 @@ struct HomeView: View {
                             HomeDecisionCard(
                                 decision: decision,
                                 sessionName: session?.name,
-                                openSession: session.map { session in { model.selectSession(session.id) } }
+                                discuss: { discuss(decision: decision.id) }
                             ) { option in
                                 do {
                                     try sessionStore.answerDecision(id: decision.id, option: option)
@@ -155,6 +153,15 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.97)))
         .accessibilityIdentifier("HomeOrchestratorSection")
+    }
+
+    /// Switches to the Orchestrator and tells it which card the user opened.
+    private func discuss(decision id: Int?) {
+        if let orchestrator = sessionStore?.discussWithOrchestrator(decision: id) {
+            model.selectSession(orchestrator)
+        } else {
+            launchCoordinator.report(failure: "The Orchestrator is not running. Start it from the sidebar to discuss this.")
+        }
     }
 
     // MARK: Next

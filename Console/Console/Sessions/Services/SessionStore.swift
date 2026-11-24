@@ -1401,6 +1401,26 @@ final class SessionStore {
             + "This is their explicit decision and is already saved in the plan. Call get_plan, then act on it.")
     }
 
+    /// The user clicked a Home card instead of one of its buttons: they want
+    /// the details and a recommendation before deciding. Nil `id` is the
+    /// proposed plan. Returns the Orchestrator to switch to, if one is live.
+    @discardableResult
+    func discussWithOrchestrator(decision id: Int?) -> UUID? {
+        guard let orchestrator = orchestratorSession(), orchestrator.activity != .exited else { return nil }
+        let subject: String
+        if let id {
+            guard let decision = openDecisions.first(where: { $0.id == id }) else { return orchestrator.id }
+            let question = decision.question.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(200)
+            subject = "decision \(id) (\(question))"
+        } else {
+            subject = "the proposed plan"
+        }
+        relay("Console relay: the user opened \(subject) from the Home board and wants to discuss it before deciding. "
+            + "Explain the details and current state, say what each option leads to, and give your recommendation. "
+            + "Do not act on it or record an answer until they decide.", to: orchestrator.id)
+        return orchestrator.id
+    }
+
     /// Queues a note for the live Orchestrator, if there is one.
     @discardableResult
     func wakeOrchestrator(_ note: String) -> Bool {

@@ -15,7 +15,8 @@ struct HomeDecisionCard: View {
     let decision: OrchestratorPlan.Decision
     /// The session's name when the decision names a live session.
     let sessionName: String?
-    let openSession: (() -> Void)?
+    /// Clicking the card itself, not a button: talk it through first.
+    let discuss: () -> Void
     let answer: (String) -> Void
 
     @State private var hovering = false
@@ -37,18 +38,13 @@ struct HomeDecisionCard: View {
                     .foregroundStyle(AttentionChannel.needsYou.color)
                 Spacer(minLength: 4)
             }
-            Button(action: { openSession?() }) {
-                Text(title)
-                    .font(HomeCardMetrics.titleFont)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.plain)
-            .disabled(openSession == nil)
-            .help(openSession == nil ? title : "Open \(title)")
-            .accessibilityIdentifier("HomeDecisionTitle.\(decision.id)")
+            Text(title)
+                .font(HomeCardMetrics.titleFont)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .help(title)
             if let summary = decision.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
                 Text(summary)
                     .font(.system(size: 11))
@@ -65,8 +61,8 @@ struct HomeDecisionCard: View {
                 .help(decision.question)
             Spacer(minLength: 0)
             HStack(spacing: 6) {
-                ForEach(decision.options, id: \.self) { option in
-                    CapsuleActionButton(option) { answer(option) }
+                ForEach(decision.orderedOptions, id: \.self) { option in
+                    CapsuleActionButton(option, isRecommended: option == decision.recommended) { answer(option) }
                         .accessibilityIdentifier("HomeDecisionOption.\(decision.id).\(option)")
                 }
                 Spacer(minLength: 0)
@@ -77,7 +73,10 @@ struct HomeDecisionCard: View {
         .frame(height: HomeOrchestratorCardMetrics.height)
         .onHover { hovering = $0 }
         .homeCardSurface(hovering: hovering)
+        .onTapGesture(perform: discuss)
+        .help("Click to discuss this with the Orchestrator before deciding")
         .accessibilityElement(children: .contain)
+        .accessibilityAction(named: "Discuss with Orchestrator", discuss)
         .accessibilityIdentifier("HomeDecisionCard.\(decision.id)")
     }
 }
@@ -132,7 +131,7 @@ struct HomePlanCard: View {
                 }
             }
             HStack(spacing: 6) {
-                CapsuleActionButton("Approve plan", action: approve)
+                CapsuleActionButton("Approve plan", isRecommended: true, action: approve)
                     .accessibilityIdentifier("HomePlanApprove")
                 CapsuleActionButton("Discuss in Orchestrator", action: discuss)
                     .help("Open the Orchestrator session to change the plan")
@@ -145,6 +144,7 @@ struct HomePlanCard: View {
         .frame(height: HomeOrchestratorCardMetrics.height)
         .onHover { hovering = $0 }
         .homeCardSurface(hovering: hovering)
+        .onTapGesture(perform: discuss)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("HomePlanCard")
     }

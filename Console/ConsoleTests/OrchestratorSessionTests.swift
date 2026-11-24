@@ -499,6 +499,16 @@ final class OrchestratorSessionTests: XCTestCase {
         XCTAssertEqual(announced, [[1]])
         XCTAssertNil(store.proposedPlan, "an approved plan is not proposed again")
 
+        XCTAssertEqual(store.discussWithOrchestrator(decision: 1), lead.id)
+        let opened = try XCTUnwrap(relayNotes(for: lead.id, in: store).last)
+        XCTAssertTrue(opened.contains("opened decision 1 (Push the branch?)"))
+        XCTAssertTrue(opened.contains("give your recommendation"))
+        XCTAssertTrue(store.openDecisions.count == 1, "discussing does not answer")
+        try receive(.promptSubmitted, from: lead.id, in: store)
+        try receive(.turnCompleted, from: lead.id, in: store)
+        var ordered = OrchestratorPlan.Decision(id: 9, question: "Q", options: ["hold", "yes"])
+        ordered.recommended = "yes"
+        XCTAssertEqual(ordered.orderedOptions, ["yes", "hold"])
         XCTAssertThrowsError(try store.answerDecision(id: 1, option: "maybe"))
         try store.answerDecision(id: 1, option: "yes")
         XCTAssertTrue(store.openDecisions.isEmpty)
