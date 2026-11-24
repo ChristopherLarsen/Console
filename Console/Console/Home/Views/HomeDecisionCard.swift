@@ -5,7 +5,7 @@ import SwiftUI
 enum HomeOrchestratorCardMetrics {
     /// Every card in the Orchestrator section is exactly this tall, so the
     /// grid reads as one even row. A long plan scrolls inside its card.
-    static let height: CGFloat = 190
+    static let height: CGFloat = 214
 
     /// Dark burnt orange (#BF5700): "the Orchestrator is waiting on you".
     /// Red stays reserved for sessions and items that are blocked or failed.
@@ -83,7 +83,12 @@ struct HomeDecisionCard: View {
                     CapsuleActionButton(option, isRecommended: option == decision.recommended) { answer(option) }
                         .accessibilityIdentifier("HomeDecisionOption.\(decision.id).\(option)")
                 }
-                Spacer(minLength: 4)
+                Spacer(minLength: 0)
+            }
+            // Links get their own row so long answers never crowd them. The
+            // row is reserved even when empty, keeping the answers aligned
+            // across cards.
+            HStack(spacing: 6) {
                 if let openMergeRequest {
                     ServiceCapsuleButton(.gitlab, action: openMergeRequest)
                         .accessibilityIdentifier("HomeDecisionOpenMR.\(decision.id)")
@@ -92,7 +97,9 @@ struct HomeDecisionCard: View {
                     ServiceCapsuleButton(.jira, action: openJira)
                         .accessibilityIdentifier("HomeDecisionOpenJira.\(decision.id)")
                 }
+                Spacer(minLength: 0)
             }
+            .frame(height: 22)
         }
         .padding(HomeCardMetrics.padding)
         .frame(maxWidth: .infinity, alignment: .topLeading)
