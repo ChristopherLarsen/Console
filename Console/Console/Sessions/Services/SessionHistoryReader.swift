@@ -61,8 +61,9 @@ final class SessionHistoryReader {
             lastAssociationKeys = associations
         }
         let cached = limit == nil ? fullCache : recentCache
+        let full = limit == nil ? [:] : fullCache
         let scan = Task.detached(priority: .userInitiated) {
-            Self.scan(root: root, associations: associations, cache: cached, limit: limit)
+            Self.scan(root: root, associations: associations, cache: cached, limit: limit, fullCache: full)
         }
         let (records, updatedCache) = await withTaskCancellationHandler {
             await scan.value
@@ -83,7 +84,8 @@ final class SessionHistoryReader {
         root: URL,
         associations: [UUID: String],
         cache: [String: CachedMetadata],
-        limit: Int? = nil
+        limit: Int? = nil,
+        fullCache: [String: CachedMetadata] = [:]
     ) -> ([SessionHistoryRecord], [String: CachedMetadata]) {
         let fileManager = FileManager.default
         guard let projectDirs = try? fileManager.contentsOfDirectory(
@@ -116,7 +118,10 @@ final class SessionHistoryReader {
             if Task.isCancelled { return ([], cache) }
             // Canonical key so cache hits survive symlinked temp roots.
             let path = candidate.url.resolvingSymlinksInPath().path
-            if let cached = cache[path], cached.byteCount == candidate.byteCount, cached.modified == candidate.modified {
+            // A full scan of the same bytes is exact; the sampled preview is not.
+            if let cached = [fullCache[path], cache[path]].compactMap({ $0 }).first(where: {
+                $0.byteCount == candidate.byteCount && $0.modified == candidate.modified
+            }) {
                 records.append(cached.record)
                 updatedCache[path] = cached
                 continue

@@ -18,6 +18,10 @@ struct SessionRestorationSnapshot: Codable, Equatable {
     var sessions: [SessionRestorationRecord] = []
     var selectedClaudeSessionID: UUID?
     var recentlyClosed: [SessionRestorationRecord]?
+    /// Claude conversations the Orchestrator watches, and its pending recheck.
+    var watchedConversations: [UUID]?
+    var recheckDue: Date?
+    var readOnlyConversations: [UUID]?
 }
 
 struct SessionRestorationStore {

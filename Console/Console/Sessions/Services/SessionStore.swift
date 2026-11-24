@@ -135,6 +135,9 @@ final class SessionStore {
                 savedSnapshot = try restorationStore.load()
                 pendingRestorations = savedSnapshot.sessions
                 recentlyClosedSessions = savedSnapshot.recentlyClosed ?? []
+                watchedConversations = Set(savedSnapshot.watchedConversations ?? [])
+                recheckDue = savedSnapshot.recheckDue
+                readOnlyConversations = savedSnapshot.readOnlyConversations ?? []
             } catch {
                 restorationLoadFailed = true
                 restorationPersistenceError = "Saved sessions could not be read: \(error.localizedDescription)"
@@ -364,7 +367,8 @@ final class SessionStore {
         let claudeID = record?.claudeSessionID ?? UUID()
         let model = record?.model ?? request.model
         let toolProfile: SessionToolProfile = if let record {
-            record.readOnly == true ? .readOnlyPrep(contextDirectory: request.workingDirectory) : .standard
+            record.readOnly == true || readOnlyConversations.contains(record.claudeSessionID)
+                ? .readOnlyPrep(contextDirectory: request.workingDirectory) : .standard
         } else {
             request.toolProfile
         }
@@ -452,6 +456,9 @@ final class SessionStore {
 
         session.model = model
         session.toolProfile = toolProfile
+        if toolProfile != .standard, !readOnlyConversations.contains(claudeID) {
+            readOnlyConversations = Array((readOnlyConversations + [claudeID]).suffix(500))
+        }
         let previousSelection = selectedSessionID
         insertSession(session)
         if let token {
@@ -1017,6 +1024,14 @@ final class SessionStore {
         terminateOwnedProcesses(for: id)
         stopTargets.removeValue(forKey: id)
         dropDirectives(for: id, reason: .exited)
+        if !preservingRestoration, let session = session(withID: id) {
+            watchedConversations.remove(session.claudeSessionID)
+            if session.purpose == .orchestrator {
+                watchedConversations = []
+                recheckDue = nil
+            }
+        }
+        if let brief = childBriefDirectories.removeValue(forKey: id) { try? FileManager.default.removeItem(at: brief) }
         sessions.removeAll(where: { $0.id == id })
         sessionTokens.removeValue(forKey: id)
         pendingSlashCommands.removeValue(forKey: id)
@@ -1305,6 +1320,38 @@ final class SessionStore {
 
     private var watchedSessions: [UUID: UUID] = [:]
     private var scheduledRechecks: [UUID: Task<Void, Never>] = [:]
+    /// Durable forms of the two above, keyed by Claude conversation so they
+    /// outlive Console session IDs, which change on every restore.
+    private var watchedConversations: Set<UUID> = []
+    private var recheckDue: Date?
+    /// Conversations launched read-only. History records carry no profile, so
+    /// this keeps a later resume from handing them full tools.
+    private var readOnlyConversations: [UUID] = []
+    private var childBriefDirectories: [UUID: URL] = [:]
+
+    private func armRecheck(for requesterID: UUID, due: Date) {
+        scheduledRechecks[requesterID]?.cancel()
+        scheduledRechecks[requesterID] = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(max(0, due.timeIntervalSinceNow))) } catch { return }
+            guard let self else { return }
+            self.scheduledRechecks.removeValue(forKey: requesterID)
+            self.recheckDue = nil
+            self.persistRestorationSnapshot()
+            self.relay("Console relay: scheduled recheck is due. Read the plan and continue ready work within the approval tiers.", to: requesterID)
+        }
+    }
+
+    /// Reattaches saved watches and the pending recheck to live sessions.
+    private func restoreWakeUps() {
+        guard let orchestrator = orchestratorSession(), orchestrator.activity != .exited else { return }
+        for session in sessions where session.activity != .exited && session.id != orchestrator.id
+            && watchedConversations.contains(session.claudeSessionID) {
+            watchedSessions[session.id] = orchestrator.id
+        }
+        if let recheckDue, scheduledRechecks[orchestrator.id] == nil {
+            armRecheck(for: orchestrator.id, due: recheckDue)
+        }
+    }
 
     private var bridgeDirectory: URL? {
         socketPath.map { URL(fileURLWithPath: $0).deletingLastPathComponent() }
@@ -1338,7 +1385,16 @@ final class SessionStore {
         switch envelope.kind {
         case .getPlan, .updatePlan:
             do {
-                var plan = try loadOrchestratorPlan()
+                var plan: OrchestratorPlan
+                do {
+                    plan = try loadOrchestratorPlan()
+                } catch {
+                    guard let url = orchestratorPlanURL else { throw error }
+                    let aside = url.deletingLastPathComponent().appendingPathComponent("orchestrator-plan.unreadable.json")
+                    try? FileManager.default.removeItem(at: aside)
+                    try FileManager.default.moveItem(at: url, to: aside)
+                    plan = .init()
+                }
                 if envelope.kind == .updatePlan {
                     guard let id = envelope.planUpdateID, let bridgeDirectory, let url = orchestratorPlanURL else {
                         throw CocoaError(.fileNoSuchFile)
@@ -1375,16 +1431,15 @@ final class SessionStore {
                 return
             }
             watchedSessions[id] = requesterID
+            watchedConversations.insert(target.claudeSessionID)
+            persistRestorationSnapshot()
             writeMCPResult(requestID: requestID, ok: true, sessionID: id, status: "watching")
         case .recheckIn:
             guard let minutes = envelope.recheckMinutes else { return }
-            scheduledRechecks[requesterID]?.cancel()
-            scheduledRechecks[requesterID] = Task { [weak self] in
-                do { try await Task.sleep(for: .seconds(minutes * 60)) } catch { return }
-                guard let self else { return }
-                self.scheduledRechecks.removeValue(forKey: requesterID)
-                self.relay("Console relay: scheduled recheck is due. Read the plan and continue ready work within the approval tiers.", to: requesterID)
-            }
+            let due = Date().addingTimeInterval(minutes * 60)
+            recheckDue = due
+            armRecheck(for: requesterID, due: due)
+            persistRestorationSnapshot()
             writeMCPResult(requestID: requestID, ok: true, status: "scheduled")
         default:
             break
@@ -1464,6 +1519,7 @@ final class SessionStore {
                 revealsSession: false,
                 parentClaudeSessionID: requester.claudeSessionID
             ))
+            if let briefDirectory { childBriefDirectories[createdID] = briefDirectory }
             if purpose != .blank, let created = session(withID: createdID) {
                 queueSlashCommand("/rename \(created.name)", for: createdID)
             }
@@ -1793,6 +1849,10 @@ final class SessionStore {
         switch event {
         case .promptSubmitted:
             awaitingAcceptance.removeValue(forKey: sessionID)
+            if directiveOrigins[sessionID] != nil,
+               let pid = session(withID: sessionID)?.terminalView.process?.shellPid, pid > 1 {
+                turnBaselineProcesses[sessionID] = OwnedProcessTree.descendantIDs(of: pid)
+            }
         case .turnCompleted, .turnFailed:
             awaitingAcceptance.removeValue(forKey: sessionID)
             if let session = session(withID: sessionID), session.completionOutcome == nil {
@@ -1858,10 +1918,30 @@ final class SessionStore {
         // Detect a failure as soon as the transcript settles, including while
         // the Orchestrator is busy. Read again immediately before delivery.
         _ = relayContent(pending)
+        // A turn that ended and left nothing running has nothing more to
+        // report, so later turns in that session are no longer the directive's.
+        if [.endedTurn, .failed].contains(pending.outcome), directiveOrigins[sessionID] == pending.recipient,
+           let current = session(withID: sessionID), current.activity != .working,
+           current.lastTurnStarted == pending.target.lastTurnStarted, hasLiveWork(current) == false {
+            directiveOrigins.removeValue(forKey: sessionID)
+            turnBaselineProcesses.removeValue(forKey: sessionID)
+        }
         let next = HeldDirective(text: "", relayTo: nil, relaySource: sessionID, relayOutcome: pending.outcome,
                                  render: { [weak self] in self?.relayContent(pending) ?? "" })
         deliverDirective(next, to: pending.recipient)
         writeSessionsSnapshot()
+    }
+
+    /// Processes the directed turn started that are still alive, such as a
+    /// background build. Nil when Console cannot tell.
+    private var turnBaselineProcesses: [UUID: Set<pid_t>] = [:]
+    @ObservationIgnored var liveWorkProbe: ((ConsoleSession) -> Bool?)?
+
+    private func hasLiveWork(_ session: ConsoleSession) -> Bool? {
+        if let liveWorkProbe { return liveWorkProbe(session) }
+        guard let pid = session.terminalView.process?.shellPid, pid > 1,
+              let baseline = turnBaselineProcesses[session.id] else { return nil }
+        return !OwnedProcessTree.descendantIDs(of: pid).subtracting(baseline).isEmpty
     }
 
     private func relayContent(_ pending: PendingRelay) -> String {
@@ -1910,6 +1990,7 @@ final class SessionStore {
         directivesInFlight.removeValue(forKey: sessionID)
         awaitingAcceptance.removeValue(forKey: sessionID)
         lastUserInputAt.removeValue(forKey: sessionID)
+        turnBaselineProcesses.removeValue(forKey: sessionID)
         directiveOrigins.removeValue(forKey: sessionID)
         directiveOrigins = directiveOrigins.filter { $0.value != sessionID }
         watchedSessions.removeValue(forKey: sessionID)
@@ -1938,6 +2019,9 @@ final class SessionStore {
             note += " Last reply: \(oneLine(reply, limit: 600))"
         } else if target.completionOutcome == nil, let summary = target.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
             note += " Summary: \(oneLine(summary, limit: 400))"
+        }
+        if target.toolProfile != .standard, outcome == RelayOutcome.endedTurn.rawValue {
+            note += " This session is read-only and cannot call report_completion; its last reply is its result."
         }
         if target.attention != .none && target.attention != .unreadCompletion {
             note += " It now needs the user: \(target.attention.rawValue)"
@@ -2190,6 +2274,7 @@ final class SessionStore {
            ![SessionLifecycleEvent.turnCompleted, .turnFailed, .sessionEnded, .processTerminated].contains(event) {
             scheduleRelay(for: sessionID, outcome: .attention)
         }
+        if event == .sessionStarted { restoreWakeUps() }
         notifyLifecycle(sessionID: sessionID, event: event)
         persistRestorationSnapshot()
     }
@@ -2647,7 +2732,10 @@ final class SessionStore {
         }
         let snapshot = SessionRestorationSnapshot(sessions: records,
             selectedClaudeSessionID: isRestoringSessions ? savedSnapshot.selectedClaudeSessionID : pendingSelection ?? selected,
-            recentlyClosed: recentlyClosedSessions.isEmpty ? nil : recentlyClosedSessions)
+            recentlyClosed: recentlyClosedSessions.isEmpty ? nil : recentlyClosedSessions,
+            watchedConversations: watchedConversations.isEmpty ? nil : watchedConversations.sorted { $0.uuidString < $1.uuidString },
+            recheckDue: recheckDue,
+            readOnlyConversations: readOnlyConversations.isEmpty ? nil : readOnlyConversations)
         guard snapshot != savedSnapshot else { return }
         do {
             try restorationStore.save(snapshot)

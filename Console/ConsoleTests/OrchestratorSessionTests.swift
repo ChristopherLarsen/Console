@@ -48,12 +48,12 @@ final class OrchestratorSessionTests: XCTestCase {
         }
     }
 
-    private func makeStore(launcher: FakeLauncher? = nil) -> SessionStore {
+    private func makeStore(launcher: FakeLauncher? = nil, restorationStore: SessionRestorationStore? = nil) -> SessionStore {
         SessionStore(
             launcher: launcher ?? FakeLauncher(),
             locator: ClaudeExecutableLocator(defaults: defaults),
             pluginAssembler: SucceedingAssembler(),
-            restorationStore: nil
+            restorationStore: restorationStore
         )
     }
 
@@ -396,6 +396,85 @@ final class OrchestratorSessionTests: XCTestCase {
         XCTAssertEqual(notes.count, 1)
         XCTAssertTrue(notes.first?.contains("ended its turn") == true)
         XCTAssertFalse(notes.contains { $0.contains("changed attention") })
+    }
+
+    func testWatchAndRecheckSurviveRelaunch() async throws {
+        let restoration = SessionRestorationStore(url: tmpDirectory("relaunch").appendingPathComponent("restore.json"))
+        let root = tmpDirectory("relaunch-work")
+        let first = makeStore(restorationStore: restoration)
+        let lead = try startOrchestrator(in: first, directory: root)
+        let workerID = try first.createSession(name: "Watched", workingDirectory: root)
+        let worker = try XCTUnwrap(first.session(withID: workerID))
+        try receive(.sessionStarted, from: lead.id, in: first)
+        try receive(.sessionStarted, from: workerID, in: first)
+        try send(.watchSession, from: lead.id, in: first) { $0.targetSessionID = workerID.uuidString }
+        try send(.recheckIn, from: lead.id, in: first) { $0.recheckMinutes = 0.1 }
+
+        let second = makeStore(restorationStore: restoration)
+        second.queuedCommandSpacing = 0
+        second.transcriptReply = { _, _ in nil }
+        let newWorker = try second.resumeSession(from: SessionRestorationRecord(
+            claudeSessionID: worker.claudeSessionID, name: worker.name, workingDirectory: root, purpose: .general))
+        let newLead = try second.resumeSession(from: SessionRestorationRecord(
+            claudeSessionID: lead.claudeSessionID, name: lead.name, workingDirectory: root, purpose: .orchestrator))
+        XCTAssertNotEqual(newWorker, workerID)
+        try receive(.sessionStarted, from: newWorker, in: second)
+        try receive(.sessionStarted, from: newLead, in: second)
+        try receive(.promptSubmitted, from: newWorker, in: second)
+        try receive(.turnFailed, from: newWorker, in: second)
+        let deadline = ContinuousClock.now + .seconds(10)
+        while relayNotes(for: newLead, in: second).count < 2 && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+            try receive(.turnCompleted, from: newLead, in: second)
+        }
+        let notes = relayNotes(for: newLead, in: second)
+        XCTAssertTrue(notes.contains { $0.contains("failed.") })
+        XCTAssertTrue(notes.contains { $0.contains("scheduled recheck is due") })
+    }
+
+    func testDirectiveOriginRetiresWhenTurnLeavesNoWorkRunning() async throws {
+        let store = makeStore()
+        store.queuedCommandSpacing = 0
+        store.transcriptReply = { _, _ in "Done." }
+        store.liveWorkProbe = { _ in false }
+        let lead = try startOrchestrator(in: store, directory: tmpDirectory("retire"))
+        try receive(.sessionStarted, from: lead.id, in: store)
+        try requestChild(in: store, from: lead.id, name: "Check", prompt: "Check it")
+        let child = try XCTUnwrap(store.children(of: lead).first)
+        try receive(.sessionStarted, from: child.id, in: store)
+        for _ in 0..<2 {
+            try receive(.promptSubmitted, from: child.id, in: store)
+            try receive(.turnCompleted, from: child.id, in: store)
+            try await Task.sleep(for: .seconds(SessionStore.relaySettleSeconds + 0.15))
+            try receive(.turnCompleted, from: lead.id, in: store)
+        }
+        XCTAssertEqual(relayNotes(for: lead.id, in: store).count, 1)
+    }
+
+    func testUnreadablePlanIsSetAsideAndReadOnlyHistoryResumeStaysReadOnly() throws {
+        let launcher = FakeLauncher()
+        let store = makeStore(launcher: launcher)
+        let directory = tmpDirectory("recover")
+        let lead = try startOrchestrator(in: store, directory: directory)
+        let root = try XCTUnwrap(store.writeOrchestratorBrief("Scan")).deletingLastPathComponent()
+        try "not a plan".write(to: root.appendingPathComponent("orchestrator-plan.json"), atomically: true, encoding: .utf8)
+        let get = try send(.getPlan, from: lead.id, in: store)
+        let result = try readResult(get, directory: root.appendingPathComponent("mcp-results"))
+        XCTAssertEqual(result["ok"] as? Bool, true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("orchestrator-plan.unreadable.json").path))
+
+        try send(.createSession, from: lead.id, in: store) { envelope in
+            envelope.createPurpose = "review"
+            envelope.createName = "Read only"
+            envelope.createToolProfile = "readOnlyPrep"
+        }
+        let child = try XCTUnwrap(store.children(of: lead).first)
+        store.terminateSession(id: child.id)
+        // A history record knows nothing about the tool profile.
+        _ = try store.resumeSession(from: SessionRestorationRecord(
+            claudeSessionID: child.claudeSessionID, name: child.name, workingDirectory: directory, purpose: .review))
+        XCTAssertTrue(launcher.arguments.contains("dontAsk"))
+        XCTAssertFalse(launcher.arguments.contains("--dangerously-skip-permissions"))
     }
 
     func testWatchedSessionRelaysFailureWithoutDirective() async throws {
