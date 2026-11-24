@@ -80,8 +80,9 @@ final class SessionsPackagingTests: XCTestCase {
         }
         let skill = try String(contentsOf: pluginRoot.appendingPathComponent("skills/orchestrator-run/SKILL.md"), encoding: .utf8)
         XCTAssertFalse(skill.contains("Approve every step"))
-        XCTAssertTrue(skill.contains("closing children with recorded results are automatic"))
+        XCTAssertTrue(skill.contains("closing a child with a recorded result need no approval"))
         XCTAssertTrue(skill.contains("Outward-facing actions still need their own explicit decision"))
+        XCTAssertTrue(skill.contains("You never do the work yourself"))
         XCTAssertTrue(skill.contains("Never delegate through the in-process Agent or Task tool"))
 
         // Manifest names the plugin consistently with preapproved tool names.

@@ -402,7 +402,8 @@ final class SessionStore {
                 resume: record != nil,
                 agent: Self.agent(for: request),
                 model: model,
-                toolProfile: toolProfile
+                toolProfile: toolProfile,
+                isOrchestrator: request.purpose == .orchestrator
             )
             environment = childEnvironment(
                 bridgeEnvironment: [
@@ -425,7 +426,8 @@ final class SessionStore {
                 resume: record != nil,
                 agent: Self.agent(for: request),
                 model: model,
-                toolProfile: toolProfile
+                toolProfile: toolProfile,
+                isOrchestrator: request.purpose == .orchestrator
             )
             environment = childEnvironment(bridgeEnvironment: [:])
             bridgeStatus = .unavailable
@@ -619,10 +621,14 @@ final class SessionStore {
         resume: Bool = false,
         agent: String? = nil,
         model: String? = nil,
-        toolProfile: SessionToolProfile = .standard
+        toolProfile: SessionToolProfile = .standard,
+        isOrchestrator: Bool = false
     ) -> [String] {
         var arguments = [resume ? "--resume" : "--session-id", claudeSessionID.uuidString]
         if let model { arguments += ["--model", model] }
+        // The Orchestrator manages work and never does it. The tools that do
+        // work are removed at launch, so this does not rest on its prompt.
+        if isOrchestrator { arguments += ["--disallowedTools"] + orchestratorDeniedTools }
         switch toolProfile {
         case .standard:
             arguments.append("--dangerously-skip-permissions")
@@ -645,6 +651,11 @@ final class SessionStore {
         }
         return arguments
     }
+
+    /// Tools the Orchestrator never has: running commands, editing files, and
+    /// in-process subagents. It keeps Read/Grep/Glob for briefs and session
+    /// context, and Write only to stage a child's brief file.
+    static let orchestratorDeniedTools = ["Bash", "Edit", "NotebookEdit", "Agent", "Task"]
 
     /// The only built-in tools a read-only prep session has.
     static let readOnlyPrepTools = ["Read", "Grep", "Glob"]

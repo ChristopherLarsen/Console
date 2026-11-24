@@ -583,6 +583,19 @@ final class OrchestratorSessionTests: XCTestCase {
         XCTAssertEqual(events.observe(snapshot), ["!7 left the review queue"])
     }
 
+    func testOrchestratorLaunchesWithoutToolsThatDoWork() throws {
+        let launcher = FakeLauncher()
+        let store = makeStore(launcher: launcher)
+        let directory = tmpDirectory("manager")
+        let lead = try startOrchestrator(in: store, directory: directory)
+        let denied = try XCTUnwrap(launcher.arguments.firstIndex(of: "--disallowedTools"))
+        for tool in ["Bash", "Edit", "NotebookEdit", "Agent", "Task"] {
+            XCTAssertTrue(launcher.arguments[denied...].contains(tool), tool)
+        }
+        try send(.createSession, from: lead.id, in: store) { $0.createPurpose = "general" }
+        XCTAssertFalse(launcher.arguments.contains("--disallowedTools"), "children keep their tools")
+    }
+
     func testWatchedSessionRelaysFailureWithoutDirective() async throws {
         let store = makeStore()
         store.queuedCommandSpacing = 0
