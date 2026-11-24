@@ -66,6 +66,11 @@ final class SessionLaunchCoordinator {
 
     var lastFailureMessage: String? { lastFailure?.message }
 
+    /// Shows a non-launch failure on the shared banner.
+    func report(failure message: String) {
+        lastFailure = SessionLaunchFailure(message: message, offersSettingsRoute: false)
+    }
+
     @ObservationIgnored private let store: SessionStore
     @ObservationIgnored private let workspaceStore: SessionWorkspaceStore
     /// Root of Claude's local transcript history, checked before a resume.
@@ -95,6 +100,43 @@ final class SessionLaunchCoordinator {
             reviewsController: MRReviewScanController.shared
         )
         return OrchestratorScanBrief.build(sessions: sessions, homeSnapshot: home, plan: plan)
+    }
+
+    // MARK: - Home board wake-ups
+
+    /// Supplies the current Home snapshot; set by the app, which owns the
+    /// Home data sources. Unset in tests, so nothing is watched there.
+    var homeSnapshotProvider: (@MainActor () -> HomeBoardSnapshot)?
+    private var homeEvents = HomeBoardEvents()
+    private var pendingHomeEvents: [String] = []
+    private var homeWakeTask: Task<Void, Never>?
+    static let homeWakeDebounceSeconds: TimeInterval = 3
+
+    /// Watches the Home board and wakes the Orchestrator when a story or a
+    /// review changes. Re-arms itself after every change.
+    func watchHomeBoard() {
+        guard let homeSnapshotProvider else { return }
+        let snapshot = withObservationTracking {
+            homeSnapshotProvider()
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.watchHomeBoard() }
+        }
+        noteHomeEvents(homeEvents.observe(snapshot))
+    }
+
+    /// Batches a burst of changes into one wake-up.
+    func noteHomeEvents(_ events: [String]) {
+        guard !events.isEmpty else { return }
+        pendingHomeEvents += events
+        homeWakeTask?.cancel()
+        homeWakeTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(Self.homeWakeDebounceSeconds)) } catch { return }
+            guard let self else { return }
+            let events = self.pendingHomeEvents
+            self.pendingHomeEvents = []
+            self.store.wakeOrchestrator("Console relay: Home board changed: " + events.joined(separator: "; ")
+                + ". Call get_home_board for the full board if you need it, update the plan, and continue within the approval tiers.")
+        }
     }
 
     // MARK: - Orchestrator

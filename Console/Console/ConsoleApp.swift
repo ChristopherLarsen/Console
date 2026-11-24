@@ -285,6 +285,16 @@ struct ConsoleApp: App {
             MRReviewScanController.shared.authoredScanObserver = { [weak responsePrep] items in
                 responsePrep?.handleAuthoredScan(items)
             }
+            sessionStore.openDecisionsObserver = { added, openCount in
+                OrchestratorDecisionNotifier.update(added: added, openCount: openCount)
+            }
+            coordinator.homeSnapshotProvider = {
+                HomeBoardModel.gatherSnapshot(
+                    jiraController: JiraWebSession.shared.panelController,
+                    reviewsController: MRReviewScanController.shared
+                )
+            }
+            coordinator.watchHomeBoard()
         }
         _mrResponsePrep = State(initialValue: responsePrep)
         _developerActions = State(initialValue: DeveloperActionRunner())

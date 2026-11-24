@@ -1341,8 +1341,50 @@ final class SessionStore {
         }
     }
 
+    /// Decisions the plan is waiting on the user for. Home renders these as
+    /// cards; the observer drives the Dock badge and notifications.
+    private(set) var openDecisions: [OrchestratorPlan.Decision] = []
+    @ObservationIgnored var openDecisionsObserver: (@MainActor (_ added: [OrchestratorPlan.Decision], _ openCount: Int) -> Void)?
+
+    private func refreshOpenDecisions(from plan: OrchestratorPlan?, announce: Bool) {
+        let open = (plan ?? (try? loadOrchestratorPlan()))?.decisions.filter { $0.answer == nil } ?? []
+        guard open != openDecisions else { return }
+        let known = Set(openDecisions.map(\.id))
+        openDecisions = open
+        openDecisionsObserver?(announce ? open.filter { !known.contains($0.id) } : [], open.count)
+    }
+
+    /// Records the user's answer from a Home card and wakes the Orchestrator.
+    /// The revision bump makes a plan update the Orchestrator had in flight
+    /// fail and reload, so the answer cannot be overwritten.
+    func answerDecision(id: Int, option: String) throws {
+        guard let url = orchestratorPlanURL else { throw CocoaError(.fileNoSuchFile) }
+        var plan = try loadOrchestratorPlan()
+        guard let index = plan.decisions.firstIndex(where: { $0.id == id && $0.answer == nil }),
+              plan.decisions[index].options.contains(option) else {
+            refreshOpenDecisions(from: plan, announce: false)
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        plan.decisions[index].answer = option
+        plan.revision += 1
+        try plan.json().write(to: url, options: .atomic)
+        refreshOpenDecisions(from: plan, announce: false)
+        let question = plan.decisions[index].question.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(200)
+        wakeOrchestrator("Console relay: the user answered decision \(id) (\(question)) with \"\(option)\" on the Home board. "
+            + "This is their explicit decision and is already saved in the plan. Call get_plan, then act on it.")
+    }
+
+    /// Queues a note for the live Orchestrator, if there is one.
+    @discardableResult
+    func wakeOrchestrator(_ note: String) -> Bool {
+        guard let orchestrator = orchestratorSession(), orchestrator.activity != .exited else { return false }
+        relay(note, to: orchestrator.id)
+        return true
+    }
+
     /// Reattaches saved watches and the pending recheck to live sessions.
     private func restoreWakeUps() {
+        refreshOpenDecisions(from: nil, announce: false)
         guard let orchestrator = orchestratorSession(), orchestrator.activity != .exited else { return }
         for session in sessions where session.activity != .exited && session.id != orchestrator.id
             && watchedConversations.contains(session.claudeSessionID) {
@@ -1419,6 +1461,7 @@ final class SessionStore {
                     try data.write(to: url, options: .atomic)
                     plan = updated
                 }
+                refreshOpenDecisions(from: plan, announce: envelope.kind == .updatePlan)
                 writeMCPResult(requestID: requestID, ok: true, output: String(decoding: try plan.json(), as: UTF8.self))
             } catch {
                 writeMCPResult(requestID: requestID, ok: false, error: "could not read or update plan: \(error.localizedDescription)")

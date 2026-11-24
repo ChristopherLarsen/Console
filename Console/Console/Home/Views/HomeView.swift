@@ -66,10 +66,13 @@ struct HomeView: View {
         let board = HomeBoardBuilder.build(snapshot)
         let sessions = sessionStore?.sessions ?? []
 
-        return HStack(alignment: .top, spacing: 12) {
-            nextColumn(board, sessions: sessions)
-            inProgressColumn(board, sessions: sessions)
-            reviewColumn(board)
+        return VStack(alignment: .leading, spacing: 10) {
+            decisionCards
+            HStack(alignment: .top, spacing: 12) {
+                nextColumn(board, sessions: sessions)
+                inProgressColumn(board, sessions: sessions)
+                reviewColumn(board)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .overlay(alignment: .bottom) {
@@ -79,6 +82,29 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
                     .padding(.bottom, 2)
             }
+        }
+    }
+
+    /// Decisions the Orchestrator is waiting on lead the board: they are the
+    /// one thing here only the user can move.
+    @ViewBuilder
+    private var decisionCards: some View {
+        if let sessionStore, !sessionStore.openDecisions.isEmpty {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 260), spacing: HomeCardMetrics.listGap, alignment: .top)],
+                alignment: .leading, spacing: HomeCardMetrics.listGap
+            ) {
+                ForEach(sessionStore.openDecisions, id: \.id) { decision in
+                    HomeDecisionCard(decision: decision) { option in
+                        do {
+                            try sessionStore.answerDecision(id: decision.id, option: option)
+                        } catch {
+                            launchCoordinator.report(failure: "That decision could not be saved. It may already be answered.")
+                        }
+                    }
+                }
+            }
+            .accessibilityIdentifier("HomeDecisions")
         }
     }
 

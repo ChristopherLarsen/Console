@@ -477,6 +477,73 @@ final class OrchestratorSessionTests: XCTestCase {
         XCTAssertFalse(launcher.arguments.contains("--dangerously-skip-permissions"))
     }
 
+    func testAnsweringADecisionSavesItAndWakesTheOrchestrator() throws {
+        let store = makeStore()
+        store.queuedCommandSpacing = 0
+        var announced: [[Int]] = []
+        store.openDecisionsObserver = { added, _ in announced.append(added.map(\.id)) }
+        let lead = try startOrchestrator(in: store, directory: tmpDirectory("decide"))
+        try receive(.sessionStarted, from: lead.id, in: store)
+        let root = try XCTUnwrap(store.writeOrchestratorBrief("Scan")).deletingLastPathComponent()
+        let id = UUID().uuidString
+        let plan = OrchestratorPlan(goal: "Ship", approved: true, decisions: [
+            .init(id: 1, question: "Push the branch?", options: ["yes", "hold"]),
+            .init(id: 2, question: "Post the review?", options: ["yes", "hold"], answer: "hold"),
+        ])
+        try plan.json().write(to: root.appendingPathComponent("plan-update-\(id).json"))
+        try send(.updatePlan, from: lead.id, in: store) { envelope in
+            envelope.requestID = id
+            envelope.planUpdateID = id
+        }
+        XCTAssertEqual(store.openDecisions.map(\.id), [1])
+        XCTAssertEqual(announced, [[1]])
+
+        XCTAssertThrowsError(try store.answerDecision(id: 1, option: "maybe"))
+        try store.answerDecision(id: 1, option: "yes")
+        XCTAssertTrue(store.openDecisions.isEmpty)
+        let saved = try store.loadOrchestratorPlan()
+        XCTAssertEqual(saved.decisions.first?.answer, "yes")
+        XCTAssertEqual(saved.revision, 2)
+        let note = try XCTUnwrap(relayNotes(for: lead.id, in: store).last)
+        XCTAssertTrue(note.contains("answered decision 1"))
+        XCTAssertTrue(note.contains("\"yes\""))
+        XCTAssertThrowsError(try store.answerDecision(id: 1, option: "yes"))
+    }
+
+    func testHomeBoardEventsReportChangesOnlyBetweenSuccessfulReads() {
+        func ticket(_ key: String, _ status: String) -> JiraTicketSummary {
+            JiraTicketSummary(key: key, summary: "Fix login", status: status, priority: nil, updatedText: nil,
+                              issueURL: URL(string: "https://jira.example/\(key)")!, sourceOrder: 0,
+                              issueType: nil, fixVersion: nil)
+        }
+        func review(_ iid: String, pipeline: String?) -> MergeRequestSummary {
+            let url = URL(string: "https://gitlab.example/mr/\(iid)")!
+            return MergeRequestSummary(id: url, iidText: iid, title: "Add cache", projectDisplayName: nil,
+                                       authorDisplayName: nil, isDraft: false, pipelineDisplayState: pipeline,
+                                       reviewDisplayState: nil, updatedText: nil, mergeRequestURL: url, sourceOrder: 0)
+        }
+        var events = HomeBoardEvents()
+        var snapshot = HomeBoardSnapshot(jiraTickets: [ticket("NMA-1", "To Do")], jiraStatus: .current,
+                                         reviewItems: [review("7", pipeline: "Running")], reviewStatus: .current)
+        XCTAssertEqual(events.observe(snapshot), [], "the first read is the baseline")
+
+        snapshot.jiraStatus = HomeSourceStatus(check: .pending)
+        snapshot.jiraTickets = []
+        XCTAssertEqual(events.observe(snapshot), [], "a refresh in flight is not an empty board")
+
+        snapshot.jiraStatus = .current
+        snapshot.jiraTickets = [ticket("NMA-1", "In Progress"), ticket("NMA-2", "To Do")]
+        snapshot.reviewItems = [review("7", pipeline: "Failed"), review("9", pipeline: nil)]
+        XCTAssertEqual(events.observe(snapshot), [
+            "NMA-1 moved from To Do to In Progress",
+            "NMA-2 joined the board (To Do): Fix login",
+            "!7 pipeline is now Failed",
+            "review requested on !9: Add cache",
+        ])
+        snapshot.reviewItems = [review("9", pipeline: nil)]
+        XCTAssertEqual(events.observe(snapshot), ["!7 left the review queue"])
+    }
+
     func testWatchedSessionRelaysFailureWithoutDirective() async throws {
         let store = makeStore()
         store.queuedCommandSpacing = 0
