@@ -89,17 +89,44 @@ final class SessionLaunchCoordinator {
             store.homeBoardBriefProvider = { [weak store] in
                 Self.currentScanBrief(sessions: store?.sessions ?? [], plan: try? store?.loadOrchestratorPlan())
             }
+            // Stays inside the bridge's 5 s result wait, including the 2 s
+            // a timed-out glab is given to stop.
+            store.homeBoardRefresh = { await Self.refreshLiveReviewFacts(budget: 2) }
         }
     }
 
-    /// The scan brief from live sessions and the current Home data, without
-    /// a network fetch.
-    static func currentScanBrief(sessions: [ConsoleSession], plan: OrchestratorPlan? = nil) -> String {
-        let home = HomeBoardModel.gatherSnapshot(
+    private static func currentHomeSnapshot() -> HomeBoardSnapshot {
+        HomeBoardModel.gatherSnapshot(
             jiraController: JiraWebSession.shared.panelController,
             reviewsController: MRReviewScanController.shared
         )
-        return OrchestratorScanBrief.build(sessions: sessions, homeSnapshot: home, plan: plan)
+    }
+
+    /// The scan brief from live sessions, the current Home data and the live
+    /// merge request facts last read. Does no fetching itself.
+    static func currentScanBrief(
+        sessions: [ConsoleSession],
+        plan: OrchestratorPlan? = nil,
+        changes: OrchestratorScanBrief.Changes? = nil
+    ) -> String {
+        OrchestratorScanBrief.build(sessions: sessions, homeSnapshot: currentHomeSnapshot(), plan: plan,
+                                    liveFacts: MRLiveFactsStore.shared.facts, changes: changes)
+    }
+
+    /// Review items whose current GitLab state the brief should carry.
+    private static var liveReviewItems: [MergeRequestSummary] {
+        HomeBoardBuilder.build(currentHomeSnapshot()).reviewQueue
+    }
+
+    /// Re-reads approvals, head, reviewer state and threads for the review
+    /// queue with plain glab GETs, so no session is spawned to learn them.
+    static func refreshLiveReviewFacts(budget: TimeInterval) async {
+        await MRLiveFactsStore.shared.refresh(
+            items: liveReviewItems,
+            username: MRReviewScanController.shared.currentUsername,
+            executable: GLabExecutable.resolve(),
+            budget: budget
+        )
     }
 
     // MARK: - Home board wake-ups
@@ -108,6 +135,10 @@ final class SessionLaunchCoordinator {
     /// Home data sources. Unset in tests, so nothing is watched there.
     var homeSnapshotProvider: (@MainActor () -> HomeBoardSnapshot)?
     private var homeEvents = HomeBoardEvents()
+    /// Board state at the previous Orchestrator run, for the brief's
+    /// "changed since your last run" section. Memory-only.
+    private var runEvents = HomeBoardEvents()
+    private var lastRunBriefAt: Date?
     private var pendingHomeEvents: [String] = []
     private var homeWakeTask: Task<Void, Never>?
     static let homeWakeDebounceSeconds: TimeInterval = 3
@@ -210,19 +241,38 @@ final class SessionLaunchCoordinator {
             // is only focused.
             guard orchestratorRunState != .running else { return }
             guard session.activity != .working else { return }
-            let brief = Self.currentScanBrief(sessions: store.sessions, plan: try? store.loadOrchestratorPlan())
             orchestratorRunState = .running
-            if let briefURL = store.writeOrchestratorBrief(brief) {
-                // Same guarded path as directives, so a rescan never wipes a
-                // reply the user is typing.
-                store.deliverDirective(OrchestratorScanBrief.runPrompt(briefPath: briefURL.path),
-                                       to: sessionID, relayTo: nil)
-            } else {
-                store.queuePrompt(brief, for: sessionID, collapsingNewlines: false)
+            let changes = OrchestratorScanBrief.Changes(
+                since: lastRunBriefAt, lines: runEvents.observe(Self.currentHomeSnapshot())
+            )
+            lastRunBriefAt = Date()
+            // With nothing to read from GitLab the run starts at once.
+            guard !Self.liveReviewItems.isEmpty, GLabExecutable.resolve() != nil else {
+                deliverRunBrief(to: sessionID, changes: changes)
+                return
+            }
+            Task { [weak self] in
+                await Self.refreshLiveReviewFacts(budget: 6)
+                self?.deliverRunBrief(to: sessionID, changes: changes)
             }
         } catch {
             isRefreshingHomeCards = false
             lastFailure = SessionLaunchFailure(error: error)
+        }
+    }
+
+    private func deliverRunBrief(to sessionID: UUID, changes: OrchestratorScanBrief.Changes) {
+        guard store.session(withID: sessionID)?.activity != .exited else { return }
+        let brief = Self.currentScanBrief(sessions: store.sessions, plan: try? store.loadOrchestratorPlan(),
+                                          changes: changes)
+        if let briefURL = store.writeOrchestratorBrief(brief) {
+            // Same guarded path as directives, so a rescan never wipes a
+            // reply the user is typing.
+            store.deliverDirective(OrchestratorScanBrief.runPrompt(briefPath: briefURL.path),
+                                   to: sessionID, relayTo: nil)
+        } else {
+            store.queuePrompt("Run the orchestrator-run skill using this Console scan brief.\n\n" + brief,
+                              for: sessionID, collapsingNewlines: false)
         }
     }
 

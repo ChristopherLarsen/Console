@@ -33,6 +33,8 @@ final class MRReviewScanController {
     private let now: () -> Date
     private var resultScope: String?
     private var resultUsername: String?
+    /// The GitLab user the last scan authenticated as, lowercased.
+    var currentUsername: String? { resultUsername }
     private var observedSettingsSignature = ""
 
     init(defaults: UserDefaults = .standard,

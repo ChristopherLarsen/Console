@@ -44,9 +44,6 @@ struct OrchestratorPlan: Codable, Equatable {
 
     var revision = 0
     var goal = ""
-    /// Unused: the plan is the Orchestrator's private working notes and is
-    /// never put up for approval. Kept so saved plans still decode.
-    var approved = false
     var steps: [Step] = []
     var decisions: [Decision] = []
 
@@ -76,7 +73,6 @@ extension OrchestratorPlan {
         self.init(
             revision: try container.decode(Int.self, forKey: .revision),
             goal: try container.decodeIfPresent(String.self, forKey: .goal) ?? "",
-            approved: try container.decodeIfPresent(Bool.self, forKey: .approved) ?? false,
             steps: try container.decodeIfPresent([Step].self, forKey: .steps) ?? [],
             decisions: try container.decodeIfPresent([Decision].self, forKey: .decisions) ?? []
         )

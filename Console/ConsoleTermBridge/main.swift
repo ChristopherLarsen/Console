@@ -279,7 +279,7 @@ private let consoleTools: [MCPServerTool] = [
                 "agent": ["type": "string", "minLength": 1, "maxLength": 80],
                 "model": ["type": "string", "minLength": 1, "maxLength": 120],
                 "cwd": ["type": "string", "minLength": 1, "maxLength": 4096],
-                "tool_profile": ["type": "string", "enum": ["full", "readOnlyPrep"]],
+                "tool_profile": ["type": "string", "enum": ["full", "readOnlyPrep"], "description": "full (default): every tool. readOnlyPrep: Read, Grep and Glob on local files only. It has no shell and no MCP tools, so it cannot run glab, git or a build, and cannot call report_completion."],
                 "initial_prompt_file": ["type": "string", "description": "Local path to a UTF-8 task brief (up to 256 KiB). Use instead of initial_prompt."],
             ],
             "required": ["purpose"],
@@ -344,7 +344,7 @@ private let consoleTools: [MCPServerTool] = [
     ),
     MCPServerTool(
         name: "update_plan",
-        description: "Replace your working notes and decisions using the current revision. Steps are private bookkeeping and are never shown or approved. Each open decision becomes a Home card. Preserve stable step and decision IDs. A decision with no answer is open.",
+        description: "Replace your working notes and decisions using the current revision. Returns only the new revision. Steps are private bookkeeping and are never shown or approved. Each open decision becomes a Home card. Preserve stable step and decision IDs. A decision with no answer is open. Leave out completed or cancelled steps and answered decisions you no longer need.",
         schema: [
             "type": "object",
             "properties": ["plan": [
@@ -397,7 +397,7 @@ private let consoleTools: [MCPServerTool] = [
     ),
     MCPServerTool(
         name: "get_home_board",
-        description: "Read-only: a fresh Console scan brief (sessions plus Home board Next up, In progress, Review queue) from Console's current data.",
+        description: "Read-only: a fresh Console scan brief. Lists sessions and the Home board (Next up, In progress, Review queue) with how old each source is, and for each review-queue merge request its state read from GitLab just now: head SHA, who approved it, whether you approved it, your reviewer state and your unresolved threads. Use this instead of a child session to check merge request state.",
         schema: [
             "type": "object",
             "properties": [:],

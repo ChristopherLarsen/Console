@@ -1382,7 +1382,9 @@ final class SessionStore {
         refreshOpenDecisions(from: plan, announce: false)
         let question = plan.decisions[index].question.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(200)
         wakeOrchestrator("Console relay: the user answered decision \(id) (\(question)) with \"\(option)\" on the Home board. "
-            + "This is their explicit decision and is already saved in the plan. Call get_plan, then act on it.")
+            + "It is already saved in the plan and approves exactly that decision. Call get_plan, then act on it. "
+            + "If the answer says they did something outside Console (approved, merged, posted), that is a claim: "
+            + "check it with get_home_board before marking anything complete.")
     }
 
     /// The user clicked a decision card instead of one of its buttons: they
@@ -1487,7 +1489,11 @@ final class SessionStore {
                     plan = updated
                 }
                 refreshOpenDecisions(from: plan, announce: envelope.kind == .updatePlan)
-                writeMCPResult(requestID: requestID, ok: true, output: String(decoding: try plan.json(), as: UTF8.self))
+                // The Orchestrator just sent the plan; echoing it back only costs tokens.
+                let output = envelope.kind == .updatePlan
+                    ? "{\"ok\":true,\"revision\":\(plan.revision)}"
+                    : String(decoding: try plan.json(), as: UTF8.self)
+                writeMCPResult(requestID: requestID, ok: true, output: output)
             } catch {
                 writeMCPResult(requestID: requestID, ok: false, error: "could not read or update plan: \(error.localizedDescription)")
             }
@@ -1642,6 +1648,7 @@ final class SessionStore {
             writeMCPResult(requestID: requestID, ok: false, error: "refused: cannot close the orchestrator session")
             return
         }
+        closedByOrchestrator.insert(targetID)
         terminateSession(id: targetID)
         writeSessionsSnapshot()
         writeMCPResult(requestID: requestID, ok: true, sessionID: targetID)
@@ -1671,6 +1678,9 @@ final class SessionStore {
     /// Supplies the current Home board text; set by the launch coordinator,
     /// which owns the Home data sources.
     @ObservationIgnored var homeBoardBriefProvider: (@MainActor () -> String)?
+    /// Re-reads live source state before the brief is built. Must finish
+    /// inside the bridge's result wait.
+    @ObservationIgnored var homeBoardRefresh: (@MainActor () async -> Void)?
 
     /// Console MCP home board: the scan brief rebuilt from current data.
     private func handleHomeBoardRequest(from requesterID: UUID, envelope: BridgeEnvelope) {
@@ -1679,11 +1689,18 @@ final class SessionStore {
             writeMCPResult(requestID: requestID, ok: false, error: "only the orchestrator may read the Home board")
             return
         }
-        guard let brief = homeBoardBriefProvider?() else {
+        guard let homeBoardBriefProvider else {
             writeMCPResult(requestID: requestID, ok: false, error: "Home board unavailable")
             return
         }
-        writeMCPResult(requestID: requestID, ok: true, output: brief)
+        guard let homeBoardRefresh else {
+            writeMCPResult(requestID: requestID, ok: true, output: homeBoardBriefProvider())
+            return
+        }
+        Task { [weak self] in
+            await homeBoardRefresh()
+            self?.writeMCPResult(requestID: requestID, ok: true, output: homeBoardBriefProvider())
+        }
     }
 
     /// Console MCP prompt: queue a directive into another visible session.
@@ -1751,6 +1768,9 @@ final class SessionStore {
         TranscriptTail.currentTurnReply(claudeSessionID: $0, since: $1)
     }
     private var pendingRelays: [UUID: PendingRelay] = [:]
+    /// Sessions the Orchestrator closed itself. It already knows they are
+    /// gone, so their exit is not relayed back to it.
+    private var closedByOrchestrator: Set<UUID> = []
 
     private enum RelayOutcome: String {
         case attention = "changed attention"
@@ -1959,6 +1979,8 @@ final class SessionStore {
     }
 
     private func scheduleRelay(for sessionID: UUID, outcome: RelayOutcome) {
+        // Any relay still settling (the closed session's last turn) is kept.
+        if outcome == .exited && closedByOrchestrator.contains(sessionID) { return }
         let previous = pendingRelays[sessionID]
         let origin = directiveOrigins[sessionID]
         guard let recipient = origin ?? watchedSessions[sessionID] ?? previous?.recipient,
@@ -2072,6 +2094,10 @@ final class SessionStore {
         deliverDirective(note, to: orchestratorID, relayTo: nil)
     }
 
+    /// Long enough for a child's full result, so the Orchestrator does not
+    /// need a second read to see it.
+    static let relayReplyLimit = 2_500
+
     static func relayNote(target: ConsoleSession, outcome: String, lastReply: String? = nil,
                           directed: Bool = true) -> String {
         func oneLine(_ text: String, limit: Int) -> String {
@@ -2084,7 +2110,7 @@ final class SessionStore {
             note += " Report (\(report.rawValue)): \(oneLine(summary, limit: 400))"
         }
         if let reply = lastReply?.trimmingCharacters(in: .whitespacesAndNewlines), !reply.isEmpty {
-            note += " Last reply: \(oneLine(reply, limit: 600))"
+            note += " Last reply: \(oneLine(reply, limit: Self.relayReplyLimit))"
         } else if target.completionOutcome == nil, let summary = target.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
             note += " Summary: \(oneLine(summary, limit: 400))"
         }

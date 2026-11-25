@@ -246,6 +246,93 @@ final class OrchestratorSessionTests: XCTestCase {
         return requestID
     }
 
+    func testClosingAChildSendsNoSecondRelay() async throws {
+        let store = makeStore()
+        store.queuedCommandSpacing = 0
+        let lead = try startOrchestrator(in: store, directory: tmpDirectory("close-relay"))
+        try receive(.sessionStarted, from: lead.id, in: store)
+        try requestChild(in: store, from: lead.id, name: "Check", prompt: "Check it")
+        let child = try XCTUnwrap(store.children(of: lead).first)
+        try receive(.sessionStarted, from: child.id, in: store)
+        try receive(.promptSubmitted, from: child.id, in: store)
+        store.transcriptReply = { _, _ in "Neither is approved." }
+        try receive(.turnCompleted, from: child.id, in: store)
+        try await Task.sleep(for: .seconds(SessionStore.relaySettleSeconds + 0.15))
+        let before = relayNotes(for: lead.id, in: store).count
+        XCTAssertEqual(before, 1)
+        try send(.closeSession, from: lead.id, in: store) { $0.targetSessionID = child.id.uuidString }
+        store.handleProcessTerminated(sessionID: child.id, startExitShell: false)
+        try await Task.sleep(for: .seconds(SessionStore.relaySettleSeconds + 0.15))
+        XCTAssertEqual(relayNotes(for: lead.id, in: store).count, before)
+    }
+
+    func testRelayNoteKeepsALongReply() throws {
+        let store = makeStore()
+        let workerID = try store.createSession(request: SessionCreationRequest(
+            purpose: .general, name: "Worker", workingDirectory: tmpDirectory("long-reply")
+        ))
+        let worker = try XCTUnwrap(store.session(withID: workerID))
+        let reply = String(repeating: "x", count: 2_300) + " END"
+        XCTAssertTrue(SessionStore.relayNote(target: worker, outcome: "finished", lastReply: reply).contains(" END"))
+    }
+
+    func testScanBriefMarksAnUnreadReviewQueueAsUnknown() {
+        let snapshot = HomeBoardSnapshot(jiraStatus: .current, reviewStatus: HomeSourceStatus(check: .pending))
+        let brief = OrchestratorScanBrief.build(sessions: [], homeSnapshot: snapshot)
+        XCTAssertTrue(brief.contains("Review queue — GitLab scan (LOADING, no data yet: unknown, NOT empty)"))
+        XCTAssertFalse(brief.contains("Review queue — GitLab scan (LOADING, no data yet: unknown, NOT empty)\n- (none)"))
+    }
+
+    func testScanBriefCarriesItemFactsLiveStateAndChangesButNoPlanJSON() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let url = try XCTUnwrap(URL(string: "https://gitlab.example.com/g/app/-/merge_requests/4035"))
+        let item = MergeRequestSummary(
+            id: url, iidText: "4035", title: "Mugshot cache", projectDisplayName: "g/app",
+            authorDisplayName: "Sam", isDraft: false, pipelineDisplayState: nil, reviewDisplayState: nil,
+            updatedText: nil, mergeRequestURL: url, sourceOrder: 0, triageCategory: .needsReview,
+            triageReason: "No reviewer has commented.", jiraIssueKey: "NMA-9001"
+        )
+        let ticket = JiraTicketSummary(
+            key: "NMA-8979", summary: "Crash on launch", status: "Next Up", priority: nil, updatedText: nil,
+            issueURL: try XCTUnwrap(URL(string: "https://jira.example.com/browse/NMA-8979")), sourceOrder: 0,
+            issueType: "Bug", fixVersion: "17.3"
+        )
+        let snapshot = HomeBoardSnapshot(
+            jiraTickets: [ticket], jiraStatus: .current, reviewItems: [item],
+            reviewStatus: HomeSourceStatus(check: .current, lastSuccessfulExtraction: now.addingTimeInterval(-240))
+        )
+        let facts = MRLiveFacts(state: "opened", headSHA: "abcdef1234567890", approvedBy: ["alex"], approvedByMe: false,
+                                myReviewerState: "unreviewed", myUnresolvedThreads: 1, fetchedAt: now.addingTimeInterval(-5))
+        let plan = OrchestratorPlan(goal: "Clear the review queue", steps: [
+            .init(id: "R1", ownerSession: nil, directive: "SECRET-DIRECTIVE", status: .completed),
+        ])
+        let brief = OrchestratorScanBrief.build(
+            sessions: [], homeSnapshot: snapshot, plan: plan, liveFacts: [url: facts],
+            changes: .init(since: now.addingTimeInterval(-600), lines: ["!4028 left the review queue"]), now: now
+        )
+        XCTAssertTrue(brief.contains("Goal: Clear the review queue"))
+        XCTAssertTrue(brief.contains("Steps: 1 completed"))
+        XCTAssertFalse(brief.contains("SECRET-DIRECTIVE"))
+        XCTAssertTrue(brief.contains("NMA-8979 (Next Up) [Bug, fix 17.3]: Crash on launch"))
+        XCTAssertTrue(brief.contains("GitLab scan (as of 4 min ago)"))
+        XCTAssertTrue(brief.contains("!4035 \"Mugshot cache\" | by Sam | NMA-9001 | Needs review: No reviewer has commented."))
+        XCTAssertTrue(brief.contains("head abcdef12, approved by alex (you have NOT approved), your reviewer state: unreviewed, your unresolved threads: 1"))
+        XCTAssertTrue(brief.contains("Changed since your last run (10 min ago)\n- !4028 left the review queue"))
+    }
+
+    func testPlanUpdateReturnsOnlyTheRevisionAndDropsApproved() throws {
+        let store = makeStore(launcher: FakeLauncher())
+        let lead = try startOrchestrator(in: store, directory: tmpDirectory("plan-echo"))
+        let root = try XCTUnwrap(store.writeOrchestratorBrief("Scan")).deletingLastPathComponent()
+        let id = UUID().uuidString
+        try Data(#"{"revision":0,"approved":true,"goal":"G","steps":[],"decisions":[]}"#.utf8)
+            .write(to: root.appendingPathComponent("plan-update-\(id).json"))
+        try send(.updatePlan, from: lead.id, in: store) { $0.requestID = id; $0.planUpdateID = id }
+        let result = try readResult(id, directory: root.appendingPathComponent("mcp-results"))
+        XCTAssertEqual(result["output"] as? String, #"{"ok":true,"revision":1}"#)
+        XCTAssertFalse(String(decoding: try store.loadOrchestratorPlan().json(), as: UTF8.self).contains("approved"))
+    }
+
     func testAPIErrorAfterIdleRelaysFailureToOriginalOrchestrator() async throws {
         let store = makeStore()
         store.queuedCommandSpacing = 0
@@ -354,7 +441,7 @@ final class OrchestratorSessionTests: XCTestCase {
         let root = brief.deletingLastPathComponent()
         let results = root.appendingPathComponent("mcp-results")
         let requestID = UUID().uuidString
-        let plan = OrchestratorPlan(goal: "Finish review", approved: true, steps: [
+        let plan = OrchestratorPlan(goal: "Finish review", steps: [
             .init(id: "review", ownerSession: nil, directive: "Review the current diff.", status: .pending),
         ], decisions: [.init(id: 1, question: "Post the review?", options: ["yes", "hold"])])
         func replacePlan(id: String) throws {
@@ -486,7 +573,7 @@ final class OrchestratorSessionTests: XCTestCase {
         try receive(.sessionStarted, from: lead.id, in: store)
         let root = try XCTUnwrap(store.writeOrchestratorBrief("Scan")).deletingLastPathComponent()
         let id = UUID().uuidString
-        let plan = OrchestratorPlan(goal: "Ship", approved: true, decisions: [
+        let plan = OrchestratorPlan(goal: "Ship", decisions: [
             .init(id: 1, question: "Push the branch?", options: ["yes", "hold"]),
             .init(id: 2, question: "Post the review?", options: ["yes", "hold"], answer: "hold"),
         ])
@@ -737,10 +824,8 @@ final class OrchestratorSessionTests: XCTestCase {
             workingDirectory: directory
         ))
         let brief = OrchestratorScanBrief.build(sessions: store.sessions, homeSnapshot: nil)
-        XCTAssertTrue(brief.contains("prompt_console_session"))
         XCTAssertTrue(brief.contains("Worker"))
-        XCTAssertTrue(brief.contains("Run the orchestrator-run skill"))
-        XCTAssertTrue(brief.contains("Raise a decision card for anything outward-facing"))
+        XCTAssertTrue(brief.contains("orchestrator-run skill"))
         XCTAssertFalse(brief.contains("Optional("))
     }
 
