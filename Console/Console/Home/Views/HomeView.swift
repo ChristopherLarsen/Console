@@ -112,14 +112,15 @@ struct HomeView: View {
                             let session = decision.session.flatMap(UUID.init(uuidString:)).flatMap { id in
                                 sessionStore.sessions.first { $0.id == id }
                             }
+                            let links = cardLinks.links(for: decision, session: session)
                             HomeDecisionCard(
                                 decision: decision,
                                 sessionName: session?.name,
                                 discuss: { discuss(decision: decision.id) },
-                                openMergeRequest: session.flatMap(mergeRequestURL(for:)).map { url in
+                                openMergeRequest: links.mergeRequest.map { url in
                                     { HomeBoardModel.executeNavigation(.openMergeRequest(url: url)) }
                                 },
-                                openJira: session.flatMap(storyURL(for:)).map { url in
+                                openJira: links.jira.map { url in
                                     { HomeBoardModel.executeNavigation(.openJiraIssue(url: url)) }
                                 }
                             ) { option in
@@ -158,15 +159,16 @@ struct HomeView: View {
 
     private static let orchestratorCardMinWidth: CGFloat = 300
 
-    /// The session's most recently linked merge request.
-    private func mergeRequestURL(for session: ConsoleSession) -> URL? {
-        session.artifacts.last(where: { $0.kind == .gitlabMergeRequest })?.url
-    }
-
-    /// The session's JIRA story, resolved the same way the Sessions header does.
-    private func storyURL(for session: ConsoleSession) -> URL? {
-        HomeStorySessionMatcher.jiraURL(
-            for: session, configuredURL: webViewJiraURL, reviewItems: MRReviewScanController.shared.items
+    /// Every card's JIRA and GitLab links come from this one resolver.
+    private var cardLinks: HomeCardLinks {
+        let snapshot = model.snapshot()
+        return HomeCardLinks(
+            sessions: sessionStore?.sessions ?? [],
+            associations: sessionStore?.associations,
+            jiraTickets: snapshot.jiraTickets,
+            reviewItems: snapshot.reviewItems,
+            authoredItems: MRReviewScanController.shared.authoredItems,
+            configuredJiraURL: webViewJiraURL
         )
     }
 
@@ -292,11 +294,17 @@ struct HomeView: View {
         index: Int
     ) -> some View {
         let isLaunching = model.launchingTicketKeys.contains(story.key)
+        var links = [HomeCardAction(label: "Open in JIRA", kind: .jira) { model.openStory(story) }]
+        // A story can have a merge request before JIRA moves it on.
+        if let url = cardLinks.mergeRequest(forStoryKey: story.key) {
+            links.append(HomeCardAction(label: "Open in GitLab", kind: .gitlab) {
+                HomeBoardModel.executeNavigation(.openMergeRequest(url: url))
+            })
+        }
         return HomeBoardTicketCard(
             ticket: story,
             stateLine: story.status,
-            bottomActions: [
-                HomeCardAction(label: "Open in JIRA", kind: .jira) { model.openStory(story) },
+            bottomActions: links + [
                 HomeCardAction(label: "Review Synopsis") { showSynopsis(story) },
                 HomeCardAction(label: isLaunching ? "Starting…" : "Start story") {
                     guard !isLaunching else { return }
@@ -440,7 +448,7 @@ struct HomeView: View {
         }
         bottomActions.append(HomeCardAction(label: "Open in JIRA", kind: .jira) { model.openStory(ticket) })
         bottomActions.append(HomeCardAction(label: "Open in GitLab", kind: .gitlab) {
-            if let url = mergeRequestURL(for: ticket) {
+            if let url = cardLinks.mergeRequest(forStoryKey: ticket.key) {
                 // Deep-link the GitLab destination to the story's merge
                 // request in its own tab; with no known MR, land on GitLab.
                 HomeBoardModel.executeNavigation(.openMergeRequest(url: url))
@@ -555,6 +563,10 @@ struct HomeView: View {
                     state: responsePrep.state(for: item),
                     canReviewResponse: !launchCoordinator.isOpeningAuthoredMR,
                     open: { HomeBoardModel.executeNavigation(.openMergeRequest(url: item.url)) },
+                    openJira: cardLinks.jira(forMergeRequest: item.url, key: item.jiraIssueKey, title: item.title,
+                                             workKind: .implementation).map { url in
+                        { HomeBoardModel.executeNavigation(.openJiraIssue(url: url)) }
+                    },
                     reviewResponse: { reviewResponse(item) },
                     prepare: { responsePrep.prepare(item) }
                 )
@@ -611,75 +623,8 @@ struct HomeView: View {
         }
     }
 
-    private func reviewSession(for item: MergeRequestSummary) -> ConsoleSession? {
-        HomeStorySessionMatcher.reviewSession(for: item.mergeRequestURL, in: sessionStore?.sessions ?? [], associations: sessionStore?.associations)
-    }
-
     private func jiraURL(for item: MergeRequestSummary) -> URL? {
-        if let catalog = sessionStore?.associations {
-            let links = catalog.relatedArtifacts(to: item.mergeRequestURL, kind: .gitlabMergeRequest, workKind: .review)
-                .filter { $0.kind == .jiraIssue }
-            if !links.isEmpty {
-                let urls = Set(links.compactMap { link -> URL? in
-                    guard let url = link.url, JiraSourceContext.parseIssueKey(fromURL: url) != nil else { return nil }
-                    return url
-                })
-                if urls.count == 1 { return urls.first }
-                // Several stories are linked: the one the merge request
-                // itself names is the right one. With no such match the
-                // lookup carries on rather than disabling the button.
-                if let key = item.jiraIssueKey ?? JiraSourceContext.issueKey(in: item.title),
-                   let match = urls.first(where: {
-                       JiraSourceContext.parseIssueKey(fromURL: $0)?.caseInsensitiveCompare(key) == .orderedSame
-                   }) {
-                    return match
-                }
-            }
-        }
-        if let session = reviewSession(for: item),
-           let url = HomeStorySessionMatcher.jiraURL(for: session, configuredURL: webViewJiraURL) {
-            return url
-        }
-        guard let key = item.jiraIssueKey ?? JiraSourceContext.issueKey(in: item.title) else { return nil }
-        if let ticket = model.snapshot().jiraTickets.first(where: { $0.key.caseInsensitiveCompare(key) == .orderedSame }) {
-            return ticket.issueURL
-        }
-        return JiraSourceContext.issueURL(key: key, configuredURL: webViewJiraURL)
-    }
-
-    /// The merge request associated with an in-progress story, mirroring
-    /// `jiraURL(for:)`: the story's session carries an MR artifact when it was
-    /// launched from GitLab, otherwise the review list's triage match by Jira
-    /// key wins. Nil when no merge request is known for the story.
-    private func mergeRequestURL(for ticket: JiraTicketSummary) -> URL? {
-        func isForTicket(_ key: String?, _ title: String) -> Bool {
-            key?.caseInsensitiveCompare(ticket.key) == .orderedSame
-                || JiraSourceContext.issueKey(in: title)?.caseInsensitiveCompare(ticket.key) == .orderedSame
-        }
-        // The user's own open merge requests: an In Progress story's MR is
-        // one they authored, which the review queue never lists.
-        let authored = MRReviewScanController.shared.authoredItems
-            .filter { isForTicket($0.jiraIssueKey, $0.title) }.map(\.url)
-
-        var linked: [URL] = []
-        if let catalog = sessionStore?.associations {
-            linked = Array(Set(catalog.relatedArtifacts(to: ticket.issueURL, kind: .jiraIssue, workKind: .implementation)
-                .filter { $0.kind == .gitlabMergeRequest }.compactMap(\.url)))
-            if linked.count == 1 { return linked[0] }
-        }
-        if let id = HomeStorySessionMatcher.sessionID(for: ticket, in: sessionStore?.sessions ?? [], associations: sessionStore?.associations),
-           let session = sessionStore?.sessions.first(where: { $0.id == id }),
-           let artifact = session.artifacts.last(where: { $0.kind == .gitlabMergeRequest }),
-           let url = artifact.url {
-            return url
-        }
-        if let url = authored.first(where: linked.contains) ?? authored.first { return url }
-        if let item = model.snapshot().reviewItems.first(where: { isForTicket($0.jiraIssueKey, $0.title) }) {
-            return item.mergeRequestURL
-        }
-        // Several merge requests are linked and none is known to be open:
-        // the newest is the best guess, and beats landing on GitLab's root.
-        return linked.max { (Int($0.lastPathComponent) ?? 0) < (Int($1.lastPathComponent) ?? 0) }
+        cardLinks.jira(forMergeRequest: item.mergeRequestURL, key: item.jiraIssueKey, title: item.title, workKind: .review)
     }
 
     /// Quiet count only — the column title already names the source.

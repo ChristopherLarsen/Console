@@ -423,6 +423,8 @@ struct HomeBoardResponsePrepCard: View {
     let state: MRResponsePrepController.CardState
     let canReviewResponse: Bool
     let open: () -> Void
+    /// Set when the merge request's story is known.
+    var openJira: (() -> Void)? = nil
     let reviewResponse: () -> Void
     let prepare: () -> Void
 
@@ -482,6 +484,10 @@ struct HomeBoardResponsePrepCard: View {
 
             HStack(spacing: 6) {
                 ServiceCapsuleButton(.gitlab, action: open)
+                if let openJira {
+                    ServiceCapsuleButton(.jira, action: openJira)
+                        .help("Open the associated story in a new JIRA tab")
+                }
                 Spacer(minLength: 8)
                 primaryButton
             }

@@ -34,6 +34,18 @@
         ]
       }
     ],
+    "PostToolUse" : [
+      {
+        "matcher" : "Bash",
+        "hooks" : [
+          {
+            "type" : "command",
+            "async" : true,
+            "command" : "\"$CONSOLE_TERM_BRIDGE_HELPER\" hook PostToolUseBash"
+          }
+        ]
+      }
+    ],
     "PreToolUse" : [
       {
         "matcher" : "AskUserQuestion",

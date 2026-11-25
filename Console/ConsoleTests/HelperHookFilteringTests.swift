@@ -262,4 +262,39 @@ final class HelperHookFilteringTests: XCTestCase {
         XCTAssertEqual(stdout, "")
         XCTAssertEqual(stderr, "")
     }
+
+    func testPostToolUseBashLinksTheMergeRequestGlabCreated() throws {
+        let payload = """
+        {
+          "session_id": "fake",
+          "hook_event_name": "PostToolUse",
+          "tool_name": "Bash",
+          "tool_input": {"command": "glab mr create --fill --yes"},
+          "tool_response": {"stdout": "Creating merge request FAKE-SECRET\\nhttps://gitlab.example.com/group/app/-/merge_requests/4051\\n", "stderr": ""}
+        }
+        """
+        let (exitCode, _, _) = try runHelper(eventName: "PostToolUseBash", stdinJSON: payload)
+        XCTAssertEqual(exitCode, EXIT_SUCCESS)
+        let envelope = try XCTUnwrap(waitForEnvelope())
+        XCTAssertEqual(envelope["kind"] as? String, "artifact")
+        XCTAssertEqual(envelope["artifact_kind"] as? String, "gitlab_merge_request")
+        XCTAssertEqual(envelope["artifact_label"] as? String, "MR !4051")
+        XCTAssertEqual(envelope["artifact_url"] as? String, "https://gitlab.example.com/group/app/-/merge_requests/4051")
+        let serialized = String(decoding: try JSONSerialization.data(withJSONObject: envelope), as: UTF8.self)
+        XCTAssertFalse(serialized.contains("FAKE-SECRET"))
+    }
+
+    func testPostToolUseBashIgnoresMergeRequestsOtherCommandsMention() throws {
+        let payload = """
+        {
+          "hook_event_name": "PostToolUse",
+          "tool_name": "Bash",
+          "tool_input": {"command": "glab mr list"},
+          "tool_response": {"stdout": "https://gitlab.example.com/group/app/-/merge_requests/9", "stderr": ""}
+        }
+        """
+        let (exitCode, _, _) = try runHelper(eventName: "PostToolUseBash", stdinJSON: payload)
+        XCTAssertEqual(exitCode, EXIT_SUCCESS)
+        XCTAssertNil(try waitForEnvelope(timeout: 0.5))
+    }
 }

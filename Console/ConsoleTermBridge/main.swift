@@ -150,11 +150,34 @@ private let bridgeUnreachableMessage =
 private struct HookInput: Decodable {
     let last_assistant_message: String?
     let new_cwd: String?
+    let tool_input: ToolInput?
+    let tool_response: ToolResponse?
 
-    enum CodingKeys: String, CodingKey {
-        case last_assistant_message
-        case new_cwd = "new_cwd"
+    struct ToolInput: Decodable {
+        let command: String?
     }
+
+    struct ToolResponse: Decodable {
+        let stdout: String?
+        let stderr: String?
+    }
+}
+
+/// Merge requests a Bash command created or pushed to, from the URLs GitLab
+/// printed. Only `glab mr create` and `git push` count: their output names
+/// the session's own merge request, while other commands may only mention
+/// someone else's.
+func createdMergeRequestURLs(command: String, output: String) -> [URL] {
+    guard command.contains("glab mr create") || command.contains("git push") else { return [] }
+    var urls: [URL] = []
+    for match in output.matches(of: /https:\/\/[^\s"'<>]+?\/-\/merge_requests\/[1-9][0-9]*/) {
+        guard let url = URL(string: String(match.output)),
+              artifactURLMatchesKind(url, kind: "gitlab_merge_request"),
+              !urls.contains(url) else { continue }
+        urls.append(url)
+        if urls.count == 3 { break }
+    }
+    return urls
 }
 
 func runHookMode(eventName: String) {
@@ -193,6 +216,17 @@ func runHookMode(eventName: String) {
     case "CwdChanged":
         guard let directory = decoded?.new_cwd, !directory.isEmpty else { return }
         sendEnvelope(BridgeEnvelope(kind: "cwd", lifecycleEvent: nil, cwdDirectory: directory))
+    case "PostToolUseBash":
+        // Link a merge request the session just created, so Home can open it
+        // without relying on the model to call link_artifact. Only the URL
+        // crosses the bridge.
+        guard let command = decoded?.tool_input?.command else { return }
+        let output = [decoded?.tool_response?.stdout, decoded?.tool_response?.stderr]
+            .compactMap { $0 }.joined(separator: "\n")
+        for url in createdMergeRequestURLs(command: command, output: output) {
+            sendEnvelope(BridgeEnvelope(kind: "artifact", lifecycleEvent: nil, artifactKind: "gitlab_merge_request",
+                                        artifactLabel: "MR !\(url.lastPathComponent)", artifactURL: url.absoluteString))
+        }
     default:
         // Unknown or unmatched events carry no state.
         break

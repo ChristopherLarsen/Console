@@ -246,6 +246,28 @@ final class OrchestratorSessionTests: XCTestCase {
         return requestID
     }
 
+    func testHookLinkedMergeRequestSurvivesAnotherSessionsLinkAndReachesDecisionCards() throws {
+        let store = makeStore()
+        let root = tmpDirectory("hook-mr")
+        let mr = "https://gitlab.example.test/team/app/-/merge_requests/42"
+        for purpose in [SessionPurpose.general, .existingTicket] {
+            let worker = try store.createSession(request: SessionCreationRequest(
+                purpose: purpose, name: "Worker \(purpose.rawValue)", workingDirectory: root))
+            let other = try store.createSession(request: SessionCreationRequest(
+                purpose: .general, name: "Other \(purpose.rawValue)", workingDirectory: root))
+            store.debugReceiveEnvelope(BridgeEnvelope(
+                sessionID: worker.uuidString, token: try XCTUnwrap(store.debugSessionToken(worker)),
+                eventID: UUID().uuidString, kind: .artifact, artifactKind: .gitlabMergeRequest,
+                artifactLabel: "MR !42", artifactURL: mr))
+            try store.connectJiraIssue(sessionID: other, url: XCTUnwrap(URL(string: "https://jira.example.test/browse/PROJ-3")))
+            let session = try XCTUnwrap(store.session(withID: worker))
+            XCTAssertEqual(HomeCardLinks.mergeRequest(in: session)?.absoluteString, mr, "\(purpose)")
+            let decision = OrchestratorPlan.Decision(id: 1, question: "Merge?", options: ["yes"], session: worker.uuidString)
+            XCTAssertEqual(HomeCardLinks(sessions: store.sessions).links(for: decision, session: session)
+                .mergeRequest?.absoluteString, mr, "\(purpose)")
+        }
+    }
+
     func testClosingAChildSendsNoSecondRelay() async throws {
         let store = makeStore()
         store.queuedCommandSpacing = 0

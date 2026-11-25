@@ -96,6 +96,7 @@ final class SessionsPackagingTests: XCTestCase {
         XCTAssertTrue(hooksJSON.contains("CONSOLE_TERM_BRIDGE_HELPER"))
         XCTAssertTrue(hooksJSON.contains("hook SessionStart"))
         XCTAssertTrue(hooksJSON.contains("AskUserQuestion"), "user-question PreToolUse matcher present")
+        XCTAssertTrue(hooksJSON.contains("hook PostToolUseBash"), "created merge requests are linked")
         XCTAssertFalse(hooksJSON.contains("async\" : false"))
 
         // MCP config points at the same helper.
